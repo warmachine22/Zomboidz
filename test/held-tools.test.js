@@ -26,6 +26,8 @@ test('Quest face buttons stay on the physical controller in either handedness mo
     assert.equal(triggers.fire, !leftHanded);
     assert.equal(triggers.interact, !leftHanded);
     assert.equal(triggers.toggleLight, leftHanded);
+    const legendary = questButtons(pad(0), pad(0), leftHanded, true);
+    assert.ok(legendary.fire && legendary.offhandFire && !legendary.toggleLight);
   }
 });
 

@@ -5,7 +5,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
 const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false,
-  laserDot: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0, difficulty: 'standard' };
+  laserDot: false, legendary: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0, difficulty: 'standard' };
 let fallbackScores = [];
 
 function read(key, otherwise) {

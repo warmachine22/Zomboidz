@@ -6,7 +6,7 @@ import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
-import { createGunHandling, gunAngle, heldPose, mountedAim, toolLayouts } from './held-tools.js';
+import { createGunHandling, gunAngle, heldPose, mountedAim, pistolLampAim, toolLayouts } from './held-tools.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 
 const $ = id => document.getElementById(id);
@@ -45,6 +45,7 @@ const art = await loadArt(motionReplay && qs.get('version') === 'before');
 const layouts = toolLayouts(art);
 const presentation = createPresentation(scene, art, layouts);
 const handling = createGunHandling();
+const offhandHandling = createGunHandling();
 $('start').disabled = false;
 $('start').textContent = touch ? 'Start on this screen' : 'Enter the forest';
 $('build').textContent = 'BUILD ' + BUILD;
@@ -82,6 +83,7 @@ function setPhase(next) {
   phase = next;
   calibrating = false;
   handling.reset(run.player.weapon);
+  offhandHandling.reset('pistol');
   panelKey = '';
   const running = phase === 'playing', isXR = !!xr.active;
   document.body.classList.toggle('running', running);
@@ -117,7 +119,7 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   const scenario = debugEnabled ? qs.get('scenario') : '';
   const encounter = ['roadside', 'night', 'shelter', 'motion'].includes(scenario);
   run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48,
-    populate: !encounter, difficulty });
+    populate: !encounter, difficulty, legendary: settings.legendary });
   yaw = pitch = roomX = roomZ = 0;
   if (scenario === 'roadside') {
     addEnemy(run, 'shambler', -.55, 13.6);
@@ -126,12 +128,14 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
     setLoot(run, 'armor2', 1.5, 14.9);
     setLoot(run, 'shotgun', -1.7, 11.1);
   } else if (scenario === 'night') {
-    Object.assign(run.player, { x: 3, z: 36, y: run.world.height(3, 36), yaw: Math.PI, flashlight: false });
+    Object.assign(run.player, { x: 3, z: 36, y: run.world.height(3, 36), yaw: Math.PI });
     yaw = Math.PI;
     addEnemy(run, 'shambler', 3, 42);
-    setLoot(run, 'carbine', 2.55, 41).born = -26;
+    const drop = setLoot(run, 'carbine', 2.55, 41);
+    if (drop) drop.born = -26;
+    if (!run.legendary) run.player.flashlight = false;
   } else if (scenario === 'shelter') {
-    Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: false });
+    Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: run.legendary });
   } else if (motionReplay) {
     const area = run.world.chunk(0,0);
     const tree = { x:1.05, z:14.7, y:run.world.height(1.05,14.7)-.12,
@@ -142,7 +146,7 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
     const subject = addEnemy(run,'shambler', 1.15, 12.7);
     subject.approach = { x:0, z:19.17, at:0, until:30 };
     run.player.protection = 30;
-    if (qs.get('light') === 'moon') run.player.flashlight = false;
+    if (!run.legendary && qs.get('light') === 'moon') run.player.flashlight = false;
   }
   runId = rapidSeed();
   notice = '';
@@ -156,7 +160,9 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   void audio.unlock();
   setPhase('playing');
   if (!xr.active) pointerLock();
-  setNotice(motionReplay ? (art.legacyShambler ? 'Original shambler' : 'Rebuilt shambler') : 'Follow the road for supplies', 5);
+  const opening = run.legendary ? 'Legendary Mode'
+    : motionReplay ? (art.legacyShambler ? 'Original shambler' : 'Rebuilt shambler') : 'Follow the road for supplies';
+  setNotice(opening, 5);
   updateHUD(true);
 }
 
@@ -185,6 +191,11 @@ function showHome() {
 
 function resultScore() {
   if (run.status !== 'dead' || motionReplay) return;
+  if (run.legendary) {
+    resultNote = 'Legendary practice · Seed ' + run.seed;
+    text('result-storage', resultNote);
+    return;
+  }
   const outcome = recordRun(run, runId, settings.initials);
   resultNote = outcome.saved ? outcome.place ? 'Local rank ' + outcome.place + ' · Seed ' + run.seed : 'Seed ' + run.seed
     : 'Browser storage is unavailable. Seed ' + run.seed;
@@ -257,6 +268,7 @@ for (const field of document.querySelectorAll('[data-setting]')) {
   field.addEventListener('input', () => {
     settings[key] = field.type === 'checkbox' ? field.checked : Number(field.value);
     saveSettings(settings);
+    if (key === 'legendary') panelKey = '';
     if (key === 'volume') audio.setVolume(settings.volume);
   });
 }
@@ -439,19 +451,26 @@ function desktopView() {
   const long = p.weapon === 'shotgun' || p.weapon === 'carbine' ? -.63 : -.48;
   return { view, tracking: {
     weapon: hold(sign * span, -.323, long, .037, sign * .085),
-    lamp: hold(-sign * (span + .009), -.264, -.435, -.037, -sign * .072),
+    lamp: p.offhand ? hold(-sign * span, -.323, long, .037, -sign * .085)
+      : hold(-sign * (span + .009), -.264, -.435, -.037, -sign * .072),
   } };
 }
 
 function trackedView(stereo, update = false, sample = null, dt = 0, lead = 0) {
-  const view = stereo ? xr.sync(run.player, settings) : desktopView();
-  const kind = run.player.weapon, layout = layouts[kind];
+  const p = run.player, view = stereo ? xr.sync(p, settings) : desktopView();
+  const kind = p.weapon, layout = layouts[kind];
   view.tracking.weapon = heldPose(view.tracking.weapon, stereo);
   view.tracking.lamp = heldPose(view.tracking.lamp, stereo);
-  if (update) handling.updateBrace(kind, view.tracking, layout, settings, stereo && phase === 'playing', sample?.supportGrip, dt);
+  if (update) handling.updateBrace(kind, view.tracking, layout, settings, !p.offhand && stereo && phase === 'playing', sample?.supportGrip, dt);
   view.tracking = handling.resolve(view.tracking, layout, view.view, settings, stereo, calibrating, lead);
   view.aim = mountedAim(view.tracking.weapon, layout, view.view);
-  view.beam = mountedAim(view.tracking.lamp, layouts.flashlight, view.view);
+  if (p.offhand) {
+    const second = offhandHandling.resolve({ weapon: view.tracking.lamp }, layout, view.view, settings, stereo, false, lead);
+    view.tracking.offhand = second.weapon;
+    view.tracking.offhandKick = second.gunKick;
+    view.offhandAim = mountedAim(second.weapon, layout, view.view);
+    view.beam = pistolLampAim(view.tracking.weapon, layouts.pistolLamp, view.view, p.reload, settings.leftHanded);
+  } else view.beam = mountedAim(view.tracking.lamp, layouts.flashlight, view.view);
   return view;
 }
 
@@ -473,8 +492,9 @@ function handleEvent(batch) {
     else if (event.type === 'weaponSwitch') setNotice(GUNS[event.weapon].name, 1.25);
     else if (event.type === 'light' && event.empty) setNotice('Battery depleted. Recharging.');
     else if (event.type === 'shot') {
-      handling.kick(settings.leftHanded);
-      xr.haptic(event.weapon, settings, handling.braced);
+      if (event.offhand) offhandHandling.kick(!settings.leftHanded);
+      else handling.kick(settings.leftHanded);
+      xr.haptic(event.weapon, settings, handling.braced, event.offhand);
     }
     else if (event.type === 'armorHit') {
       xr.haptic('armor', settings);
@@ -489,19 +509,22 @@ function updateHUD(force = false) {
   hudAt = run.time + .07;
   const p = run.player, display = Math.ceil(p.battery * 100);
   text('clock', formatTime(run.time));
-  text('weapon-name', GUNS[p.weapon].name.toUpperCase());
-  $('rounds').firstChild.textContent = String(p.ammo).padStart(2, '0') + ' ';
+  text('weapon-name', p.offhand ? 'DUAL SERVICE PISTOLS' : GUNS[p.weapon].name.toUpperCase());
+  const rounds = count => String(count).padStart(2, '0');
+  $('rounds').firstChild.textContent = rounds(p.ammo) + (p.offhand ? ' + ' + rounds(p.offhand.ammo) : '') + ' ';
   $('rounds').lastChild.textContent = '/ ' + p.reserve;
-  text('light-text', (p.flashlight ? p.beam.toUpperCase() : 'RECHARGING') + ' · ' + display + '%');
+  text('light-text', (p.flashlight ? p.beam.toUpperCase() : 'RECHARGING') + ' · ' + (p.offhand ? '∞' : display + '%'));
   $('charge').style.transform = 'scaleX(' + p.battery + ')';
   text('armor', '◆'.repeat(p.armor) + '◇'.repeat(3 - p.armor));
   $('armor').setAttribute('aria-label', p.armor + ' armor charges');
   text('notice', run.time < noticeUntil ? notice : '');
   $('offer').hidden = !run.offer;
   if (run.offer) text('offer', (touch ? 'EQUIP' : 'E TO EQUIP') + ' · ' + LOOT[run.offer.kind].name);
-  $('reload-meter').hidden = !p.reload;
+  const reload = p.reload || p.offhand?.reload;
+  $('reload-meter').hidden = !reload;
   $('touch-cycle').disabled = Object.keys(p.magazines).length < 2;
-  if (p.reload) $('reload-progress').style.transform = 'scaleX(' + (1 - p.reload.left / p.reload.duration) + ')';
+  $('touch-light').disabled = Boolean(p.offhand);
+  if (reload) $('reload-progress').style.transform = 'scaleX(' + (1 - reload.left / reload.duration) + ')';
 }
 
 function xrUI(sample, trackedView) {
@@ -526,7 +549,12 @@ function xrUI(sample, trackedView) {
     const cards = {
       menu: {
         title: 'Enter the forest',
-        lines: [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
+        lines: settings.legendary ? [
+          'Legendary Mode · two 50-round pistols.',
+          'Each trigger fires its pistol. A reloads. Y pauses.',
+          'Permanent mounted light. X changes the beam.',
+          'Weapon grip picks up armor. Ammo collects automatically.',
+        ] : [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
           'A reloads. B cycles weapons. Y pauses.',
           'Light trigger toggles light. X changes beam in play.',
           'Weapon grip picks up gear. Light grip braces the gun.'],
@@ -584,11 +612,17 @@ function simulate(t, sample, stereo) {
     const state = stereo ? { yaw: sample?.yaw, eyeHeight: sample?.eyeHeight,
       fireHeld: sample?.fireHeld, moveX: sample?.moveX, moveZ: sample?.moveZ, walk: sample?.walk } : desktopInput();
     handling.advance(STEP);
+    if (run.legendary) offhandHandling.advance(STEP);
     const aimed = trackedView(stereo, true, sample, STEP);
     const input = { ...state, ...queued,
       roomX, roomZ, aim: aimed.aim, lamp: aimed.beam,
       weaponUnavailable: stereo && !aimed.aim, lampUnavailable: stereo && !aimed.beam,
     };
+    if (run.legendary) {
+      input.offhandFire = stereo ? queued.offhandFire : queued.fire;
+      input.offhandAim = aimed.offhandAim;
+      input.offhandUnavailable = stereo && !aimed.offhandAim;
+    }
     if (motionReplay && run.enemies[0] && !stereo) {
       const shots = run.metrics.shots;
       if (shots < 2 && run.time >= (shots === 0 ? 8.2 : 10)) {
@@ -634,7 +668,7 @@ function frame(now, xrFrame) {
         if (sample.pause) pause();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
         else {
-          for (const key of ['reload', 'cycleWeapon', 'fire', 'toggleLight', 'toggleBeam', 'interact'])
+          for (const key of ['reload', 'cycleWeapon', 'fire', 'offhandFire', 'toggleLight', 'toggleBeam', 'interact'])
             if (sample[key]) queued[key] = true;
           roomX += sample.roomX; roomZ += sample.roomZ;
         }

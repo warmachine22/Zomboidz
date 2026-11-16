@@ -10,13 +10,14 @@ function poseOf(pose) { return { position: vec(pose.transform.position), quatern
 const button = (gamepad, index) => Boolean(gamepad?.buttons?.[index]?.pressed);
 const axis = (gamepad, index) => gamepad?.axes?.[gamepad.axes.length >= 4 ? index + 2 : index] || 0;
 
-export function questButtons(right, left, leftHanded) {
+export function questButtons(right, left, leftHanded, dual = false) {
   const weapon = leftHanded ? left : right;
   const light = leftHanded ? right : left;
   return {
     fire: button(weapon, 0), interact: button(weapon, 1),
     reload: button(right, 4), cycleWeapon: button(right, 5),
-    toggleLight: button(light, 0), toggleBeam: button(left, 4), pause: button(left, 5),
+    toggleLight: !dual && button(light, 0), offhandFire: dual && button(light, 0),
+    toggleBeam: button(left, 4), pause: button(left, 5),
   };
 }
 
@@ -113,7 +114,7 @@ export function createXR(renderer, scene, rig) {
     const right = sources.right?.gamepad, left = sources.left?.gamepad;
     const gunSource = sources[settings.leftHanded ? 'left' : 'right'];
     const handed = gunSource?.gamepad, other = settings.leftHanded ? right : left;
-    const gp = questButtons(right, left, settings.leftHanded);
+    const gp = questButtons(right, left, settings.leftHanded, Boolean(p.offhand));
     const pressed = {};
     for (const key of Object.keys(gp)) pressed[key] = gp[key] && !edges[key];
     edges = gp;
@@ -219,13 +220,14 @@ export function createXR(renderer, scene, rig) {
     aimMarker.visible = true;
   }
 
-  function haptic(kind, settings, braced = false) {
-    const s = sources[settings.leftHanded ? 'left' : 'right'];
+  function haptic(kind, settings, braced = false, offhand = false) {
+    const leftHand = settings.leftHanded !== offhand;
+    const s = sources[leftHand ? 'left' : 'right'];
     const strengths = { shotgun: [.79, 52], smg: [.37, 22], armor: [.89, 125], carbine: [.64, 40], pistol: [.51, 32] };
     const [strength, duration] = strengths[kind];
     const pulse = (source, force) => source?.gamepad?.hapticActuators?.[0]?.pulse?.(force, duration)?.catch?.(() => {});
     pulse(s, strength);
-    if (braced) pulse(sources[settings.leftHanded ? 'right' : 'left'], strength * .43);
+    if (braced) pulse(sources[leftHand ? 'right' : 'left'], strength * .43);
   }
 
   return { supported, enter, reset, finish, sample, sync, drawPanel, drawPrompt, drawAimPreview, haptic,

@@ -16,7 +16,7 @@ export const gunAngle = value => Math.max(-25, Math.min(25, Math.round(Number.is
 const rotation = (pitch, yaw) => new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
 
 export function toolLayouts(art) {
-  return Object.fromEntries(names.map(name => {
+  const layouts = Object.fromEntries(names.map(name => {
     const scene = art[name].scene;
     scene.updateMatrixWorld(true);
     const socket = label => {
@@ -32,6 +32,14 @@ export function toolLayouts(art) {
     const support = name in GUNS ? socket('SupportSocket').multiplyScalar(scale).add(offset) : null;
     return [name, { scale, offset, muzzle, support }];
   }));
+  const lamp = layouts.flashlight, scale = .45;
+  const rail = layouts.pistol.muzzle.clone().add(new THREE.Vector3(0, -.041, .132));
+  layouts.pistolLamp = {
+    scale: lamp.scale * scale,
+    offset: rail.clone().addScaledVector(lamp.offset, scale),
+    muzzle: rail.clone().addScaledVector(lamp.muzzle, scale),
+  };
+  return layouts;
 }
 
 export function heldPose(pose, stereo) {
@@ -47,6 +55,21 @@ export function mountedAim(pose, layout, view) {
   const origin = layout.muzzle.clone().applyQuaternion(pose.quaternion).add(pose.position);
   const ray = forward.clone().applyQuaternion(pose.quaternion);
   return { origin, ray, viewOrigin: view?.position };
+}
+
+export function reloadMount(reload, leftHanded) {
+  const progress = reload ? 1 - reload.left / reload.duration : 0;
+  const dip = Math.sin(Math.PI * progress);
+  return { progress, dip, y: -.050 * dip, pitch: -.47 * dip, roll: (leftHanded ? -.35 : .35) * dip };
+}
+
+export function pistolLampAim(pose, layout, view, reload, leftHanded) {
+  if (!pose) return undefined;
+  const mount = reloadMount(reload, leftHanded);
+  return mountedAim({
+    position: new THREE.Vector3(0, mount.y, 0).applyQuaternion(pose.quaternion).add(pose.position),
+    quaternion: pose.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(mount.pitch, 0, mount.roll))),
+  }, layout, view);
 }
 
 function towardCrosshair(weapon, layout, view) {

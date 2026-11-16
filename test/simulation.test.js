@@ -11,8 +11,8 @@ function advance(run, seconds, input = {}) {
     stepRun(run, typeof input === 'function' ? input(i) : input);
 }
 
-function room() {
-  const run = createRun('test', { populate: false });
+function room(options = {}) {
+  const run = createRun('test', { populate: false, ...options });
   const world = run.world;
   run.world = {
     ...world, height: () => 0, roadDistance: () => 0, around: () => [],
@@ -22,6 +22,78 @@ function room() {
   run.player.y = 0;
   return run;
 }
+
+test('Legendary starts with two 50-round magazines and the mounted light keeps its charge', () => {
+  const run = room({ legendary: true }), p = run.player;
+  assert.deepEqual([p.ammo, p.offhand.ammo, p.reserve, magazineCapacity(p)], [50, 50, 50, 50]);
+  stepRun(run, { toggleLight: true, toggleBeam: true, cycleWeapon: true });
+  advance(run, 65);
+  assert.deepEqual([p.flashlight, p.battery, p.beam, p.weapon], [true, 1, 'focus', 'pistol']);
+  const standard = room().player;
+  assert.deepEqual([standard.ammo, standard.offhand, magazineCapacity(standard)], [6, null, 6]);
+});
+
+test('the Legendary pistols aim and fire independently, with their own cooldowns', () => {
+  const run = room({ legendary: true }), p = run.player;
+  const left = addEnemy(run, 'shambler', p.x - 2, p.z - 6);
+  const right = addEnemy(run, 'shambler', p.x + 2, p.z - 6);
+  function aim(enemy, x) {
+    const origin = { x, y: p.y + 1.6, z: p.z };
+    const head = enemyPose(enemy).head;
+    return { origin, ray: { x:head.x - origin.x, y:head.y - origin.y, z:head.z - origin.z } };
+  }
+  const offhandAim = aim(left, p.x - .23), mainAim = aim(right, p.x + .23);
+  const offhand = stepRun(run, { offhandFire: true, offhandAim }).find(event => event.type === 'shot');
+  assert.ok(offhand.offhand && left.dead && !right.dead);
+  const main = stepRun(run, { fire: true, aim: mainAim }).find(event => event.type === 'shot');
+  assert.ok(main && !main.offhand && right.dead);
+  assert.deepEqual([p.ammo, p.offhand.ammo, run.metrics.shots], [49, 49, 2]);
+  advance(run, .33);
+  stepRun(run, { fire: true, offhandFire: true, offhandUnavailable: true });
+  assert.deepEqual([p.ammo, p.offhand.ammo], [48, 49]);
+  advance(run, .33);
+  const simultaneous = stepRun(run, { fire: true, offhandFire: true }).filter(event => event.type === 'shot');
+  assert.deepEqual(simultaneous.map(event => event.offhand), [false, true]);
+});
+
+test('the Legendary pistols reload independently and conserve their shared spares', () => {
+  const run = room({ legendary: true }), p = run.player;
+  p.offhand.ammo = 1;
+  p.reserve = 3;
+  stepRun(run, { offhandFire: true });
+  assert.ok(p.offhand.reload);
+  assert.equal(p.reload, null);
+  stepRun(run, { fire: true });
+  assert.equal(p.ammo, 49);
+  stepRun(run, { reload: true });
+  assert.ok(p.reload && p.offhand.reload);
+  advance(run, 1.6);
+  assert.deepEqual([p.ammo, p.offhand.ammo, p.reserve], [49, 3, 0]);
+  assert.equal(p.reload, null);
+  assert.equal(p.offhand.reload, null);
+});
+
+test('only armor and ammo appear in Legendary timed, combat, and landmark loot', () => {
+  const run = room({ legendary: true, populate: false }), p = run.player;
+  run.world.around = () => [{ loot: ['shotgun', 'capacity', 'armor2', 'ammo'].map((kind, i) =>
+    ({ kind, id: 'cache:' + i, x:p.x + 2 + i, z:p.z - 4, unlock: 0 })),
+  }];
+  run.populate = true;
+  run.nextSpawn = Infinity;
+  run.nextLoot = run.time = 100;
+  run.rng = () => .2;
+  stepRun(run);
+  assert.deepEqual(run.loot.map(item => item.kind).sort(), ['ammo', 'ammo', 'armor2']);
+  assert.equal(setLoot(run, 'carbine', p.x, p.z), null);
+  assert.equal(setLoot(run, 'reload', p.x, p.z), null);
+  const subject = addEnemy(run, 'shambler', p.x, p.z - 3);
+  const origin = { x:p.x, y:p.y + 1.6, z:p.z }, at = enemyPose(subject).head;
+  const rolls = [.5, .04, .3];
+  run.rng = () => rolls.shift();
+  shoot(run, { origin, ray: { x:at.x - origin.x, y:at.y - origin.y, z:at.z - origin.z } });
+  assert.equal(p.kills, 1);
+  assert.equal(run.loot.at(-1).kind, 'armor1');
+});
 
 test('a partial reload takes time, blocks fire, and only transfers available rounds', () => {
   const run = room(), p = run.player;

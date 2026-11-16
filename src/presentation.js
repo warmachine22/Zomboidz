@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
 import { beamSettings, ENEMIES, flarePower, GUNS, LOOT, STEP } from './simulation.js';
+import { reloadMount } from './held-tools.js';
 import { burstPhase, interpolateEnemyTransform, legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
 
@@ -463,6 +464,8 @@ export function createPresentation(scene, art, layouts) {
   muzzle.shadow.mapSize.set(256, 256);
   muzzle.shadow.camera.near = .07;
   muzzle.shadow.bias = -.002;
+  const offhandMuzzle = new THREE.SpotLight(0xffb77e, 0, 12, .72, .72, 1.65);
+  offhandMuzzle.visible = false;
   const headlightPattern = beamTexture(true);
   const fixtureLights = Array.from({ length:2 }, () => {
     const light = new THREE.SpotLight(0xffd9a0, 0, 18, .62, .66, 2);
@@ -475,7 +478,7 @@ export function createPresentation(scene, art, layouts) {
     light.shadow.normalBias = .038;
     return light;
   });
-  scene.add(lamp, lamp.target, muzzle, muzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
+  scene.add(lamp, lamp.target, muzzle, muzzle.target, offhandMuzzle, offhandMuzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
   const dot = new THREE.Mesh(new THREE.SphereGeometry(.012, 9, 6),
     new THREE.MeshBasicMaterial({ color:0xf54a36, toneMapped:false, fog:false }));
   dot.visible = false;
@@ -484,22 +487,28 @@ export function createPresentation(scene, art, layouts) {
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
   spark.visible = false; scene.add(spark);
-  const weaponMount = new THREE.Group(), lampMount = new THREE.Group();
+  const offhandSpark = spark.clone();
+  offhandSpark.material = spark.material.clone();
+  scene.add(offhandSpark);
+  const flashes = [{ muzzle, spark, shot: null }, { muzzle: offhandMuzzle, spark: offhandSpark, shot: null }];
+  const weaponMount = new THREE.Group(), lampMount = new THREE.Group(), offhandMount = new THREE.Group();
   const weaponAnchor = new THREE.Group(), lampAnchor = new THREE.Group(), supportAnchor = new THREE.Group();
   scene.add(weaponAnchor, lampAnchor, supportAnchor);
-  weaponAnchor.add(weaponMount); lampAnchor.add(lampMount);
-  function tool(name, mount) {
-    const model = art[name].scene.clone();
+  weaponAnchor.add(weaponMount); lampAnchor.add(lampMount); supportAnchor.add(offhandMount);
+  function tool(name, mount, source = name) {
+    const model = art[source].scene.clone();
     model.position.copy(layouts[name].offset);
     model.scale.setScalar(layouts[name].scale);
     mount.add(model);
     return model;
   }
-  const gloveR = tool('glove', weaponMount), gloveL = tool('glove', supportAnchor);
+  const gloveR = tool('glove', weaponMount), gloveL = tool('glove', offhandMount);
   const guns = Object.fromEntries(Object.keys(GUNS).map(w => [w, tool(w, weaponMount)]));
   const flashlight = tool('flashlight', lampMount);
+  const pistolLamp = tool('pistolLamp', weaponMount, 'flashlight');
+  const offhandPistol = tool('pistol', offhandMount);
   const firstPersonMats = new Map();
-  for (const model of [gloveR, gloveL, flashlight, ...Object.values(guns)]) {
+  for (const model of [gloveR, gloveL, flashlight, pistolLamp, offhandPistol, ...Object.values(guns)]) {
     model.traverse(node => {
       if (!node.isMesh) return;
       if (!firstPersonMats.has(node.material)) {
@@ -538,7 +547,7 @@ export function createPresentation(scene, art, layouts) {
     smg: { power: 112, size: .72, duration: .070 },
     carbine: { power: 286, size: 1.13, duration: .092 },
   };
-  let shot = null, pumpElapsed = Infinity, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
+  let pumpElapsed = Infinity, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
   let artworkLit = null;
 
   function reset(run) {
@@ -550,7 +559,7 @@ export function createPresentation(scene, art, layouts) {
     for (const view of pickups.values()) discardLoot(view);
     pickups.clear();
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
-    shot = null;
+    for (const flash of flashes) flash.shot = null;
     pumpElapsed = Infinity;
     lastWatch = '';
   }
@@ -806,7 +815,7 @@ export function createPresentation(scene, art, layouts) {
   function events(batch) {
     for (const event of batch) {
       if (event.type === 'shot') {
-        shot = { ...event, elapsed: 0, fresh: true };
+        flashes[Number(Boolean(event.offhand))].shot = { ...event, elapsed: 0, fresh: true };
         if (event.weapon === 'shotgun') pumpElapsed = 0;
         if (quality > 1) debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
@@ -816,17 +825,19 @@ export function createPresentation(scene, art, layouts) {
 
   function updateWatch(run) {
     const p = run.player;
-    const parts = [p.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor, p.flashlight, p.beam, Boolean(p.reload)];
+    const reloading = p.reload || p.offhand?.reload;
+    const parts = [p.ammo, p.offhand?.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor, p.flashlight, p.beam, Boolean(reloading)];
     const key = parts.join(':');
     if (key === lastWatch) return;
     lastWatch = key;
     const g = watch.ctx;
     g.fillStyle = '#121918'; g.fillRect(0, 0, 256, 156);
     g.strokeStyle = '#566c5c'; g.strokeRect(3, 3, 250, 150);
-    g.fillStyle = '#94a898'; g.font = '19px monospace'; g.fillText(p.reload ? 'RELOADING' : 'ROUNDS', 16, 27);
-    g.fillStyle = '#eeead8'; g.font = 'bold 39px monospace'; g.fillText(p.ammo + '/' + p.reserve, 15, 72);
+    g.fillStyle = '#94a898'; g.font = '19px monospace'; g.fillText(reloading ? 'RELOADING' : 'ROUNDS', 16, 27);
+    g.fillStyle = '#eeead8'; g.font = p.offhand ? 'bold 28px monospace' : 'bold 39px monospace';
+    g.fillText(p.ammo + (p.offhand ? '+' + p.offhand.ammo : '') + '/' + p.reserve, 15, 72);
     g.font = '16px monospace'; g.fillStyle = '#9bb6a6';
-    g.fillText((p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + Math.ceil(p.battery * 100) + '%', 16, 110);
+    g.fillText((p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + (p.offhand ? '∞' : Math.ceil(p.battery * 100) + '%'), 16, 110);
     g.fillStyle = '#35433a'; g.fillRect(16, 124, 221, 11);
     g.fillStyle = p.battery > .21 ? '#b1c79e' : '#dfa36f';
     g.fillRect(16, 124, 221 * p.battery, 11);
@@ -842,8 +853,12 @@ export function createPresentation(scene, art, layouts) {
     watchGroup.visible = stereo;
     for (const [k, m] of Object.entries(guns)) m.visible = k === p.weapon;
     weaponAnchor.visible = (active || calibration) && !!tracking.weapon;
-    lampAnchor.visible = active && !!tracking.lamp;
-    supportAnchor.visible = lampAnchor.visible;
+    lampAnchor.visible = active && !p.offhand && !!tracking.lamp;
+    pistolLamp.visible = active && Boolean(p.offhand);
+    offhandPistol.visible = Boolean(p.offhand);
+    offhandMuzzle.visible = Boolean(p.offhand);
+    const hand = p.offhand ? tracking.offhand : tracking.support || tracking.lamp;
+    supportAnchor.visible = active && !!hand;
     if (tracking.weapon) {
       weaponAnchor.position.copy(tracking.weapon.position);
       weaponAnchor.quaternion.copy(tracking.weapon.quaternion);
@@ -851,7 +866,8 @@ export function createPresentation(scene, art, layouts) {
     if (tracking.lamp) {
       lampAnchor.position.copy(tracking.lamp.position);
       lampAnchor.quaternion.copy(tracking.lamp.quaternion);
-      const hand = tracking.support || tracking.lamp;
+    }
+    if (hand) {
       supportAnchor.position.copy(hand.position);
       supportAnchor.quaternion.copy(hand.quaternion);
     }
@@ -859,11 +875,9 @@ export function createPresentation(scene, art, layouts) {
     gloveR.scale.x = left ? -1 : 1;
     gloveL.scale.x = left ? 1 : -1;
     watchGroup.position.x = left ? .04 : -.04;
-    const reload = !calibration && p.reload;
-    const showReload = reload ? 1 - reload.left / reload.duration : 0;
-    const dip = Math.sin(Math.PI * showReload);
-    weaponMount.rotation.set(-.47 * dip, 0, dip * (left ? -.35 : .35));
-    weaponMount.position.set(0, -.050 * dip, 0);
+    const { progress: showReload, dip, y, pitch, roll } = reloadMount(!calibration && p.reload, left);
+    weaponMount.rotation.set(pitch, 0, roll);
+    weaponMount.position.y = y;
     const slide = gun.getObjectByName('Slide'), mag = gun.getObjectByName('Magazine'), pump = gun.getObjectByName('Pump');
     if (slide) slide.position.z = (tracking.gunKick || 0) * 1.35 + (showReload > .72 && showReload < .91 ? .019 : 0);
     if (mag) {
@@ -875,7 +889,16 @@ export function createPresentation(scene, art, layouts) {
       const cycling = calibration ? 0 : clamp((pumpElapsed - .19) / .34, 0, 1);
       pump.position.z = Math.sin(cycling * Math.PI) * .081 + dip * .046;
     }
-    updateFlash(run.world, dt, settings, active);
+    const second = reloadMount(p.offhand?.reload, !left);
+    offhandMount.rotation.set(second.pitch, 0, second.roll);
+    offhandMount.position.y = second.y;
+    if (p.offhand && tracking.offhand) {
+      const slide = offhandPistol.getObjectByName('Slide'), mag = offhandPistol.getObjectByName('Magazine');
+      if (slide) slide.position.z = (tracking.offhandKick || 0) * 1.35 +
+        (second.progress > .72 && second.progress < .91 ? .019 : 0);
+      if (mag) mag.position.y = -.10 * second.dip;
+    }
+    for (const flash of flashes) updateFlash(flash, run.world, dt, settings, active);
     const { range, angle } = beamSettings(p);
     if (beam) {
       lamp.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
@@ -893,20 +916,21 @@ export function createPresentation(scene, art, layouts) {
     updateWatch(run);
   }
 
-  function updateFlash(world, dt, settings, active) {
+  function updateFlash(flash, world, dt, settings, active) {
+    const { muzzle, spark, shot } = flash;
     muzzle.intensity = 0;
     spark.visible = false;
-    if (!active) { shot = null; return; }
+    if (!active) { flash.shot = null; return; }
     if (!shot) return;
     const { duration, power, size } = flashTuning[shot.weapon];
-    if (shot.elapsed >= duration) { shot = null; return; }
+    if (shot.elapsed >= duration) { flash.shot = null; return; }
     const o = v3(shot.x, shot.y, shot.z), ray = v3(shot.ray.x, shot.ray.y, shot.ray.z);
     if (shot.fresh && !shot.blocked) {
       const cover = world.raycast(o, ray, 12);
       muzzle.distance = cover ? Math.max(.15, cover.t + .12) : 12;
       muzzle.position.copy(o);
       muzzle.target.position.copy(o).add(ray);
-      muzzle.shadow.needsUpdate = true;
+      if (muzzle.castShadow) muzzle.shadow.needsUpdate = true;
     }
     const fade = Math.max(0, 1 - shot.elapsed / duration);
     const reduced = settings.reducedFlashes ? .25 : 1;
