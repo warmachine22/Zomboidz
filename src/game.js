@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, flarePower, GUNS, LOOT, setLoot, STEP, stepRun, traceAim } from './simulation.js';
+import { addEnemy, BUILD, createRun, flarePower, GUNS, LOOT, resolvedBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
-import { heldPose, mountedAim, toolLayouts } from './held-tools.js';
+import { createGunHandling, gunAngle, heldPose, mountedAim, toolLayouts } from './held-tools.js';
 
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -42,6 +42,7 @@ const xr = createXR(renderer, scene, rig);
 const art = await loadArt();
 const layouts = toolLayouts(art);
 const presentation = createPresentation(scene, art, layouts);
+const handling = createGunHandling();
 $('start').disabled = false;
 $('start').textContent = touch ? 'Start on this screen' : 'Enter the forest';
 $('build').textContent = 'BUILD ' + BUILD;
@@ -60,6 +61,7 @@ let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '',
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
 let debugVisible = false;
 let aimHit = null;
+let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
 const text = (id, value) => { $(id).textContent = value; };
@@ -75,6 +77,8 @@ function clearInput() {
 
 function setPhase(next) {
   phase = next;
+  calibrating = false;
+  handling.reset(run.player.weapon);
   panelKey = '';
   const running = phase === 'playing', isXR = !!xr.active;
   document.body.classList.toggle('running', running);
@@ -107,17 +111,23 @@ function pointerLock() {
 
 function start(seed = rapidSeed()) {
   useMouseDrag = false;
-  const encounter = debugEnabled && qs.get('scenario') === 'roadside';
+  const scenario = debugEnabled ? qs.get('scenario') : '';
+  const encounter = scenario === 'roadside' || scenario === 'night';
   run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48, populate: !encounter });
-  if (encounter) {
+  yaw = pitch = roomX = roomZ = 0;
+  if (scenario === 'roadside') {
     addEnemy(run, 'shambler', -.55, 13.6);
     addEnemy(run, 'shrieker', 1.7, 10.2);
     addEnemy(run, 'brute', -.6, 8.4);
     setLoot(run, 'armor2', 1.5, 14.9);
     setLoot(run, 'shotgun', -1.7, 11.1);
+  } else if (scenario === 'night') {
+    Object.assign(run.player, { x: 3, z: 36, y: run.world.height(3, 36), yaw: Math.PI, flashlight: false });
+    yaw = Math.PI;
+    addEnemy(run, 'shambler', 3, 42);
+    setLoot(run, 'carbine', 2.55, 41).born = -26;
   }
   runId = rapidSeed();
-  yaw = pitch = roomX = roomZ = 0;
   notice = '';
   hudAt = debugAt = -1;
   quality = 3;
@@ -214,6 +224,25 @@ for (const field of document.querySelectorAll('[data-setting]')) {
     if (key === 'volume') audio.setVolume(settings.volume);
   });
 }
+function updateGunSettings(pitch, yaw) {
+  settings.gunPitch = gunAngle(pitch);
+  settings.gunYaw = gunAngle(yaw);
+  for (const field of document.querySelectorAll('[data-angle]')) {
+    const value = settings[field.dataset.angle];
+    field.value = value;
+    text(field.dataset.angle + '-value', value + '°');
+  }
+  $('sight-preview').style.transform = 'translate(' + -settings.gunYaw * 1.7 + 'px,' + -settings.gunPitch * 1.25 + 'px)';
+  saveSettings(settings);
+}
+updateGunSettings(settings.gunPitch, settings.gunYaw);
+for (const field of document.querySelectorAll('[data-angle]')) {
+  field.addEventListener('input', () => {
+    const values = { ...settings, [field.dataset.angle]: Number(field.value) };
+    updateGunSettings(values.gunPitch, values.gunYaw);
+  });
+}
+$('gun-angle-reset').addEventListener('click', () => updateGunSettings(0, 0));
 audio.setVolume(settings.volume);
 $('initials').value = settings.initials;
 $('initials').addEventListener('change', event => {
@@ -364,17 +393,22 @@ function desktopView() {
     quaternion: view.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(a,b,0))),
   });
   const span = touch ? .19 : .236;
-  const long = p.weapon === 'shotgun' ? -.63 : -.48;
+  const long = p.weapon === 'shotgun' || p.weapon === 'carbine' ? -.63 : -.48;
   return { view, tracking: {
     weapon: hold(sign * span, -.323, long, .037, sign * .085),
     lamp: hold(-sign * (span + .009), -.264, -.435, -.037, -sign * .072),
   } };
 }
 
-function trackedView(stereo) {
+function trackedView(stereo, update = false, sample = null, dt = 0, lead = 0) {
   const view = stereo ? xr.sync(run.player, settings) : desktopView();
-  view.tracking.weapon = heldPose(view.tracking.weapon, true, stereo);
-  view.tracking.lamp = heldPose(view.tracking.lamp, false, stereo);
+  const kind = run.player.weapon, layout = layouts[kind];
+  view.tracking.weapon = heldPose(view.tracking.weapon, stereo);
+  view.tracking.lamp = heldPose(view.tracking.lamp, stereo);
+  if (update) handling.updateBrace(kind, view.tracking, layout, settings, stereo && phase === 'playing', sample?.supportGrip, dt);
+  view.tracking = handling.resolve(view.tracking, layout, view.view, settings, stereo, calibrating, lead);
+  view.aim = mountedAim(view.tracking.weapon, layout, view.view);
+  view.beam = mountedAim(view.tracking.lamp, layouts.flashlight, view.view);
   return view;
 }
 
@@ -394,7 +428,10 @@ function handleEvent(batch) {
     if (event.type === 'dry') setNotice(event.reason, 1.25);
     else if (event.type === 'pickup') setNotice(event.message);
     else if (event.type === 'light' && event.empty) setNotice('Battery depleted. Recharging.');
-    else if (event.type === 'shot') xr.haptic(event.weapon, settings);
+    else if (event.type === 'shot') {
+      handling.kick(settings.leftHanded);
+      xr.haptic(event.weapon, settings, handling.braced);
+    }
     else if (event.type === 'armorHit') {
       xr.haptic('armor', settings);
       setNotice(event.armor ? 'Armor took the hit' : 'Armor broke');
@@ -423,7 +460,10 @@ function updateHUD(force = false) {
 }
 
 function xrUI(sample, trackedView) {
-  if (!xr.active || !sample || !trackedView.view) return;
+  if (!xr.active || !sample || !trackedView.view) {
+    xr.drawAimPreview(null);
+    return;
+  }
   if (phase === 'playing') {
     xr.hidePanel();
     const target = run.offer && 'GRIP  ·  ' + LOOT[run.offer.kind].name;
@@ -434,22 +474,31 @@ function xrUI(sample, trackedView) {
     return;
   }
   xr.drawPrompt('', trackedView.view);
-  const key = phase + ':' + sample.tracked;
+  const key = calibrating ? 'angle:' + settings.gunPitch + ':' + settings.gunYaw : phase + ':' + sample.tracked;
   if (panelKey !== key) {
     panelKey = key;
     const cards = {
       menu: {
         title: 'Enter the forest',
-        lines: ['Weapon trigger fires. Primary button reloads.', 'Other trigger toggles light. Grip equips loot.',
-          'Left stick moves. Right stick snap turns.', 'Look at your wrist for ammo and armor.'],
+        lines: ['Weapon trigger fires. Primary button reloads.', 'Light trigger toggles light. Hold light grip to brace.',
+          'Weapon grip equips loot. Left stick moves.', 'Right stick snap turns. Check ammo on your wrist.'],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
+        second: 'WEAPON PRIMARY  ·  GUN ANGLE',
       },
-      paused: { title: 'Paused', lines: [pauseReason], hint: sample.tracked ? 'TRIGGER  ·  RESUME' : 'CONNECT BOTH CONTROLLERS' },
+      paused: { title: 'Paused', lines: [pauseReason],
+        hint: sample.weaponTracked ? 'TRIGGER  ·  RESUME' : 'CONNECT WEAPON CONTROLLER', second: 'WEAPON PRIMARY  ·  GUN ANGLE' },
+      angle: { title: 'Gun Angle', lines: [
+        'Aim at this panel to see where the barrel points.',
+        'Weapon stick adjusts pitch and yaw by 1°.',
+        'Pitch ' + settings.gunPitch + '°    /    Yaw ' + settings.gunYaw + '°',
+      ], hint: 'TRIGGER  ·  DONE', second: 'WEAPON GRIP  ·  RESET TO DEFAULT' },
       results: { title: 'The light went out.', lines: [deathMessage, formatTime(run.time) + ' survived   /   ' + run.player.kills + ' kills',
         run.player.headshots + ' headshots   /   ' + resultNote], hint: 'TRIGGER  ·  NEW FOREST', second: 'WEAPON GRIP  ·  SAME SEED' },
     };
-    xr.drawPanel(phase, trackedView.view, cards[phase]);
+    const page = calibrating ? 'angle' : phase;
+    xr.drawPanel(page, trackedView.view, cards[page]);
   }
+  xr.drawAimPreview(calibrating ? trackedView.aim : null);
 }
 
 function measure(wall, stereo) {
@@ -476,23 +525,25 @@ function measure(wall, stereo) {
 }
 
 function simulate(t, sample, stereo) {
-  let view = trackedView(stereo);
   accumulator = Math.min(.22, accumulator + t);
   while (accumulator + 1e-9 >= STEP && phase === 'playing') {
     accumulator -= STEP;
     const state = stereo ? { yaw: sample?.yaw, eyeHeight: sample?.eyeHeight,
       fireHeld: sample?.fireHeld, moveX: sample?.moveX, moveZ: sample?.moveZ, walk: sample?.walk } : desktopInput();
+    handling.advance(STEP);
+    const aimed = trackedView(stereo, true, sample, STEP);
     const input = { ...state, ...queued,
-      roomX, roomZ, aim: mountedAim(view.tracking.weapon, layouts[run.player.weapon], view.view, !stereo),
-      lamp: mountedAim(view.tracking.lamp, layouts.flashlight, view.view, false),
+      roomX, roomZ, aim: aimed.aim, lamp: aimed.beam,
+      weaponUnavailable: stereo && !aimed.aim, lampUnavailable: stereo && !aimed.beam,
     };
     roomX = roomZ = 0;
     for (const key of Object.keys(queued)) delete queued[key];
+    const weapon = run.player.weapon;
     const batch = stepRun(run, input);
     handleEvent(batch);
-    view = trackedView(stereo);
+    if (weapon !== run.player.weapon)
+      handling.updateBrace(run.player.weapon, {}, layouts[run.player.weapon], settings, false, sample?.supportGrip, 0);
   }
-  return view;
 }
 
 function frame(now, xrFrame) {
@@ -504,14 +555,21 @@ function frame(now, xrFrame) {
   if (stereo) {
     if (sample) {
       headTrackedAt = performance.now();
-      if (phase === 'menu' && sample.fire && sample.tracked) start();
-      else if (phase === 'paused' && sample.fire && sample.tracked) resume();
-      else if (phase === 'results' && performance.now() - deathAt > 950) {
+      if (phase === 'menu' || phase === 'paused') {
+        if (calibrating) {
+          if (sample.fire || sample.pause) { calibrating = false; panelKey = ''; }
+          else if (sample.interact) updateGunSettings(0, 0);
+          else if (sample.anglePitch || sample.angleYaw)
+            updateGunSettings(settings.gunPitch + sample.anglePitch, settings.gunYaw + sample.angleYaw);
+        } else if (sample.reload) { calibrating = true; panelKey = ''; }
+        else if (phase === 'menu' && sample.fire && sample.tracked) start();
+        else if (phase === 'paused' && sample.fire && sample.weaponTracked) resume();
+      } else if (phase === 'results' && performance.now() - deathAt > 950) {
         if (sample.fire) start();
         else if (sample.interact) start(run.seed);
       } else if (phase === 'playing') {
         if (sample.pause) pause();
-        else if (!sample.tracked && sample.missingFor > .5) pause('Controller tracking was lost.');
+        else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
         else {
           for (const key of ['reload', 'fire', 'toggleLight', 'toggleBeam', 'interact'])
             if (sample[key]) queued[key] = true;
@@ -522,20 +580,25 @@ function frame(now, xrFrame) {
   }
   const dt = Math.min(.09, elapsed);
   measure(elapsed, stereo);
-  const view = phase === 'playing' && !manualClock && (!stereo || (sample?.tracked && xr.active.visibilityState === 'visible'))
-    ? simulate(previous === phase ? dt : 0, sample, stereo)
-    : trackedView(stereo);
+  if (phase === 'playing' && !manualClock && (!stereo || xr.active.visibilityState === 'visible'))
+    simulate(previous === phase && (!stereo || sample) ? dt : 0, sample, stereo);
+  const view = trackedView(stereo, false, null, 0, accumulator);
   const active = phase === 'playing';
-  aimHit = active && !run.player.reload && settings.laserDot && (!stereo || sample?.tracked)
-    ? traceAim(run, mountedAim(view.tracking.weapon, layouts[run.player.weapon], view.view, !stereo)) : null;
+  aimHit = active && !run.player.reload && settings.laserDot && view.aim ? traceAim(run, view.aim) : null;
+  const beam = active && run.player.flashlight ? resolvedBeam(run.world, view.beam, view.view?.position) : null;
   presentation.update(run, dt, settings, view.tracking, {
-    active, stereo, menu: phase === 'menu' && !stereo, aimHit, viewpoint: view.view?.position,
+    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, aimHit, beam, viewpoint: view.view?.position,
   });
   if (view.view) {
     audio.listener(view.view.position, direction0.clone().applyQuaternion(view.view.quaternion),
       vertical.clone().applyQuaternion(view.view.quaternion), run);
   }
-  if (phase === 'playing' && !stereo) updateHUD();
+  if (phase === 'playing' && !stereo) {
+    const point = view.aim.origin.clone().addScaledVector(view.aim.ray, 27).project(camera);
+    $('crosshair').style.left = (point.x + 1) * 50 + '%';
+    $('crosshair').style.top = (1 - point.y) * 50 + '%';
+    updateHUD();
+  }
   xrUI(sample, view);
   if (debugVisible && run.time >= debugAt && phase === 'playing' && !stereo) {
     debugAt = run.time + .15;

@@ -2,6 +2,7 @@
 import math
 import random
 import json
+import sys
 from pathlib import Path
 import bpy
 from mathutils import Vector
@@ -222,6 +223,44 @@ def hardware(kind):
                                   (.103, .013)], .038, steel, mag, .004)
         block("Mag floor plate", (0, .035, -.200), (.046, .070, .014), carbon, .003, mag, .08)
         muzzle, muzzle_y = .414, .060
+    elif kind == "carbine":
+        profile("Fixed walnut stock", [(-.355, .046), (-.359, -.072), (-.299, -.082),
+                (-.114, -.005), (-.098, .057), (-.233, .052)], .058, wood, root, .011)
+        block("Rubber butt plate", (0, -.354, -.014), (.062, .016, .123), carbon, .005, root, -.045)
+        block("Forged upper", (0, .058, .055), (.052, .284, .077), steel, .005, root)
+        block("Lower receiver", (0, .051, .009), (.047, .223, .032), edge, .004, root)
+        block("Ejection recess", (.026, .097, .060), (.005, .086, .025), carbon, .002, root)
+        profile("Checkered pistol grip", [(-.076, .019), (-.117, -.076), (-.079, -.096),
+                (-.030, .008)], .035, wood, root, .006)
+        block("Trigger guard", (0, .006, -.022), (.024, .085, .010), steel, .004, root)
+        block("Trigger", (0, -.018, -.002), (.008, .015, .036), edge, .001, root, -.30)
+        profile("Tapered handguard", [(.165, .083), (.382, .077), (.409, .049),
+                (.392, .004), (.184, -.008), (.158, .022)], .060, wood, root, .007)
+        for side in [-1, 1]:
+            for i in range(6):
+                block("Handguard grooves", (side * .030, .199 + i * .029, .055),
+                      (.002, .014, .006), carbon, .001, root)
+        block("Angled foregrip", (0, .284, -.025), (.034, .081, .042), polymer, .009, root, -.23)
+        tube("Free barrel", (0, .448, .063), .011, .215, steel, root)
+        tube("Crown", (0, .554, .063), .016, .031, edge, root)
+        tube("Bore", (0, .570, .063), .009, .002, carbon, root)
+        block("Rear sight base", (0, -.066, .099), (.030, .025, .012), carbon, .003, root)
+        for side in [-1, 1]:
+            block("Rear sight ears", (side * .009, -.068, .113), (.009, .017, .020), steel, .002, root)
+            block("Rear sight line", (side * .006, -.077, .117), (.003, .002, .004), ivory, .0005, root)
+            block("Front sight ears", (side * .009, .409, .100), (.005, .025, .023), steel, .002, root)
+        block("Front sight post", (0, .409, .104), (.005, .009, .029), edge, .001, root)
+        block("Front sight insert", (0, .404, .117), (.003, .003, .005), ivory, .0005, root)
+        slide = empty("Slide")
+        block("Bolt", (.027, .088, .060), (.005, .063, .016), edge, .002, slide)
+        block("Charging handle", (.037, .073, .061), (.023, .018, .013), steel, .002, slide)
+        mag = empty("Magazine")
+        profile("Box magazine", [(.025, .007), (.027, -.125), (.088, -.121),
+                (.100, -.093), (.093, .007)], .036, steel, mag, .004)
+        for side in [-1, 1]:
+            block("Magazine rib", (side * .018, .059, -.058), (.002, .009, .095), edge, .001, mag, -.14)
+        block("Magazine floor plate", (0, .056, -.121), (.041, .067, .009), carbon, .002, mag)
+        muzzle, muzzle_y = .572, .063
     else:
         tube("Body", (0, .034, .020), .029, .196, polymer, root, sides=12)
         tube("Tail cap", (0, -.078, .020), .030, .019, carbon, root, sides=10)
@@ -238,10 +277,19 @@ def hardware(kind):
         "pistol": (0, -.037, -.020),
         "shotgun": (0, -.086, -.022),
         "smg": (0, -.075, -.033),
+        "carbine": (0, -.079, -.028),
         "flashlight": (0, -.011, -.008),
     }[kind]
     empty("GripSocket", palm).parent = root
     empty("MuzzleSocket", (0, muzzle, muzzle_y)).parent = root
+    support = {
+        "pistol": (.032, -.022, -.045),
+        "shotgun": (.047, .350, -.025),
+        "smg": (.042, .231, .012),
+        "carbine": (.043, .275, -.024),
+    }.get(kind)
+    if support:
+        empty("SupportSocket", support).parent = root
     merge_static_materials()
     export(kind)
 
@@ -549,7 +597,15 @@ def zombie(kind):
     export(kind, True)
 
 
-for weapon in ["pistol", "shotgun", "smg", "flashlight"]:
+weapons = ["pistol", "shotgun", "smg", "carbine", "flashlight"]
+if "--" in sys.argv:
+    for weapon in sys.argv[sys.argv.index("--") + 1:]:
+        if weapon not in weapons:
+            raise ValueError(f"Unknown hardware: {weapon}")
+        hardware(weapon)
+    sys.exit()
+
+for weapon in weapons:
     hardware(weapon)
 glove()
 wreck()

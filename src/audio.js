@@ -95,6 +95,12 @@ export function createAudio() {
       * Math.exp(-t*22) * Math.min(1,t*90));
     procedural('fallback', .42, (t, n, low) => (n*.56 + low*.44)
       * Math.exp(-t*23) * .93 * Math.min(1,t*900));
+    procedural('carbine', .33, (t, n, low) => {
+      const crack = (.76 * n + .24 * Math.sin(2 * Math.PI * 880 * t)) * Math.exp(-t * 86);
+      const report = (.50 * n + .34 * low + .28 * Math.sin(2 * Math.PI * (155 - 140 * t) * t)) * Math.exp(-t * 29);
+      const echo = t > .067 ? low * .75 * Math.exp(-(t - .067) * 20) : 0;
+      return Math.tanh((crack + report + echo) * 1.4) * Math.min(1, t * 1800);
+    });
   }
 
   function play(name, { bus = effects, gain = .4, speed = 1, loc, priority = 0, occluded = false, id = null } = {}) {
@@ -170,10 +176,11 @@ export function createAudio() {
     const p = run.player;
     for (const e of batch) {
       if (e.type === 'shot') {
-        play(buffers.has(e.weapon) ? e.weapon : 'fallback', { bus: weapons, gain: e.weapon === 'shotgun' ? .81 : .59,
+        const gain = e.weapon === 'shotgun' ? .81 : e.weapon === 'carbine' ? .72 : .59;
+        play(buffers.has(e.weapon) ? e.weapon : 'fallback', { bus: weapons, gain,
           speed: .94 + Math.random() * .13 });
       } else if (e.type === 'reload') {
-        play(e.weapon === 'smg' ? 'reload-smg-short' : e.weapon === 'shotgun' ? 'pump' : 'reload-short',
+        play(e.weapon === 'smg' || e.weapon === 'carbine' ? 'reload-smg-short' : e.weapon === 'shotgun' ? 'pump' : 'reload-short',
           { bus: weapons, gain: .35 });
       } else if (e.type === 'loaded' || e.type === 'dry' || e.type === 'light' || e.type === 'pickup') {
         play('switch', { gain: e.type === 'dry' ? .36 : .23, speed: e.type === 'pickup' ? 1.57 : 1 });

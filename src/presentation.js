@@ -49,7 +49,7 @@ const surfaces = {
 surfaces.stone.map.repeat.set(1.55, 1.55);
 surfaces.boards.map.repeat.set(2.2, .6);
 
-const modelNames = ['pistol', 'shotgun', 'smg', 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
+const modelNames = [...Object.keys(GUNS), 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
 export async function loadArt() {
   const source = await Promise.all(modelNames.map(name =>
     models.loadAsync(new URL('./assets/art/' + name + '.glb', import.meta.url).href)));
@@ -279,11 +279,12 @@ function lootIcon(kind) {
   g.fill(); g.stroke();
   g.fillStyle = color;
   if (kind in GUNS) {
-    g.fillRect(-23, -7, kind === 'shotgun' ? 50 : 42, 7);
+    g.fillRect(-23, -7, kind === 'shotgun' || kind === 'carbine' ? 50 : 42, 7);
     g.fillRect(-14, 0, kind === 'pistol' ? 10 : 23, 5);
     g.beginPath(); g.moveTo(-12, 1); g.lineTo(-2, 2); g.lineTo(-9, 16); g.lineTo(-19, 16); g.fill();
     if (kind === 'smg') g.fillRect(0, 2, 7, 15);
     if (kind === 'shotgun') g.fillRect(-30, 0, 12, 9);
+    if (kind === 'carbine') { g.fillRect(-28, -5, 8, 13); g.fillRect(1, 0, 9, 11); }
   } else if (kind.startsWith('armor')) {
     g.beginPath();
     g.moveTo(-16, -14); g.lineTo(0, -19); g.lineTo(16, -14); g.lineTo(14, 7);
@@ -349,7 +350,12 @@ export function createPresentation(scene, art, layouts) {
   moon.position.set(-16, 12, -25); scene.add(moon);
   const sky = fogSky(scene);
   const lamp = makeLamp();
-  const muzzle = new THREE.SpotLight(0xffa660, 0, 13, .61, .66, 1.48);
+  const muzzle = new THREE.SpotLight(0xffb77e, 0, 12, .72, .72, 1.65);
+  muzzle.castShadow = true;
+  muzzle.shadow.autoUpdate = false;
+  muzzle.shadow.mapSize.set(256, 256);
+  muzzle.shadow.camera.near = .07;
+  muzzle.shadow.bias = -.002;
   const fixtureLights = Array.from({ length:2 }, () => new THREE.SpotLight(0xffd9a0, 0, 10, .63, .62, 1.65));
   scene.add(lamp, lamp.target, muzzle, muzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
   const dot = new THREE.Mesh(new THREE.SphereGeometry(.012, 9, 6),
@@ -361,8 +367,8 @@ export function createPresentation(scene, art, layouts) {
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
   spark.visible = false; scene.add(spark);
   const weaponMount = new THREE.Group(), lampMount = new THREE.Group();
-  const weaponAnchor = new THREE.Group(), lampAnchor = new THREE.Group();
-  scene.add(weaponAnchor, lampAnchor);
+  const weaponAnchor = new THREE.Group(), lampAnchor = new THREE.Group(), supportAnchor = new THREE.Group();
+  scene.add(weaponAnchor, lampAnchor, supportAnchor);
   weaponAnchor.add(weaponMount); lampAnchor.add(lampMount);
   function tool(name, mount) {
     const model = art[name].scene.clone();
@@ -371,7 +377,7 @@ export function createPresentation(scene, art, layouts) {
     mount.add(model);
     return model;
   }
-  const gloveR = tool('glove', weaponMount), gloveL = tool('glove', lampMount);
+  const gloveR = tool('glove', weaponMount), gloveL = tool('glove', supportAnchor);
   const guns = Object.fromEntries(Object.keys(GUNS).map(w => [w, tool(w, weaponMount)]));
   const flashlight = tool('flashlight', lampMount);
   const firstPersonMats = new Map();
@@ -387,7 +393,7 @@ export function createPresentation(scene, art, layouts) {
     });
   }
   const watch = labelCanvas(256, 156);
-  const watchGroup = new THREE.Group(); lampMount.add(watchGroup);
+  const watchGroup = new THREE.Group(); supportAnchor.add(watchGroup);
   watchGroup.position.set(-.04, .073, .052);
   watchGroup.rotation.set(-Math.PI / 2 - .32, 0, -.12);
   const frame = new THREE.Mesh(baseBox, new THREE.MeshStandardMaterial({ color: 0x151a16, roughness: .75 }));
@@ -408,7 +414,13 @@ export function createPresentation(scene, art, layouts) {
     other: new THREE.MeshStandardMaterial({ color: 0xb09b7e }),
     casing: new THREE.MeshStandardMaterial({ color: 0x988257, roughness: .4, metalness: .5 }),
   };
-  let shot = null, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
+  const flashTuning = {
+    pistol: { power: 240, size: 1, duration: .090 },
+    shotgun: { power: 350, size: 1.35, duration: .100 },
+    smg: { power: 112, size: .72, duration: .070 },
+    carbine: { power: 286, size: 1.13, duration: .092 },
+  };
+  let shot = null, pumpElapsed = Infinity, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
   let artworkLit = null;
 
   function reset(run) {
@@ -421,6 +433,7 @@ export function createPresentation(scene, art, layouts) {
     pickups.clear();
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
     shot = null;
+    pumpElapsed = Infinity;
     lastWatch = '';
   }
 
@@ -544,9 +557,9 @@ export function createPresentation(scene, art, layouts) {
     return d <= range && delta.dot(ray) > Math.cos(angle)*d && world.clear(from,target);
   }
 
-  function updateLoot(run, fixtures, active) {
+  function updateLoot(run, fixtures, active, beam) {
     const desired = new Set();
-    const p = run.player, beam = run.beam;
+    const p = run.player;
     const nearest = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && distance(item,p) < 34)
       .map(item => ({item, d:distance(item,p), power:flarePower(run.time-item.born)}))
       .filter(item => item.power > .005)
@@ -619,7 +632,8 @@ export function createPresentation(scene, art, layouts) {
   function events(batch) {
     for (const event of batch) {
       if (event.type === 'shot') {
-        shot = { ...event, life: .12, spark: .058 };
+        shot = { ...event, elapsed: 0, fresh: true };
+        if (event.weapon === 'shotgun') pumpElapsed = 0;
         if (quality > 1) debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
       if (event.type === 'impact') debris(event);
@@ -649,12 +663,13 @@ export function createPresentation(scene, art, layouts) {
     watch.texture.needsUpdate = true;
   }
 
-  function updateTools(run, dt, settings, tracking, active, stereo) {
+  function updateTools(run, dt, settings, tracking, active, stereo, calibration, beam) {
     const p = run.player, gun = guns[p.weapon];
     watchGroup.visible = stereo;
     for (const [k, m] of Object.entries(guns)) m.visible = k === p.weapon;
-    weaponAnchor.visible = active && !!tracking.weapon;
+    weaponAnchor.visible = (active || calibration) && !!tracking.weapon;
     lampAnchor.visible = active && !!tracking.lamp;
+    supportAnchor.visible = lampAnchor.visible;
     if (tracking.weapon) {
       weaponAnchor.position.copy(tracking.weapon.position);
       weaponAnchor.quaternion.copy(tracking.weapon.quaternion);
@@ -662,50 +677,41 @@ export function createPresentation(scene, art, layouts) {
     if (tracking.lamp) {
       lampAnchor.position.copy(tracking.lamp.position);
       lampAnchor.quaternion.copy(tracking.lamp.quaternion);
+      const hand = tracking.support || tracking.lamp;
+      supportAnchor.position.copy(hand.position);
+      supportAnchor.quaternion.copy(hand.quaternion);
     }
     const left = settings.leftHanded;
     gloveR.scale.x = left ? -1 : 1;
     gloveL.scale.x = left ? 1 : -1;
     watchGroup.position.x = left ? .04 : -.04;
-    const recoil = shot ? Math.max(0, shot.life / .12) ** 1.8 : 0;
-    const showReload = p.reload ? 1 - p.reload.left / p.reload.duration : 0;
-    const dip = p.reload ? Math.sin(Math.PI * showReload) : 0;
-    weaponMount.rotation.set(recoil * (p.weapon === 'shotgun' ? .139 : p.weapon === 'smg' ? .053 : .09) - .47 * dip,
-      0, dip * (left ? -.35 : .35));
-    weaponMount.position.set(0, -.050 * dip, recoil * .033);
+    const reload = !calibration && p.reload;
+    const showReload = reload ? 1 - reload.left / reload.duration : 0;
+    const dip = Math.sin(Math.PI * showReload);
+    weaponMount.rotation.set(-.47 * dip, 0, dip * (left ? -.35 : .35));
+    weaponMount.position.set(0, -.050 * dip, 0);
     const slide = gun.getObjectByName('Slide'), mag = gun.getObjectByName('Magazine'), pump = gun.getObjectByName('Pump');
-    if (slide) slide.position.z = recoil * .052 + (showReload > .72 && showReload < .91 ? .019 : 0);
-    if (mag) { mag.position.y = dip * (p.weapon === 'smg' ? -.16 : -.10); mag.visible = p.weapon !== 'shotgun' || dip > .13; }
-    if (pump) pump.position.z = shot ? Math.sin(clamp(1 - shot.life / .12, 0, 1) * Math.PI) * .081 : dip * .046;
-    lampMount.rotation.set(0, 0, 0);
-    if (shot) {
-      shot.life -= dt; shot.spark -= dt;
-      const o = v3(shot.x, shot.y, shot.z), ray = v3(shot.ray.x, shot.ray.y, shot.ray.z);
-      muzzle.position.copy(o); muzzle.target.position.copy(o).add(ray);
-      const scale = shot.weapon === 'shotgun' ? 1.65 : shot.weapon === 'smg' ? .7 : 1;
-      const reduced = settings.reducedFlashes ? .25 : 1;
-      muzzle.intensity = active && !shot.blocked ? 52 * scale * recoil ** 2 * reduced : 0;
-      spark.position.copy(o).addScaledVector(ray, shot.blocked ? 0 : .105);
-      spark.material.opacity = Math.max(0, shot.spark / .058) * .96 * reduced;
-      spark.material.rotation = shot.life * 11;
-      spark.scale.set(.43 * scale, .32 * scale, 1);
-      spark.visible = active && shot.spark > 0;
-      if (shot.life <= 0) { shot = null; }
-    } else { muzzle.intensity = 0; spark.visible = false; }
+    if (slide) slide.position.z = (tracking.gunKick || 0) * 1.35 + (showReload > .72 && showReload < .91 ? .019 : 0);
+    if (mag) {
+      mag.position.y = dip * (p.weapon === 'smg' || p.weapon === 'carbine' ? -.16 : -.10);
+      mag.visible = p.weapon !== 'shotgun' || dip > .13;
+    }
+    if (active) pumpElapsed += dt;
+    if (pump) {
+      const cycling = calibration ? 0 : clamp((pumpElapsed - .19) / .34, 0, 1);
+      pump.position.z = Math.sin(cycling * Math.PI) * .081 + dip * .046;
+    }
+    updateFlash(run.world, dt, settings, active);
     const { range, angle } = beamSettings(p);
-    const beam = run.beam;
     if (beam) {
       lamp.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
       lamp.target.position.copy(lamp.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
-    } else if (tracking.lamp) {
-      lamp.position.copy(tracking.lamp.position).add(forward.clone().applyQuaternion(tracking.lamp.quaternion).multiplyScalar(.18));
-      lamp.target.position.copy(lamp.position).add(forward.clone().applyQuaternion(tracking.lamp.quaternion));
     }
     lamp.angle = angle;
     lamp.distance = range;
     const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
-    lamp.intensity = active && tracking.lamp && p.flashlight ? (p.beam === 'focus' ? 137 : 116) * power : 0;
-    const litByLamp = lamp.intensity > 0;
+    lamp.intensity = beam ? (p.beam === 'focus' ? 137 : 116) * power : 0;
+    const litByLamp = lamp.intensity > 0 || calibration;
     if (artworkLit !== litByLamp) {
       artworkLit = litByLamp;
       for (const mat of firstPersonMats.values()) mat.emissiveIntensity = litByLamp ? .85 : 0;
@@ -713,15 +719,42 @@ export function createPresentation(scene, art, layouts) {
     updateWatch(run);
   }
 
-  function update(run, dt, settings, tracking, { active, stereo, menu, aimHit, viewpoint }) {
+  function updateFlash(world, dt, settings, active) {
+    muzzle.intensity = 0;
+    spark.visible = false;
+    if (!active) { shot = null; return; }
+    if (!shot) return;
+    const { duration, power, size } = flashTuning[shot.weapon];
+    if (shot.elapsed >= duration) { shot = null; return; }
+    const o = v3(shot.x, shot.y, shot.z), ray = v3(shot.ray.x, shot.ray.y, shot.ray.z);
+    if (shot.fresh && !shot.blocked) {
+      const cover = world.raycast(o, ray, 12);
+      muzzle.distance = cover ? Math.max(.15, cover.t + .12) : 12;
+      muzzle.position.copy(o);
+      muzzle.target.position.copy(o).add(ray);
+      muzzle.shadow.needsUpdate = true;
+    }
+    const fade = Math.max(0, 1 - shot.elapsed / duration);
+    const reduced = settings.reducedFlashes ? .25 : 1;
+    muzzle.intensity = shot.blocked ? 0 : power * fade ** 1.65 * reduced;
+    spark.position.copy(o).addScaledVector(ray, shot.blocked ? 0 : .095);
+    spark.material.opacity = Math.max(0, 1 - shot.elapsed / .043) * .92 * reduced;
+    spark.material.rotation = shot.elapsed * 11;
+    spark.scale.set(.38 * size, .27 * size, 1);
+    spark.visible = spark.material.opacity > 0;
+    shot.fresh = false;
+    shot.elapsed += dt;
+  }
+
+  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, beam, viewpoint }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
     sky.position.set(p.x, p.y, p.z);
     if (!chunks.size || tick % 12 === 0) updateChunks(run.world, p);
     const fixtures = updateFixtures(p);
     updateEnemies(run, dt, aimHit?.e?.id);
-    updateLoot(run, fixtures, active);
-    updateTools(run, dt, settings, tracking, active, stereo);
+    updateLoot(run, fixtures, active, beam);
+    updateTools(run, dt, settings, tracking, active, stereo, calibration, beam);
     dot.visible = Boolean(aimHit && viewpoint);
     if (dot.visible) {
       dot.position.set(aimHit.point.x,aimHit.point.y,aimHit.point.z);
@@ -732,13 +765,13 @@ export function createPresentation(scene, art, layouts) {
       dot.scale.setScalar(scale);
       dot.material.color.setHex(laserColors[aimHit.zone] ?? 0xf35347);
     }
-    const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'dark';
+    const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'forest';
     if (tone !== ambiance) {
       tone = ambiance;
       sky.visible = menu;
-      moon.intensity = menu ? .34 : 0;
-      ambient.intensity = menu ? .63 : settings.visibility ? .065 : 0;
-      scene.fog.color.set(menu ? 0x172127 : 0x000000);
+      moon.intensity = menu ? .34 : settings.visibility ? .17 : .115;
+      ambient.intensity = menu ? .63 : settings.visibility ? .43 : .32;
+      scene.fog.color.set(menu ? 0x172127 : settings.visibility ? 0x0b1013 : 0x070a0d);
     }
     for (let i = effects.length - 1; i >= 0; i--) {
       const effect = effects[i];

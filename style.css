@@ -86,6 +86,13 @@ input[type=range] { width: min(130px, 35%); }
 .battery-track { height: 5px; background: #425049; margin-top: 5px; overflow: hidden; border-radius: 1px; }
 .battery-track i { display: block; height: 100%; background: #bad0a8; width: 100%; transform-origin: left; }
 #crosshair { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; border-radius: 50%; background: #eee9d1d9; box-shadow: 0 0 0 1px #0c0f0db0; transform: translate(-50%, -50%); }
+.gun-settings { margin: 16px 0; }
+.gun-settings summary { cursor: pointer; }
+.gun-settings .preferences { margin-bottom: 10px; }
+.sight-preview { position: relative; width: 104px; height: 74px; margin: 8px auto; border: 1px solid #a0aa8d70; background: #151a18; }
+.sight-preview::before, .sight-preview i { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%; }
+.sight-preview::before { content: ""; outline: 1px solid #a0aa8d; }
+.sight-preview i { background: #e7e8a0; }
 #notice, #offer, #reload-meter {
   position: absolute; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 28px);
   text-align: center; font: 11px/1.4 var(--mono); color: #eef0d9; border-radius: 2px; }

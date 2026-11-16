@@ -3,11 +3,12 @@ import { animatedAnchors, HIT_SEGMENTS, hitRadii } from './enemy-motion.js';
 import { OPENING_SECONDS, replenishHorde, seedHorde } from './horde.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.1';
+export const BUILD = '1.0.2';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
   smg: { name: 'Compact SMG', capacity: 24, reload: 1.8, interval: .102, range: 49, damage: .93, noise: 48, rounds: 1, spread: .02 },
+  carbine: { name: 'Ranger carbine', capacity: 16, reload: 2, interval: .24, range: 75, damage: 1.49, noise: 53, rounds: 1, spread: 0 },
 };
 export const ENEMIES = {
   shambler: { speed: 1.12, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
@@ -27,6 +28,7 @@ export const LOOT = {
   pistol: { name: 'Service pistol', icon: 'pistol', color: '#f0cc91' },
   shotgun: { name: 'Pump shotgun', icon: 'shotgun', color: '#ffd299' },
   smg: { name: 'Compact SMG', icon: 'smg', color: '#ebbc91' },
+  carbine: { name: 'Ranger carbine', icon: 'carbine', color: '#e5ce98' },
   armor1: { name: 'Padded vest', icon: 'Ⅰ', color: '#9cb9ce' },
   armor2: { name: 'Protective vest', icon: 'Ⅱ', color: '#abc5e0' },
   armor3: { name: 'Heavy plates', icon: 'Ⅲ', color: '#bbd6ec' },
@@ -52,6 +54,11 @@ export function hordeTarget(time) {
 export function beamSettings(player) {
   const focus = player.beam === 'focus';
   return { range: (focus ? 23 : 15) + player.upgrades.lens * 3, angle: focus ? .235 : .49 };
+}
+
+export function resolvedBeam(world, lamp, head) {
+  if (!lamp || world.clear(head, lamp.origin, false)) return lamp;
+  return { ...lamp, origin: head };
 }
 
 function norm(v) {
@@ -225,6 +232,7 @@ function majorDrop(run) {
   const options = Object.keys(UPGRADES).filter(k => p.upgrades[k] < UPGRADES[k].cap);
   options.push(run.time < 130 ? 'armor1' : run.time < 255 ? 'armor2' : 'armor3');
   if (run.time > 54) options.push(p.weapon === 'shotgun' ? 'smg' : 'shotgun');
+  if (run.time >= 90 && p.weapon !== 'carbine') options.push('carbine');
   const kind = options[Math.floor(run.rng() * options.length)];
   const ahead = p.yaw + (run.rng() - .5) * 1.4;
   for (let i = 0; i < 11; i++) {
@@ -643,7 +651,7 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (input.toggleBeam) p.beam = p.beam === 'focus' ? 'wide' : 'focus';
   const runtime = 30 + p.upgrades.battery * 8;
-  p.battery = clamp(p.battery + (p.flashlight ? -dt / runtime : dt / 5), 0, 1);
+  p.battery = clamp(p.battery + (p.flashlight ? (input.lampUnavailable ? 0 : -dt / runtime) : dt / 5), 0, 1);
   if (p.flashlight && p.battery <= 1e-8) {
     p.flashlight = false;
     emit(run, 'light', { on: false, empty: true });
@@ -664,8 +672,8 @@ export function stepRun(run, input = {}, dt = STEP) {
   const aim = shiftPose(input.aim) || defaultAim(run, input.pitch);
   const head = eye(world, p, p.eyeHeight);
   aim.viewOrigin ||= head;
-  run.beam = shiftPose(input.lamp) || { origin: { ...head, y: head.y - .16 }, ray: aim.ray };
-  if (!world.clear(head, run.beam.origin, false)) run.beam.origin = head;
+  const lamp = input.lampUnavailable ? null : shiftPose(input.lamp) || { origin: { ...head, y: head.y - .16 }, ray: aim.ray };
+  run.beam = resolvedBeam(world, lamp, aim.viewOrigin);
   p.stepDistance += Math.hypot(shift.x, shift.z);
   if (p.stepDistance > (input.walk ? .70 : .79)) {
     p.stepDistance = 0;
@@ -683,7 +691,7 @@ export function stepRun(run, input = {}, dt = STEP) {
     }
   }
   if (input.reload) startReload(run);
-  if (input.fire || (input.fireHeld && p.weapon === 'smg')) shoot(run, aim);
+  if ((input.fire || (input.fireHeld && p.weapon === 'smg')) && !input.weaponUnavailable) shoot(run, aim);
   if (run.time - run.lastChunkCheck > .65) {
     updateLandmarks(run);
     run.lastChunkCheck = run.time;
@@ -695,7 +703,7 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (run.populate && run.time >= run.nextSpawn) {
     const cap = Math.min(run.crowdLimit, hordeTarget(run.time));
-    replenishHorde(run, cap, { ...run.beam, ...beamSettings(p) }, addEnemy);
+    replenishHorde(run, cap, run.beam && { ...run.beam, ...beamSettings(p) }, addEnemy);
     run.nextSpawn = run.time + (run.time < OPENING_SECONDS ? 2.7 : Math.max(.60, 1.42 - run.time / 580));
   }
   updateEnemies(run, dt);

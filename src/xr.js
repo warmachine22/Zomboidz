@@ -12,7 +12,7 @@ const axis = (gamepad, index) => gamepad?.axes?.[gamepad.axes.length >= 4 ? inde
 
 export function createXR(renderer, scene, rig) {
   let active = null, offsetYaw = 0, rawView = null, priorView = null, seatedHeight = null;
-  let domMode = '', turnHeld = false, recoveredAt = 0;
+  let domMode = '', turnHeld = false, recoveredAt = 0, angleHeld = false;
   let edges = {}, sources = {}, baseHeight = 1.63, current = null;
   let changeListener;
   const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 597;
@@ -22,6 +22,11 @@ export function createXR(renderer, scene, rig) {
     new THREE.MeshBasicMaterial({ map, transparent: true, depthTest: false, toneMapped: false, depthWrite: false }));
   panel.renderOrder = 1000;
   panel.visible = false;
+  const aimMarker = new THREE.Mesh(new THREE.RingGeometry(.009, .014, 20),
+    new THREE.MeshBasicMaterial({ color: 0xe7e8a0, toneMapped: false, depthTest: false, depthWrite: false }));
+  aimMarker.visible = false;
+  aimMarker.renderOrder = panel.renderOrder + 1;
+  panel.add(aimMarker);
   scene.add(panel);
   const promptCanvas = document.createElement('canvas'); promptCanvas.width = 640; promptCanvas.height = 96;
   const promptContext = promptCanvas.getContext('2d');
@@ -63,6 +68,7 @@ export function createXR(renderer, scene, rig) {
     seatedHeight = null;
     domMode = '';
     edges = {}; sources = {};
+    angleHeld = false;
     panel.visible = prompt.visible = false;
     recoveredAt = performance.now();
   }
@@ -77,7 +83,8 @@ export function createXR(renderer, scene, rig) {
     if (!source) return null;
     const grip = source.gripSpace && frame.getPose(source.gripSpace, reference);
     if (!grip) return null;
-    return { grip: poseOf(grip), gamepad: source.gamepad };
+    const aim = source.targetRaySpace && frame.getPose(source.targetRaySpace, reference);
+    return { grip: poseOf(grip), aim: aim && poseOf(aim), gamepad: source.gamepad };
   }
 
   function sample(frame, p, settings, phase) {
@@ -94,7 +101,8 @@ export function createXR(renderer, scene, rig) {
         sources[s.handedness] = controller(frame, reference, s);
     }
     const right = sources.right?.gamepad, left = sources.left?.gamepad;
-    const handed = settings.leftHanded ? left : right, other = settings.leftHanded ? right : left;
+    const gunSource = sources[settings.leftHanded ? 'left' : 'right'];
+    const handed = gunSource?.gamepad, other = settings.leftHanded ? right : left;
     const gp = {
       fire: button(handed, 0), interact: button(handed, 1),
       reload: button(handed, 4), pause: button(handed, 5),
@@ -116,9 +124,16 @@ export function createXR(renderer, scene, rig) {
     const moveZ = validMovement ? Math.sin(yaw) * lx + Math.cos(yaw) * ly : 0;
     const walk = Math.hypot(lx, ly) < .55;
     const tracked = !!sources.left && !!sources.right;
-    if (tracked) recoveredAt = performance.now();
+    const weaponTracked = Boolean(gunSource);
+    if (weaponTracked) recoveredAt = performance.now();
+    const ax = axis(handed, 0), ay = axis(handed, 1);
+    const angleReady = Math.max(Math.abs(ax), Math.abs(ay)) > .68 && !angleHeld;
+    angleHeld = Math.max(Math.abs(ax), Math.abs(ay)) > .42;
     current = { ...pressed, fireHeld: gp.fire, yaw, eyeHeight: baseHeight, roomX: delta.x, roomZ: delta.z,
-      moveX, moveZ, walk, tracked, missingFor: (performance.now() - recoveredAt) / 1000 };
+      moveX, moveZ, walk, tracked, weaponTracked, supportGrip: button(other, 1),
+      angleYaw: angleReady && Math.abs(ax) >= Math.abs(ay) ? -Math.sign(ax) : 0,
+      anglePitch: angleReady && Math.abs(ay) > Math.abs(ax) ? -Math.sign(ay) : 0,
+      missingFor: (performance.now() - recoveredAt) / 1000 };
     return current;
   }
 
@@ -139,7 +154,9 @@ export function createXR(renderer, scene, rig) {
     });
     const tracked = (settings.leftHanded ? sources.left : sources.right);
     const lamp = (settings.leftHanded ? sources.right : sources.left);
-    return { tracking: { weapon: asWorld(tracked?.grip), lamp: asWorld(lamp?.grip) }, view: asWorld(rawView) };
+    const weapon = asWorld(tracked?.grip);
+    if (weapon && tracked.aim) weapon.pointer = rig.quaternion.clone().multiply(tracked.aim.quaternion);
+    return { tracking: { weapon, lamp: asWorld(lamp?.grip) }, view: asWorld(rawView) };
   }
 
   function drawPanel(page, view, { title, lines = [], hint, second }) {
@@ -181,13 +198,28 @@ export function createXR(renderer, scene, rig) {
     prompt.visible = true;
   }
 
-  function haptic(kind, settings) {
-    const s = sources[settings.leftHanded ? 'left' : 'right'];
-    const strength = kind === 'shotgun' ? .79 : kind === 'smg' ? .37 : kind === 'armor' ? .89 : .51;
-    s?.gamepad?.hapticActuators?.[0]?.pulse?.(strength, kind === 'armor' ? 125 : 32)?.catch?.(() => {});
+  function drawAimPreview(aim) {
+    aimMarker.visible = false;
+    if (!aim || !panel.visible) return;
+    const local = panel.worldToLocal(aim.origin.clone());
+    const ray = aim.ray.clone().applyQuaternion(panel.quaternion.clone().invert());
+    if (ray.z >= -.01 || local.z <= 0) return;
+    local.addScaledVector(ray, -local.z / ray.z);
+    if (Math.abs(local.x) > .865 || Math.abs(local.y) > .495) return;
+    aimMarker.position.set(local.x, local.y, .002);
+    aimMarker.visible = true;
   }
 
-  return { supported, enter, reset, finish, sample, sync, drawPanel, drawPrompt, haptic,
+  function haptic(kind, settings, braced = false) {
+    const s = sources[settings.leftHanded ? 'left' : 'right'];
+    const strengths = { shotgun: [.79, 52], smg: [.37, 22], armor: [.89, 125], carbine: [.64, 40], pistol: [.51, 32] };
+    const [strength, duration] = strengths[kind];
+    const pulse = (source, force) => source?.gamepad?.hapticActuators?.[0]?.pulse?.(force, duration)?.catch?.(() => {});
+    pulse(s, strength);
+    if (braced) pulse(sources[settings.leftHanded ? 'right' : 'left'], strength * .43);
+  }
+
+  return { supported, enter, reset, finish, sample, sync, drawPanel, drawPrompt, drawAimPreview, haptic,
     hidePanel() { panel.visible = false; },
     get active() { return active; },
   };

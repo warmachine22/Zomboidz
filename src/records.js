@@ -1,9 +1,10 @@
 import { BUILD } from './simulation.js';
+import { gunAngle } from './held-tools.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
 const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false,
-  laserDot: false, volume: .75, initials: 'YOU' };
+  laserDot: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0 };
 let fallbackScores = [];
 
 function read(key, otherwise) {
@@ -30,6 +31,8 @@ export function loadSettings() {
   }
   settings.volume = Math.max(0, Math.min(1, settings.volume));
   settings.initials = initials(settings.initials);
+  settings.gunPitch = gunAngle(settings.gunPitch);
+  settings.gunYaw = gunAngle(settings.gunYaw);
   return settings;
 }
 

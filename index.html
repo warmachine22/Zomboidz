@@ -49,6 +49,7 @@
           <dt>Fire / Reload</dt><dd>Weapon trigger / primary button</dd>
           <dt>Light / Beam</dt><dd>Light trigger / primary button</dd>
           <dt>Equip</dt><dd>Weapon grip near a pickup</dd>
+          <dt>Brace</dt><dd>Hold light-hand grip near the gun</dd>
           <dt>Pause</dt><dd>Weapon secondary button</dd>
         </dl></div>
         <div><h3>Touch</h3><dl>
@@ -78,6 +79,16 @@
         <label><span>Volume</span><input type="range" min="0" max="1" step=".05" data-setting="volume"></label>
         <label><span>Score initials</span><input id="initials" maxlength="3" autocomplete="off" spellcheck="false" value="YOU"></label>
       </div>
+      <details class="gun-settings">
+        <summary>Gun Angle</summary>
+        <p class="note">Quest calibration. Start with the default, or adjust in the headset for live aim feedback.</p>
+        <div class="sight-preview" aria-hidden="true"><i id="sight-preview"></i></div>
+        <div class="preferences">
+          <label><span>Pitch <output id="gunPitch-value">0°</output></span><input type="range" min="-25" max="25" step="1" data-angle="gunPitch"></label>
+          <label><span>Yaw <output id="gunYaw-value">0°</output></span><input type="range" min="-25" max="25" step="1" data-angle="gunYaw"></label>
+        </div>
+        <button id="gun-angle-reset" type="button">Reset to Default</button>
+      </details>
       <button data-back>Done</button>
     </section>
     <footer class="menu-footer"><span>ENDLESS SURVIVAL</span><span>HEADPHONES RECOMMENDED</span></footer>

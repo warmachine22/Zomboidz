@@ -66,6 +66,50 @@ test('weapon swaps require confirmation and conserve the ammo pool', () => {
   assert.equal(flarePower(run.time - old.born), 0);
 });
 
+test('the Ranger carbine enters rare loot at 90 seconds and fires semi-auto with a two-second reload', () => {
+  const run = room(), p = run.player;
+  run.populate = true;
+  run.rng = () => .99;
+  run.nextSpawn = Infinity;
+  run.nextLoot = run.time = 89;
+  stepRun(run);
+  assert.ok(run.loot.every(item => item.kind !== 'carbine'));
+  run.nextLoot = run.time = 90;
+  stepRun(run);
+  const carbine = run.loot.find(item => item.kind === 'carbine');
+  assert.ok(carbine);
+  Object.assign(carbine, { x: p.x, z: p.z });
+  stepRun(run, { interact: true });
+  assert.equal(p.weapon, 'carbine');
+  assert.equal(p.ammo, 6);
+  advance(run, .3);
+  stepRun(run, { fire: true });
+  advance(run, .6, { fireHeld: true });
+  assert.equal(p.ammo, 5);
+  assert.equal(run.metrics.shots, 1);
+  stepRun(run, { reload: true });
+  advance(run, 1.9, { fire: true });
+  assert.equal(p.ammo, 5);
+  advance(run, .1);
+  assert.equal(p.ammo, 16);
+  assert.equal(p.reserve, 39);
+});
+
+test('the flashlight keeps its charge when tracking is briefly unavailable', () => {
+  const run = room(), p = run.player;
+  const lamp = { origin: { x: 0, y: 1.3, z: 20 }, ray: { x: 1, y: 0, z: 0 } };
+  advance(run, .5, { lamp, lampUnavailable: true, weaponUnavailable: true, fire: true });
+  assert.equal(run.beam, null);
+  assert.equal(p.battery, 1);
+  assert.equal(p.ammo, 6);
+  stepRun(run, { lamp });
+  assert.deepEqual(run.beam.ray, lamp.ray);
+  assert.ok(p.battery < 1 && p.flashlight);
+  stepRun(run, { lamp, toggleLight: true });
+  assert.equal(p.flashlight, false);
+  assert.equal(p.battery, 1);
+});
+
 test('a clean unarmored hit kills after a windup, and armor absorbs exactly three hits', () => {
   const run = room(), p = run.player;
   setLoot(run, 'armor3', p.x, p.z);
