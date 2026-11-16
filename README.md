@@ -39,7 +39,8 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 - **Enemies:** rigged PSX-style zombie character with animation variations and sound-driven pursuit.
 - **Damage:** one headshot; approximately three pistol torso shots; limb shots are weaker.
 - **Crowd:** starts around 18 enemies, increases by roughly three every 30 seconds, targeting up to 64 in Quest with an adaptive frame-rate-based ceiling. **64 is a target, not a validated headset-performance guarantee.**
-- **Environment:** dense procedurally populated forest with low-poly pixelated trees, bark, shrubs and foliage; simple tree collisions and bullet occlusion.
+- **Environment:** dense procedurally populated forest with low-poly pixelated trees, bark, shrubs and foliage. Tree obstruction uses the exact visible tapered and tilted trunk mesh rather than an oversized invisible cylinder. Walkers steer around the true ground-level trunk bases.
+- **Impact feedback:** a few dark-red voxel flecks on zombies; bark chips and a small damage mark on tree hits. The aiming laser shows amber for bark, red for the body, and gold for the head.
 - **Deaths:** a short third-person reenactment identifies the direction of the attacking zombie. Zombies use a lightweight procedural collapse rather than full rigid-body simulation.
 
 ## Run locally
@@ -74,6 +75,10 @@ The root `game.js` directly imports `src/game.js`. The optional `game.js.gz` out
 The original third-party character asset archives are **not** part of this repository. The project includes optimized **game-runtime** model data and free game audio, with attribution and source information documented in `CREDITS.md`. Please respect each original creator's license; do not extract and redistribute asset packs as standalone content.
 
 The repository does not grant a license to use original third-party artwork outside this game.
+
+## v0.10: shooting and obstacle improvements
+
+Bullets and the laser now intersect the visible seven-sided tree-trunk mesh, so a clear gap next to a trunk is no longer blocked by the old larger invisible cylinder. Zombie navigation uses the trunk's actual base and tangent steering to go around obstacles. Small bark gouges and fragments help diagnose tree hits; dark-red particles provide restrained zombie hit feedback. The center crosshair defines the shot on desktop/iPad, while Quest continues to use its tracked pistol.
 
 ## Known limitations
 

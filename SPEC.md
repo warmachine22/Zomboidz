@@ -1,27 +1,20 @@
-# Zomboidz — The Last Light: v0.9
+# Zomboidz — The Last Light: v0.10
 
-A single-player, first-person WebXR survival prototype for Meta Quest, also playable by mouse/keyboard or iPad touch. Survive as long as possible in a nearly black, dense forest. Slow zombies continuously gather in larger numbers, becoming dangerous through encirclement. Aim carefully: headshots kill instantly, torso and limb hits require multiple shots. One zombie touch ends a run.
+First-person WebXR zombie survival in a nearly dark forest. Slow, increasingly numerous zombies surround the player. Headshots kill immediately, torso and limb hits take several shots, and a single zombie touch ends the run. Quest motion controls, iPad touch, and desktop keyboard/mouse are available.
 
-## Flashlight simplification — v0.9
+## Collision and navigation updates
 
-- **Left Quest trigger** toggles flashlight on and off. The right trigger still fires the pistol.
-- **Desktop:** F toggles flashlight. **iPad:** use LIGHT OFF / LIGHT ON touch button.
-- A full battery powers the flashlight for **30 seconds**. When switched off, it automatically regains **100% charge in 5 seconds** (from empty). It does not reactivate by itself.
-- The flashlight switches off automatically at zero charge, immediately begins recharging, and remains off until explicitly switched on again.
-- The beam stays visibly strong as charge falls, then dims slightly near empty, rather than fading to near darkness prematurely.
-- Flashlight pickup chests add **10 seconds of runtime per upgrade**, up to 90 seconds, and can slightly improve range. The offline recharge time stays five seconds.
-- The old shake-detection mechanic, hold-to-charge touch button, and tap-F charging are removed. The wristwatch now displays LIGHT ON or RECHARGING and the battery percentage.
-- Quest **X/Y** still select focused long-distance or wide nearby flashlight beams. Desktop Q and the iPad WIDE/FOCUS button toggle beam modes.
+- **Exact trunk collisions:** Tree models are seven-sided, tapered and tilted. A conservative ray shortlist feeds an exact triangle test against the visible instanced trunk. This eliminates the old oversized invisible cylinders that blocked visually clear shots. Laser and bullets use the same collision logic.
+- **Actual ground-level tree bases:** Player collision, zombie collision, and spawn clearances now use the true trunk foot calculated from the instance transform, instead of its midpoint.
+- **Zombie obstacle navigation:** Persistent clockwise or counterclockwise tangent steering takes walkers around nearby trunks, with zombie separation to avoid single-file crowds. This is lightweight local avoidance, not a full navmesh.
+- **Minimal impact effects:** A tree bullet hit produces several brown voxel chips and a small lasting bark gouge at the precise struck surface. Zombie hits produce a brief small cloud of dark-red voxels. Effects are capped and cleaned up, including when recycled trees move away.
+- **Aiming diagnostics:** The pistol laser dot is amber on tree bark, red on zombie bodies, and gold for possible headshots. All use the same trace.
+- **Desktop/iPad aiming:** Bullets follow the camera's center reticle instead of an offset muzzle that could miss the surface under the crosshair. Quest VR still fires using the tracked right-hand pistol.
 
-## Other ongoing mechanics
+## Preserved design
 
-- PSX-style rigged walking zombies with varying speeds; growing active population targets roughly 18 initially, 30 after 2 minutes, 48 after 5 minutes, and up to 64 after 8 minutes subject to real-time Quest performance.
-- Real zombie head-bone collision volumes and laser targeting, persistent body/limb damage, leg damage slows zombies, headshots are lethal.
-- Grounded low-poly forest, small dim supply chests, sound-driven alerts, directional 3D zombie sound, pistol/shotgun/SMG and weapon reloads.
-- Touchscreen thumbstick, aiming and control buttons; low-light wristwatch HUD on Quest; brief third-person reconstruction identifying fatal attacker.
-- Lightweight animated corpse collapse, not full physics ragdoll.
-- Quest performance and controller usability remain to be physically validated.
+The flashlight toggles with Quest left trigger, desktop F, or a touch button; its charge lasts 30 seconds when on and automatically replenishes in 5 seconds when off. Pickups extend runtime by 10 seconds up to 90 seconds. X/Y or Q/touch change flashlight beam width. Pistol, shotgun, SMG, wristwatch display, dim upgrade chests, positional audio, increasing horde density and instant death with short third-person replay remain.
 
 ## Verification
 
-Automated browser tests validated the on/off switch on desktop and simulated iPad, thirty-second total battery drain, five-second recharge while switched off, automatic switch-off at empty, manual reactivation, and existing game loading without JavaScript errors. Quest hardware testing is still pending.
+Browser tests confirmed mesh-accurate tree hits, visible shot clearance beside the tree, bark impact fragments and scar, instant headshot plus blood fragments, and zombie steering around an obstacle without JavaScript errors. Quest headset performance and physical controller precision still require testing.

@@ -48,11 +48,13 @@ For headset testing, host the built static site using HTTPS on Vercel and open i
 
 ## Data and rendering
 
-The world is built from instanced low-poly trees and textured procedural ground. Trees are recycled around a moving player to create an extended forest while keeping a fixed geometry budget. Zombies use skeleton-animation mixers; distant animation updates are throttled to reduce CPU load. Enemy headshots are traced against the animated Head bone world transform rather than a fixed-height target. Limb/torso collisions use lightweight analytic volumes and share the same gun-ray calculations as the laser. Tree cylinders may occlude rays.
+The world is built from instanced low-poly trees and textured procedural ground. Trees are recycled around a moving player to create an extended forest while keeping a fixed geometry budget. Zombies use skeleton-animation mixers; distant animation updates are throttled to reduce CPU load. Enemy headshots are traced against the animated Head bone world transform rather than a fixed-height target. Limb/torso collisions use lightweight analytic volumes and share the same gun-ray calculations as the laser. Tree shots are resolved against the true tilted, tapered seven-sided trunk meshes using a fast candidate shortlist and exact triangle raycasts. The laser and bullet share one hit test; desktop/iPad shots use the center view ray to remove crosshair–muzzle parallax, while Quest uses the tracked right-hand gun.
 
-Enemy AI follows a small state machine: initial wandering, alert via distance/footsteps/noise, pursuit with varied pace, and contact death. The intended endless horde target grows over time, but Quest frame timing can lower the permitted population to prioritize comfort.
+Enemy AI follows a small state machine: initial wandering, alert via distance/footsteps/noise, pursuit with varied pace, and contact death. Zombies now steer around the actual ground-level tree bases, holding a chosen tangent side while passing each obstacle; local avoidance is not a full navmesh. The intended endless horde target grows over time, but Quest frame timing can lower the permitted population to prioritize comfort.
 
 Light is a pair of SpotLights attached to the left controller; focused and wide modes adjust angle, intensity and distance. Flashlight battery drains over 30 seconds while switched on and automatically refills in 5 seconds while switched off; Quest left trigger toggles it. Flashlight pickups add 10 seconds of on-time per upgrade, up to 90 seconds. The gameplay state is entirely client-side and a minimal localStorage key retains the best run.
+
+Bark hit marks, small brown voxel splinters and dark-red blood flecks share reusable primitive geometry. Particle lists and persistent tree damage marks have caps and are cleared when trees recycle or a new run begins.
 
 ## Touch and desktop testing
 

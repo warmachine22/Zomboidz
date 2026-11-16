@@ -53,6 +53,15 @@ const bark=makePixelMaterial('bark'),pine=makePixelMaterial('leaves'),mossMat=ma
 const branchMat=new THREE.MeshStandardMaterial({color:0x453b2f,roughness:1});
 const groundMat=new THREE.MeshStandardMaterial({color:0x292c1f,roughness:1});
 const trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.68,.84,1,7,1),bark,FOREST_COUNT);
+const trunkProbe=new THREE.Mesh(trunk.geometry,bark);
+trunkProbe.matrixAutoUpdate=false;
+const trunkRay=new THREE.Raycaster(),trunkNormalMatrix=new THREE.Matrix3();
+const hitFx=[],barkMarks=[];
+const voxelGeo=new THREE.BoxGeometry(1,1,1),scarGeo=new THREE.PlaneGeometry(1,1);
+const barkScarMat=new THREE.MeshBasicMaterial({color:0x17110d,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2});
+const barkWoodMat=new THREE.MeshBasicMaterial({color:0x806543,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-3});
+const barkChipMats=[0x463429,0x6f4a2d,0x332b25,0x78583b,0x4f5038].map(color=>new THREE.MeshBasicMaterial({color}));
+const bloodMats=[0x762018,0x981c18,0x47110f,0x9b2f25].map(color=>new THREE.MeshBasicMaterial({color}));
 const canopy=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),pine,FOREST_COUNT);
 const branch=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),branchMat,FOREST_COUNT);
 const bush=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),mossMat,FOREST_COUNT);
@@ -63,10 +72,18 @@ const helper=new THREE.Object3D(),trees=[];
 const colorVariation=new THREE.Color();
 function treeAt(i,x,z){
  const height=rnd(8.5,18.5),radius=rnd(.26,.72),width=rnd(1.7,4.1),crownY=height+rnd(-.5,1.6),twist=rnd(-.22,.22);
- trees[i]={x,z,r:radius,h:height};
+ if(trees[i])for(let k=barkMarks.length-1;k>=0;k--){
+  if(barkMarks[k].treeIndex===i){scene.remove(barkMarks[k].obj);barkMarks.splice(k,1);}
+ }
+ trees[i]={x,z,r:radius,h:height,index:i};
  helper.rotation.set(0,rnd(0,6.283),0);
  helper.position.set(x,height*.5,z);helper.scale.set(radius,height,radius);helper.rotation.z=twist;
  helper.updateMatrix();trunk.setMatrixAt(i,helper.matrix);
+ // Tilted trunks have a visible base away from their instance origin.
+ const basePoint=new THREE.Vector3(0,-.495,0).applyMatrix4(helper.matrix);
+ trees[i].baseX=basePoint.x;trees[i].baseZ=basePoint.z;
+ trees[i].hitMatrix=helper.matrix.clone();
+ trees[i].reach=radius*.93+Math.abs(Math.sin(twist))*height*.51+.15;
  helper.rotation.set(0,rnd(0,6.283),0);
  // Broad, irregular elevated block foliage (visible above the low-light canopy).
  helper.position.set(x+rnd(-.6,.6),crownY,z+rnd(-.6,.6));
@@ -120,9 +137,9 @@ function maintainForest(){
 function collideWithTrees(){
  // Slide away from thick trunks without trapping the player in the undergrowth.
  for(const t of trees){
-  let dx=rig.position.x-t.x,dz=rig.position.z-t.z;
-  let minDist=t.r+.32,d2=dx*dx+dz*dz;
-  if(d2<minDist*minDist){const d=Math.max(.0001,Math.sqrt(d2));rig.position.x=t.x+dx/d*minDist;rig.position.z=t.z+dz/d*minDist;}
+  let dx=rig.position.x-t.baseX,dz=rig.position.z-t.baseZ;
+  let minDist=t.r*.83+.32,d2=dx*dx+dz*dz;
+  if(d2<minDist*minDist){const d=Math.max(.0001,Math.sqrt(d2));rig.position.x=t.baseX+dx/d*minDist;rig.position.z=t.baseZ+dz/d*minDist;}
  }
 }
 
@@ -351,7 +368,7 @@ function chooseSpawn(radiusLo=31,radiusHi=55){
   const x=cx+Math.sin(a)*d,z=cz+Math.cos(a)*d;
   if(heading.x*(x-cx)+heading.z*(z-cz)>d*.75&&d<38)continue;
   // Spawn outside of tree trunk centers, not in occupied terrain.
-  if(trees.some(t=>(t.x-x)*(t.x-x)+(t.z-z)*(t.z-z)<(t.r+.5)**2))continue;
+  if(trees.some(t=>(t.baseX-x)*(t.baseX-x)+(t.baseZ-z)*(t.baseZ-z)<(t.r*.83+.6)**2))continue;
   if(zombies.some(o=>Math.hypot(o.obj.position.x-x,o.obj.position.z-z)<3))continue;
   return {x,z};
  }
@@ -372,7 +389,7 @@ function createZombie(angle=0,dist=30,initialAlert=false,forcedKind=null){
   mixer:new THREE.AnimationMixer(obj),voice:rnd(.45,2.4),hasScreamed:false,
   lurch:rnd(0,Math.PI*2),roamTimer:rnd(1.2,5),roamAngle:rnd(-3.14,3.14),
   attackTimer:rnd(1,2.5),walkAction:null,sprintAction:null,attackAction:null,
-  fromY:0,hitScale:rnd(.94,1.05),hp:3.6,legHits:0,limp:1,flinch:0,animAccum:0,headBone:obj.getObjectByName('Head')};
+  fromY:0,hitScale:rnd(.94,1.05),hp:3.6,legHits:0,limp:1,flinch:0,animAccum:0,headBone:obj.getObjectByName('Head'),navTree:-1,navSide:1};
  obj.traverse(o=>{
   if(o.isSkinnedMesh||o.isMesh){
    o.userData.zombie=z;o.frustumCulled=false;
@@ -419,7 +436,7 @@ function populateReplacement(){
   const offset=rnd(-.55,.55),dist=rnd(30,44);
   const front=new THREE.Vector3(dir.x,0,dir.z).applyAxisAngle(new THREE.Vector3(0,1,0),offset);
   const candidate={x:rig.position.x+front.x*dist,z:rig.position.z+front.z*dist};
-  const clear=trees.every(t=>Math.hypot(candidate.x-t.x,candidate.z-t.z)>t.r+.85);
+  const clear=trees.every(t=>Math.hypot(candidate.x-t.baseX,candidate.z-t.baseZ)>t.r*.83+.85);
   if(clear)p=candidate;
  }
  const a=Math.atan2(p.x-rig.position.x,p.z-rig.position.z);
@@ -453,7 +470,7 @@ function keepForestPopulatedAhead(){
   const angle=rnd(-.95,.95),dist=rnd(31,44);
   const candidate=facing.clone().applyAxisAngle(new THREE.Vector3(0,1,0),angle);
   const x=rig.position.x+candidate.x*dist,z=rig.position.z+candidate.z*dist;
-  if(trees.some(t=>Math.hypot(x-t.x,z-t.z)<t.r+.9))continue;
+  if(trees.some(t=>Math.hypot(x-t.baseX,z-t.baseZ)<t.r*.83+.9))continue;
   if(zombies.some(v=>Math.hypot(x-v.obj.position.x,z-v.obj.position.z)<3.4))continue;
   createZombie(Math.atan2(x-rig.position.x,z-rig.position.z),dist,false);
  }
@@ -499,25 +516,47 @@ function killZombie(z,headshot=false){
 function zombieRoute(z,tx,tz,dt,multiplier=1){
  const pos=z.obj.position,dx=tx-pos.x,dz=tz-pos.z,d=Math.hypot(dx,dz);
  if(d<.09)return;
- let ux=dx/d,uz=dz/d;
- // Simple separation prevents 40+ walkers occupying precisely the same lane.
- let sepX=0,sepZ=0;
- for(const neighbor of zombies){
-  if(neighbor===z)continue;
-  const qx=pos.x-neighbor.obj.position.x,qz=pos.z-neighbor.obj.position.z;
-  const sq=qx*qx+qz*qz;
-  if(sq>.0001&&sq<1.55*1.55){const weight=.28/(sq+.22);sepX+=qx*weight;sepZ+=qz*weight;}
- }
- ux+=clamp(sepX,-.56,.56);uz+=clamp(sepZ,-.56,.56);
- const mag=Math.hypot(ux,uz);ux/=Math.max(.001,mag);uz/=Math.max(.001,mag);
- const desiredStep=z.speed*multiplier*dt;
- let nextX=pos.x+ux*desiredStep,nextZ=pos.z+uz*desiredStep;
- // Resolve trunks: slide around trees instead of passing straight through bark.
+ const directX=dx/d,directZ=dz/d;
+ let ux=directX,uz=directZ,obstacle=null,nearest=Infinity;
+ const lookAhead=Math.min(d,3.5);
  for(const t of trees){
-  const ox=nextX-t.x,oz=nextZ-t.z;
-  const radius=t.r+.29;
-  if(ox*ox+oz*oz<radius*radius){
-   const l=Math.max(.001,Math.hypot(ox,oz));nextX=t.x+ox/l*radius;nextZ=t.z+oz/l*radius;
+  const cx=t.baseX,cz=t.baseZ,ox=cx-pos.x,oz=cz-pos.z;
+  const ahead=ox*directX+oz*directZ,rad=t.r*.83+.47;
+  if(ahead<-.28||ahead>lookAhead+rad)continue;
+  const perp=ox*directZ-oz*directX;
+  if(Math.abs(perp)>rad+.19)continue;
+  if(ahead<nearest){nearest=ahead;obstacle=t;}
+ }
+ if(obstacle){
+  const cx=obstacle.baseX,cz=obstacle.baseZ;
+  let rx=pos.x-cx,rz=pos.z-cz,rr=Math.max(.015,Math.hypot(rx,rz));rx/=rr;rz/=rr;
+  if(z.navTree!==obstacle.index){
+   z.navTree=obstacle.index;
+   const cross=directX*(cz-pos.z)-directZ*(cx-pos.x);
+   z.navSide=Math.abs(cross)>.13?(cross>=0?1:-1):(Math.random()<.5?1:-1);
+  }
+  const tangentX=z.navSide*(-rz),tangentZ=z.navSide*rx;
+  ux=tangentX*.86+rx*.43+directX*.09;
+  uz=tangentZ*.86+rz*.43+directZ*.09;
+ }else z.navTree=-1;
+ let sepX=0,sepZ=0;
+ for(const other of zombies){
+  if(other===z)continue;
+  const qx=pos.x-other.obj.position.x,qz=pos.z-other.obj.position.z;
+  const sq=qx*qx+qz*qz;
+  if(sq>.0001&&sq<1.65*1.65){const weight=.25/(sq+.28);sepX+=qx*weight;sepZ+=qz*weight;}
+ }
+ ux+=clamp(sepX,-.5,.5);uz+=clamp(sepZ,-.5,.5);
+ const mag=Math.hypot(ux,uz);ux/=Math.max(.001,mag);uz/=Math.max(.001,mag);
+ const step=z.speed*multiplier*dt;
+ let nextX=pos.x+ux*step,nextZ=pos.z+uz*step;
+ for(const t of trees){
+  const ox=nextX-t.baseX,oz=nextZ-t.baseZ;
+  const rad=t.r*.83+.33,distSq=ox*ox+oz*oz;
+  if(distSq<rad*rad){
+   const norm=Math.max(.0001,Math.sqrt(distSq));
+   nextX=t.baseX+ox/norm*rad;
+   nextZ=t.baseZ+oz/norm*rad;
   }
  }
  pos.x=nextX;pos.z=nextZ;
@@ -539,15 +578,10 @@ function getAim(){
  gun.getWorldQuaternion(aimQuat);
  aimDir.set(0,0,-1).applyQuaternion(aimQuat).normalize();
  if(!renderer.xr.isPresenting){
-  // Desktop / iPad fire toward the same central aim point the player sees.
-  const cp=camera.getWorldPosition(new THREE.Vector3());
-  const cq=camera.getWorldQuaternion(new THREE.Quaternion());
-  const viewDir=new THREE.Vector3(0,0,-1).applyQuaternion(cq).normalize();
-  // Converge the gun with the *visible* center target at its real depth.
-  // This removes near-range parallax that previously stole headshots.
-  const viewTarget=traceBallistic(cp,viewDir,specs[currentWeapon].range);
-  const focal=viewTarget.point;
-  aimDir.copy(focal).sub(aimOrigin).normalize();
+  // Desktop and touch: the visible center reticle is the ballistic ray.
+  // An offset muzzle previously grazed past the precise surface it indicated.
+  camera.getWorldPosition(aimOrigin);
+  camera.getWorldDirection(aimDir).normalize();
  }
  return {origin:aimOrigin,direction:aimDir};
 }
@@ -593,18 +627,30 @@ function traceBallistic(origin,dir,range=66){
    best=t;hitZombie=z;hitTree=null;zone=part;
   }
  }
- // Trees occlude bullets and laser identically.
- const dXZ=dir.x*dir.x+dir.z*dir.z;
- if(dXZ>.00001)for(const tree of trees){
-  const dx=origin.x-tree.x,dz=origin.z-tree.z;
-  const b=dx*dir.x+dz*dir.z,a=dXZ,c=dx*dx+dz*dz-tree.r*tree.r;
-  const disc=b*b-a*c;if(disc<0)continue;
-  const t=(-b-Math.sqrt(disc))/a;
-  if(t<.015||t>=best)continue;
-  const y=origin.y+dir.y*t;
-  if(y>0&&y<(tree.h||14)){best=t;hitZombie=null;hitTree=tree;zone=null;}
+ // Exact 7-sided tapered, tilted mesh collision. Cheap candidate shortlist
+ // prevents testing the triangles of all 420 trees on every laser frame.
+ let hitNormal=null;
+ const dxz=dir.x*dir.x+dir.z*dir.z;
+ if(dxz>.00001){
+  trunkRay.set(origin,dir);trunkRay.near=.018;
+  for(const tree of trees){
+   const ox=origin.x-tree.x,oz=origin.z-tree.z,reach=tree.reach||tree.r+1;
+   const nearT=clamp(-(ox*dir.x+oz*dir.z)/dxz,0,best);
+   const x=ox+dir.x*nearT,z=oz+dir.z*nearT;
+   if(x*x+z*z>reach*reach)continue;
+   trunkProbe.matrixWorld.copy(tree.hitMatrix);
+   trunkRay.far=best;
+   const results=[];
+   trunkProbe.raycast(trunkRay,results);
+   for(const h of results){
+    if(h.distance<.018||h.distance>=best)continue;
+    best=h.distance;hitZombie=null;hitTree=tree;zone=null;
+    trunkNormalMatrix.getNormalMatrix(tree.hitMatrix);
+    hitNormal=h.face.normal.clone().applyNormalMatrix(trunkNormalMatrix).normalize();
+   }
+  }
  }
- return {distance:best,zombie:hitZombie,tree:hitTree,zone,point:origin.clone().addScaledVector(dir,best)};
+ return {distance:best,zombie:hitZombie,tree:hitTree,zone,normal:hitNormal,point:origin.clone().addScaledVector(dir,best)};
 }
 function updateLaser(){
  if(state!=='playing'){laserLine.visible=false;laserDot.visible=false;return;}
@@ -614,7 +660,7 @@ function updateLaser(){
  laserDot.position.copy(h.point);
  const dist=h.distance;
  laserDot.scale.setScalar(clamp(dist*.08,1.6,6.5));
- laserGlow.intensity=h.zombie?.55:.19;laserDot.material.color.setHex(h.zone==='head'?0xffdd55:0xff2020);
+ laserGlow.intensity=h.zombie?.55:.19;laserDot.material.color.setHex(h.tree?0xffa64c:h.zone==='head'?0xffdd55:0xff2020);
  const localHit=gun.worldToLocal(h.point.clone());
  const arr=laserGeom.attributes.position;
  arr.setXYZ(0,0,-.012,-.408);arr.setXYZ(1,localHit.x,localHit.y,localHit.z);
@@ -639,6 +685,55 @@ function applyZombieHit(z,zone,damage){
  // Separate hit feedback from death so a body shot is not silently fatal.
  if(z.hp<=0)killZombie(z,false);
 }
+// Readable, understated impacts: dark blood flecks on zombies and small
+// bark voxels with a shallow lasting gouge exactly where the tree was struck.
+const impactNormalAxis=new THREE.Vector3(0,0,1);
+function impactFragments(point,normal,materials,count=5){
+ const n=normal?.clone().normalize()||new THREE.Vector3(0,0,1);
+ for(let i=0;i<count;i++){
+  const mesh=new THREE.Mesh(voxelGeo,pick(materials));
+  const size=rnd(.018,.056);
+  mesh.scale.set(size,rnd(.018,.065),size);
+  mesh.position.copy(point).addScaledVector(n,rnd(.025,.07));
+  mesh.rotation.set(rnd(-1,1),rnd(-1,1),rnd(-1,1));
+  const vx=n.x*rnd(.38,1.2)+rnd(-.75,.75),vz=n.z*rnd(.38,1.2)+rnd(-.75,.75);
+  scene.add(mesh);
+  hitFx.push({mesh,vel:new THREE.Vector3(vx,rnd(.25,1.45),vz),ttl:rnd(.34,.76),spin:rnd(-5,5)});
+ }
+ while(hitFx.length>100){scene.remove(hitFx[0].mesh);hitFx.shift();}
+}
+function impactBark(hit){
+ const tree=hit.tree;
+ if(!tree)return;
+ const n=hit.normal||new THREE.Vector3(0,0,1);
+ impactFragments(hit.point,n,barkChipMats,6);
+ const scar=new THREE.Group();
+ const outside=new THREE.Mesh(scarGeo,barkScarMat);
+ outside.scale.set(rnd(.10,.19),rnd(.12,.26),1);
+ scar.add(outside);
+ const exposed=new THREE.Mesh(scarGeo,barkWoodMat);
+ exposed.scale.set(outside.scale.x*.37,outside.scale.y*.7,1);
+ exposed.rotation.z=rnd(-.55,.55);exposed.position.z=.004;scar.add(exposed);
+ scar.position.copy(hit.point).addScaledVector(n,.015);
+ scar.quaternion.setFromUnitVectors(impactNormalAxis,n);
+ scene.add(scar);
+ barkMarks.push({obj:scar,treeIndex:tree.index,ttl:55});
+ while(barkMarks.length>85){scene.remove(barkMarks[0].obj);barkMarks.shift();}
+}
+function updateImpactEffects(dt){
+ for(let i=hitFx.length-1;i>=0;i--){
+  const fx=hitFx[i];fx.ttl-=dt;
+  fx.vel.y-=4.6*dt;
+  fx.mesh.position.addScaledVector(fx.vel,dt);
+  fx.mesh.rotation.y+=fx.spin*dt;
+  if(fx.mesh.position.y<.025)fx.ttl=0;
+  if(fx.ttl<=0){scene.remove(fx.mesh);hitFx.splice(i,1);}
+ }
+ for(let i=barkMarks.length-1;i>=0;i--){
+  const mark=barkMarks[i];mark.ttl-=dt;
+  if(mark.ttl<=0){scene.remove(mark.obj);barkMarks.splice(i,1);}
+ }
+}
 function shotTrace(origin,direction,spread=0){
  const dir=direction.clone();
  if(spread){dir.x+=rnd(-spread,spread);dir.y+=rnd(-spread,spread);dir.z+=rnd(-spread,spread);dir.normalize();}
@@ -655,17 +750,20 @@ function fire(){
  if(currentWeapon==='shotgun')sound('pump',.16,.94);
  // Group a shotgun's pellets so one body hit cannot accidentally consume its
  // whole 3.6 HP budget. A pellet to the head still ends it immediately.
- const hits=new Map();
+ const hits=new Map(),barkHits=new Map();
  for(let i=0;i<cfg.pellets;i++){
   const hit=shotTrace(start,dir,cfg.spread);
+  if(hit.tree){if(!barkHits.has(hit.tree.index))barkHits.set(hit.tree.index,hit);continue;}
   if(!hit.zombie)continue;
   let entry=hits.get(hit.zombie);
-  if(!entry){entry={count:0,head:false,zone:hit.zone};hits.set(hit.zombie,entry);}
+  if(!entry){entry={count:0,head:false,zone:hit.zone,point:hit.point.clone()};hits.set(hit.zombie,entry);}
   entry.count++;
   if(hit.zone==='head')entry.head=true;
   else if(hit.zone==='leg')entry.zone='leg';
  }
+ for(const impact of barkHits.values())impactBark(impact);
  for(const [z,entry] of hits){
+  impactFragments(entry.point,dir.clone().negate(),bloodMats,entry.head?6:4);
   if(entry.head){applyZombieHit(z,'head',Infinity);continue;}
   const base=currentWeapon==='pistol'?1.3:currentWeapon==='smg'?.78:Math.min(2.25,.55*entry.count);
   applyZombieHit(z,entry.zone,base);
@@ -699,7 +797,7 @@ function makePickup(kind){
 }
 
 function grab(p){scene.remove(p.g);pickups.splice(pickups.indexOf(p),1);if(p.kind==='flash'){flashRunSeconds=Math.min(90,flashRunSeconds+10);flashRange=Math.min(30,flashRange+3);flashDrain=batteryMax/flashRunSeconds;battery=clamp(battery+35,0,batteryMax);notice('FLASHLIGHT '+flashRunSeconds+'S RUNTIME');}else{currentWeapon=p.kind;bonusMagazine=0;ammo=specs[currentWeapon].mag;notice(currentWeapon==='shotgun'?'SHOTGUN ACQUIRED':'SMG ACQUIRED');}sound('reload-short',.58,1.25);updateUI();}
-function clearWorld(){for(const z of zombies){scene.remove(z.obj);z.mixer.stopAllAction();}zombies.length=0;for(const p of pickups)scene.remove(p.g);pickups.length=0;for(const p of particles)scene.remove(p.obj);particles.length=0;}
+function clearWorld(){for(const z of zombies){scene.remove(z.obj);z.mixer.stopAllAction();}zombies.length=0;for(const p of pickups)scene.remove(p.g);pickups.length=0;for(const p of particles)scene.remove(p.obj);particles.length=0;for(const fx of hitFx)scene.remove(fx.mesh);hitFx.length=0;for(const mark of barkMarks)scene.remove(mark.obj);barkMarks.length=0;}
 function startGame(){if(state==='dead'&&!deathReady)return;if(!zombieTemplate){notice('LOADING 3D MODEL...');return;}clearDeathReplay();deathReady=false;gun.visible=true;lamp.visible=true;crowdBudget=64;perfSeconds=0;perfSamples=0;perfWindows=0;clearWorld();state='playing';elapsed=0;wave=2;score=0;headshots=0;ammo=6;currentWeapon='pistol';bonusMagazine=0;battery=100;batteryMax=100;flashRange=22;flashRunSeconds=30;flashDrain=100/30;setFlashlightOn(true,false);lastToggleTime=-100;setBeamMode('wide',false);nextSpawn=1.9;nextDrop=24;noisePulses.length=0;playerMovingUntil=0;nextAheadCheck=0;frame=0;weaponCooldown=0;reloadCooldown=0;rig.position.set(0,0,0);leftTriggerHeld=false;
  const v=renderer.xr.isPresenting;vrPanel.visible=false;deathPanel.visible=false;leftXHeld=false;leftYHeld=false;touchMoveX=0;touchMoveY=0;document.body.classList.add('playing');$('menu').classList.add('off');for(const id of ['hud','battery','elims'])$(id).classList.remove('hidden');$('reticle').classList.toggle('hidden',v);
  populateForest();audioInit();if(!v&&!isTouchDevice)renderer.domElement.requestPointerLock?.().catch(()=>{});updateUI();}
@@ -948,6 +1046,7 @@ function updateZombies(dt){
   }else if(p.mixer)p.mixer.update(dt);
   if(p.ttl<=0){scene.remove(p.obj);particles.splice(i,1);}
  }
+ updateImpactEffects(dt);
 }
 
 function updatePickups(dt){

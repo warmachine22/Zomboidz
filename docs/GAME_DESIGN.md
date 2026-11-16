@@ -33,7 +33,7 @@ A single-player, first-person Meta Quest WebXR survival experiment. The mood is 
 - Starting pistol: six rounds, manual reload. **One headshot = one kill**. Body shots require several hits (approximately three pistol torso impacts); limb hits do less damage and sustained leg damage slows movement.
 - Shotgun: close-range spread, small magazine. A non-head pellet burst does capped body damage rather than guaranteeing a one-blast kill.
 - SMG: larger magazine, fast fire, lower individual body-shot damage.
-- Default red pistol laser and dot share ballistic calculations. A gold dot indicates the ray is on a valid zombie head hit zone. Trunks block shots.
+- A pistol laser and bullets share exact visible seven-sided tree-trunk collision. A **gold** dot indicates a zombie headshot zone, **red** indicates a body hit, and **amber** indicates a tree obstruction. Desktop/iPad shooting follows the center crosshair; in VR it follows the tracked pistol.
 
 ## Flashlight and darkness
 
@@ -52,7 +52,7 @@ A single-player, first-person Meta Quest WebXR survival experiment. The mood is 
 
 ## Visual art direction
 
-Low-poly PS1-style horror, using a dense forest reference: trunks of varied diameter, blocky dark bark and moss, low shrubs and grass firmly on the forest floor, irregular foliage silhouettes, and darkness beyond the flashlight. Enemies use rigged PSX-style models, unsteady gait variations, reactive sound, and lightweight collapse on death. The visual emphasis is silhouettes and immersion, not high-poly realism.
+Low-poly PS1-style horror, using a dense forest reference: trunks of varied diameter, blocky dark bark and moss, low shrubs and grass firmly on the forest floor, irregular foliage silhouettes, and darkness beyond the flashlight. Enemies use rigged PSX-style models, unsteady gait variations, reactive sound, and lightweight collapse on death. The visual emphasis is silhouettes and immersion, not high-poly realism. Small brown voxel bark chips and dark gouges mark tree impacts; understated dark-red flecks show zombie hits. These are diagnostic effects rather than exaggerated gore or fully destructible scenery.
 
 ## Current scope and deliberate compromises
 
