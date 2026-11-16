@@ -2,6 +2,8 @@
 
 The game builds to a static directory. The executable bundles Three.js instead of fetching it at runtime. There is no service, account, or remote score database. The development server watches source and serves the game with optional diagnostics.
 
+Ship completed releases from GitHub `main` to the Vercel production project and verify that [zombiez.vercel.app](https://zombiez.vercel.app/) points to the new deployment. Check the build label after a normal refresh. The HTML is served with `Cache-Control: no-store`, and every build generates a fingerprinted directory for its script, styles, and assets so the browser loads the matching set.
+
 The shared fixed-step simulation owns damage, timers, aim rays, sound and light sensing, spawn choices, loot, and survival results. With a seed and a sequence of inputs it can run without Three.js or browser APIs. RequestAnimationFrame collects keyboard, touch, or WebXR input and renders state with Three.js. The top-down overlay reads the same runtime state and displays reasons for target switches.
 
 Terrain chunks are keyed by seed and world coordinates. The renderer streams a 3×3 ring, while simulation maintains a bounded geometry cache and a set of collected landmarks. Shots and perception share terrain and cover queries. Importing the older alpha snapshot is only useful for restoring an older release.

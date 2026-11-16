@@ -28,7 +28,7 @@ for (let i = 0; i < rockPos.count; i++) {
 rockGeometry.computeVertexNormals();
 
 function image(name) {
-  const tex = textures.load('./assets/art/' + name + '.webp');
+  const tex = textures.load(new URL('./assets/art/' + name + '.webp', import.meta.url).href);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 3;
@@ -51,7 +51,8 @@ surfaces.boards.map.repeat.set(2.2, .6);
 
 const modelNames = ['pistol', 'shotgun', 'smg', 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
 export async function loadArt() {
-  const source = await Promise.all(modelNames.map(name => models.loadAsync('./assets/art/' + name + '.glb')));
+  const source = await Promise.all(modelNames.map(name =>
+    models.loadAsync(new URL('./assets/art/' + name + '.glb', import.meta.url).href)));
   return Object.fromEntries(modelNames.map((name, i) => [name, source[i]]));
 }
 

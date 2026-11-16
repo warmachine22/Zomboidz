@@ -43,7 +43,7 @@ export function createAudio() {
       effects.gain.value = .47;
       ambienceLoop();
       for (const key of samples) {
-        fetch('./assets/audio/' + key + '.ogg')
+        fetch(new URL('./assets/audio/' + key + '.ogg', import.meta.url))
           .then(response => { if (!response.ok) throw Error(key); return response.arrayBuffer(); })
           .then(data => context.decodeAudioData(data)).then(data => buffers.set(key, data))
           .catch(() => {});
