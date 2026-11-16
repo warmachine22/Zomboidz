@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+.env
+.env.*
+!*.example
+*.log
+coverage/
+dist/
+assets/npc/
+*.original.glb
+*.zip
