@@ -71,3 +71,13 @@ The game is a browser-delivered, single-player prototype. Zombies currently shar
 ## Future experiments
 
 Headshot feedback polish, believable zombie obstacle navigation and group spacing, better corpse physics and body reactions, calibrated flashlight switching and battery balance on physical Quest, measured 72/90Hz load testing, user comfort options, footstep rustling, enemy silhouettes and visual variants, improved adaptive audio, and usability testing of the wristwatch.
+
+## v0.11: Muzzle light and progression clarity
+
+The game is nearly dark except for a handheld flashlight, but **gunshots can briefly reveal the world**. Each muzzle flash has a soft additive flare, a small flame pointing along the barrel, and a short-lived warm spotlight illuminating where the shot travels. Players should be able to glimpse a walker or the bark of a tree in those fractions of a second.
+
+Ordinary zombies should **not** have visible glowing eyes without light. A stronger, rarer subtype gets subdued glowing eyes (not brighter than the old accidental glow) and needs two headshots, or an accurate shotgun headshot; its frequency rises as the run progresses. The opening remains mostly ordinary walkers.
+
+A visible, simple player body reduces the floating-hands feeling. Keep a chest, sleeves, gloves, and walking legs, with hands tracking controllers where WebXR is available, without obstructing the view. Weapons must read clearly as a pistol, pump shotgun or SMG rather than generic blocks.
+
+World pickups are small, low-to-ground symbols that unmistakably indicate a **weapon, ammunition, or flashlight improvement**. The opening screen also plainly labels the current playable version so a tester can rule out cached versions.

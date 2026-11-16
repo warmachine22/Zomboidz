@@ -155,12 +155,172 @@ const light=new THREE.SpotLight(0xfff5db,150,23,.36,.56,1.15);
 light.position.set(0,-.025,-.3);light.target.position.set(0,-.025,-9);lamp.add(light,light.target);
 const spill=new THREE.SpotLight(0xe0e5d5,34,11,1.02,.92,1.25);
 spill.position.set(0,-.025,-.3);spill.target.position.set(0,-.025,-6);lamp.add(spill,spill.target);
-const gun=new THREE.Group();camera.add(gun);gun.position.set(.26,-.23,-.38);
-const slide=attach(gun,new THREE.BoxGeometry(.078,.084,.28),steel,0,0,-.135);
-attach(gun,new THREE.BoxGeometry(.07,.14,.09),rubber,0,-.105,-.07,-.23);
-attach(gun,new THREE.BoxGeometry(.055,.038,.15),steel,0,-.068,-.17);
-const barrel=attach(gun,new THREE.CylinderGeometry(.025,.025,.16,9),steel,0,-.012,-.325,Math.PI/2);
-const flash=new THREE.PointLight(0xffaa75,0,2.3,2);flash.position.set(0,-.012,-.37);gun.add(flash);
+const gun=new THREE.Group();camera.add(gun);gun.position.set(.27,-.275,-.46);
+// Compact and recognizably different procedural pistol, shotgun, and SMG.
+const gunDark=new THREE.MeshStandardMaterial({color:0x20292a,metalness:.65,roughness:.4});
+const gunMetal=new THREE.MeshStandardMaterial({color:0x4d5551,metalness:.72,roughness:.32});
+const gunGrip=new THREE.MeshStandardMaterial({color:0x272625,roughness:.9});
+const gunWood=new THREE.MeshStandardMaterial({color:0x594132,roughness:.93});
+const gunSight=new THREE.MeshBasicMaterial({color:0x8f9382});
+const weaponShapes={};
+const muzzleLocal=new THREE.Vector3(0,0,-.34);
+function detailBox(group,w,h,d,x,y,z,material=gunMetal,rx=0){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+ m.position.set(x,y,z);m.rotation.x=rx;group.add(m);return m;
+}
+function detailBarrel(group,r,length,x,y,front,material=gunDark){
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,length,10),material);
+ m.rotation.x=Math.PI/2;m.position.set(x,y,front+length*.5);group.add(m);return m;
+}
+function makeGunModel(type){
+ const g=new THREE.Group();gun.add(g);
+ if(type==='pistol'){
+  detailBox(g,.105,.085,.267,0,.017,-.133,gunMetal);
+  detailBox(g,.099,.028,.20,0,-.041,-.143,gunDark);
+  detailBox(g,.083,.154,.09,0,-.133,-.036,gunGrip,-.24);
+  detailBox(g,.064,.028,.091,0,-.073,-.168,gunMetal);
+  detailBarrel(g,.028,.082,0,.015,-.336);
+  detailBox(g,.041,.022,.035,0,.073,-.062,gunSight);
+  detailBox(g,.022,.019,.024,0,.073,-.265,gunSight);
+  detailBox(g,.01,.055,.105,.054,-.11,-.156,gunDark);
+  g.userData.muzzleZ=-.348;
+ }else if(type==='shotgun'){
+  detailBox(g,.13,.122,.285,0,.005,-.22,gunMetal);
+  detailBarrel(g,.047,.57,0,.047,-.80);
+  detailBarrel(g,.032,.44,0,-.023,-.76,gunDark);
+  detailBox(g,.14,.10,.22,0,-.075,-.52,gunWood);
+  detailBox(g,.11,.15,.24,0,-.03,.027,gunWood);
+  detailBox(g,.07,.20,.10,0,-.155,-.21,gunGrip,-.3);
+  detailBox(g,.07,.06,.24,0,-.04,.23,gunWood);
+  detailBox(g,.016,.032,.022,0,.115,-.75,gunSight);
+  g.userData.muzzleZ=-.81;
+ }else{
+  detailBox(g,.14,.15,.35,0,0,-.20,gunMetal);
+  detailBox(g,.125,.074,.26,0,.099,-.19,gunDark);
+  detailBox(g,.14,.1,.18,0,-.015,-.39,gunDark);
+  detailBarrel(g,.039,.17,0,0,-.60);
+  detailBox(g,.087,.27,.095,0,-.194,-.29,gunDark,.18);
+  detailBox(g,.085,.17,.095,0,-.16,-.02,gunGrip,-.18);
+  detailBox(g,.04,.04,.27,0,.01,.135,gunMetal);
+  detailBox(g,.03,.11,.048,0,.015,.27,gunGrip);
+  detailBox(g,.025,.035,.025,0,.16,-.33,gunSight);
+  g.userData.muzzleZ=-.61;
+ }
+ g.scale.setScalar(type==='pistol'?.77:type==='shotgun'?.68:.75);
+ g.visible=type==='pistol';weaponShapes[type]=g;
+}
+makeGunModel('pistol');makeGunModel('shotgun');makeGunModel('smg');
+const muzzleRig=new THREE.Group();gun.add(muzzleRig);
+const flash=new THREE.PointLight(0xffb769,0,12,1.45);
+muzzleRig.add(flash);
+// Direct a transient lighting cone FORWARD along the exact gun muzzle.
+// A point light alone brightened the wrist and floor, not the target ahead.
+const muzzleBeam=new THREE.SpotLight(0xffdeaa,0,18,.70,.72,1.15);
+muzzleBeam.position.set(0,.006,-.012);
+muzzleBeam.target.position.set(0,.006,-9);
+muzzleRig.add(muzzleBeam,muzzleBeam.target);
+const muzzleCanvas=document.createElement('canvas');muzzleCanvas.width=128;muzzleCanvas.height=128;
+const muzzleCtx=muzzleCanvas.getContext('2d');
+const flareGrad=muzzleCtx.createRadialGradient(64,64,0,64,64,64);
+flareGrad.addColorStop(0,'rgba(255,255,230,1)');
+flareGrad.addColorStop(.12,'rgba(255,227,133,.95)');
+flareGrad.addColorStop(.35,'rgba(255,137,40,.67)');
+flareGrad.addColorStop(.72,'rgba(255,74,15,.16)');
+flareGrad.addColorStop(1,'rgba(255,80,0,0)');
+muzzleCtx.fillStyle=flareGrad;muzzleCtx.fillRect(0,0,128,128);
+const flareTex=new THREE.CanvasTexture(muzzleCanvas);
+const flareSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:flareTex,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
+flareSprite.scale.set(.34,.34,1);muzzleRig.add(flareSprite);
+const flareCone=new THREE.Mesh(new THREE.ConeGeometry(.052,.20,5),new THREE.MeshBasicMaterial({color:0xffbe55,transparent:true,opacity:.74,depthWrite:false,blending:THREE.AdditiveBlending}));
+flareCone.rotation.x=-Math.PI/2;flareCone.position.z=-.094;muzzleRig.add(flareCone);
+muzzleRig.visible=false;
+function updateMuzzleFlash(dt){
+ muzzleTime=Math.max(0,muzzleTime-dt);
+ const intensity=muzzleTime>0?muzzleTime/.13:0;
+ flash.intensity=intensity*95;
+ muzzleBeam.intensity=intensity*420;
+ muzzleRig.visible=intensity>0;
+ if(intensity>0){
+  flareSprite.material.opacity=Math.min(1,.35+intensity*.64);
+  flareSprite.scale.setScalar(.16+.21*intensity);
+  flareCone.scale.setScalar(.7+.8*intensity);
+ }
+}
+function setWeaponVisual(){
+ for(const [type,mesh] of Object.entries(weaponShapes))mesh.visible=type===currentWeapon;
+ const active=weaponShapes[currentWeapon]||weaponShapes.pistol;
+ muzzleLocal.set(0,0,active.userData.muzzleZ*active.scale.z);
+ muzzleRig.position.copy(muzzleLocal);
+}
+
+// Visible first-person body: torso, two legs and hands/forearms follow tracked
+// Quest controllers (desktop uses virtual wrist positions by the held tools).
+// No giant full-body mesh is placed in front of the camera.
+const avatar=new THREE.Group();rig.add(avatar);
+const coatMat=new THREE.MeshBasicMaterial({color:0x30433e});
+const pantsMat=new THREE.MeshBasicMaterial({color:0x243532});
+const glovesMat=new THREE.MeshBasicMaterial({color:0x47524e});
+const bootsMat=new THREE.MeshBasicMaterial({color:0x202a28});
+const torso=new THREE.Mesh(new THREE.BoxGeometry(.48,.63,.27),coatMat);
+torso.position.set(0,1.08,.095);avatar.add(torso);
+const belt=new THREE.Mesh(new THREE.BoxGeometry(.46,.07,.29),bootsMat);
+belt.position.set(0,.75,.095);avatar.add(belt);
+const walkingLegs=[];
+for(const side of [-1,1]){
+ const hip=new THREE.Group();hip.position.set(side*.135,.75,.07);avatar.add(hip);
+ const leg=new THREE.Mesh(new THREE.BoxGeometry(.205,.68,.24),pantsMat);
+ leg.position.y=-.345;hip.add(leg);
+ const boot=new THREE.Mesh(new THREE.BoxGeometry(.235,.16,.33),bootsMat);
+ boot.position.set(0,-.67,-.04);hip.add(boot);
+ walkingLegs.push({hip,side});
+}
+const limbAxis=new THREE.Vector3(0,1,0);
+const arms=[-1,1].map(side=>{
+ const sleeve=new THREE.Mesh(new THREE.CylinderGeometry(.085,.096,1,7),coatMat);
+ rig.add(sleeve);
+ const cuff=new THREE.Mesh(new THREE.BoxGeometry(.145,.09,.17),bootsMat);
+ rig.add(cuff);
+ const glove=new THREE.Mesh(new THREE.BoxGeometry(.155,.14,.19),glovesMat);
+ rig.add(glove);
+ return {sleeve,cuff,glove,side};
+});
+const tempShoulder=new THREE.Vector3(),tempWrist=new THREE.Vector3(),tempSegment=new THREE.Vector3(),tempCenter=new THREE.Vector3();
+function updateAvatar(){
+ const playing=state==='playing';
+ avatar.visible=playing;
+ for(const arm of arms){arm.sleeve.visible=playing;arm.cuff.visible=playing;arm.glove.visible=playing;}
+ if(!playing)return;
+ const head=renderer.xr.isPresenting?renderer.xr.getCamera(camera):camera;
+ const f=head.getWorldDirection(new THREE.Vector3());f.y=0;
+ if(f.lengthSq()>.00001){f.normalize();avatar.rotation.y=-Math.atan2(f.x,-f.z);}
+ avatar.updateWorldMatrix(true,true);
+ const walking=elapsed<playerMovingUntil;
+ for(const leg of walkingLegs)leg.hip.rotation.x=walking?Math.sin(elapsed*8+leg.side*Math.PI*.5)*.25:0;
+ for(const arm of arms){
+  const side=arm.side;
+  tempShoulder.set(side*.315,1.30,.035);
+  avatar.localToWorld(tempShoulder);
+  const tracked=side<0?left:right;
+  if(renderer.xr.isPresenting&&tracked){
+   tracked.getWorldPosition(tempWrist);
+   tempWrist.y-=.025;
+  }else{
+   tempWrist.set(side<0?-.245:.247,-.33,side<0?-.39:-.29);
+   camera.localToWorld(tempWrist);
+  }
+  tempSegment.subVectors(tempWrist,tempShoulder);
+  const length=Math.max(.06,tempSegment.length());
+  tempCenter.copy(tempShoulder).addScaledVector(tempSegment,.5);
+  rig.worldToLocal(tempCenter);
+  arm.sleeve.position.copy(tempCenter);
+  arm.sleeve.scale.set(1,length,1);
+  arm.sleeve.quaternion.setFromUnitVectors(limbAxis,tempSegment.normalize());
+  const localWrist=rig.worldToLocal(tempWrist.clone());
+  arm.cuff.position.copy(localWrist).lerp(arm.sleeve.position,.15);
+  arm.glove.position.copy(localWrist);
+ }
+}
+
 const isTouchDevice=Number(navigator.maxTouchPoints||0)>0||window.matchMedia?.('(pointer: coarse)')?.matches===true;
 let touchMoveX=0,touchMoveY=0,touchFiring=false;
 const touchCss=document.createElement('style');touchCss.textContent="\n#touch-ui{display:none;position:fixed;inset:0;z-index:7;touch-action:none;pointer-events:none;font-family:monospace;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}\nbody.touch-play.playing:not(.xr-presenting) #touch-ui{display:block}\n#touch-look{position:absolute;inset:0 0 0 auto;width:68%;touch-action:none;pointer-events:auto}\n#touch-stick{position:absolute;left:calc(24px + env(safe-area-inset-left));bottom:calc(32px + env(safe-area-inset-bottom));width:148px;height:148px;border-radius:50%;border:2px solid #b8cba766;background:radial-gradient(circle,#899d5d25,#050b0875);pointer-events:auto;touch-action:none}\n#touch-knob{position:absolute;left:48px;top:48px;width:50px;height:50px;border-radius:50%;background:#b8d1a661;border:2px solid #c3e0aa94;box-shadow:0 0 20px #97ce7d22;pointer-events:none;transform:translate(0px,0px)}\n#touch-ui button{position:absolute;border:1px solid #bcd49b8a;color:#d8e9c0;background:#08130dc9;backdrop-filter:blur(7px);border-radius:14px;font:bold 13px monospace;letter-spacing:.5px;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}\n#touch-ui button:active{background:#8fa47e77;color:#fff}\n#touch-fire{right:calc(24px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:104px;height:104px;border-radius:50%!important;color:#f7e5da!important;border-color:#ca927fbb!important;font-size:17px!important;background:#25120cbf!important}\n#touch-reload{right:calc(146px + env(safe-area-inset-right));bottom:calc(37px + env(safe-area-inset-bottom));width:87px;height:54px}\n#touch-mode{right:calc(26px + env(safe-area-inset-right));bottom:calc(151px + env(safe-area-inset-bottom));width:100px;height:49px}\n#touch-charge{left:50%;transform:translateX(-50%);bottom:calc(33px + env(safe-area-inset-bottom));width:104px;height:57px}\n#touch-hint{position:absolute;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);background:#0209078a;border:1px solid #89988939;border-radius:18px;color:#9cae96;font:11px monospace;letter-spacing:.4px;padding:9px 13px;opacity:.79;pointer-events:none;white-space:nowrap}\n@media(max-width:700px){#touch-stick{left:12px;bottom:24px;width:116px;height:116px}#touch-knob{left:36px;top:36px;width:40px;height:40px}#touch-fire{right:12px;bottom:24px;width:85px;height:85px}#touch-reload{right:108px;bottom:28px;width:72px;height:44px;font-size:10px!important}#touch-mode{right:12px;bottom:118px;width:86px;height:44px}#touch-charge{bottom:25px;width:84px;height:50px;font-size:11px!important}#touch-hint{font-size:9px;padding:7px 8px}}\n@media(orientation:portrait){#touch-hint{top:67px}#touch-charge{bottom:calc(13px + env(safe-area-inset-bottom))}\n";document.head.appendChild(touchCss);
@@ -257,7 +417,7 @@ function paintWatch(){
 const hands=[];
 for(let i=0;i<2;i++){const c=renderer.xr.getController(i);rig.add(c);hands.push(c);
  c.addEventListener('connected',e=>{c.userData.input=e.data;if(e.data.handedness==='left'){left=c;c.add(lamp);lamp.position.set(0,-.032,-.07);c.add(watch);watch.position.set(-.012,-.082,.14);}if(e.data.handedness==='right'){right=c;c.add(gun);gun.position.set(0,-.04,-.08);}});
- c.addEventListener('disconnected',()=>{if(left===c){left=null;camera.add(lamp);lamp.position.set(-.24,-.21,-.31);camera.add(watch);watch.position.set(-.28,-.31,-.39);}if(right===c){right=null;camera.add(gun);gun.position.set(.26,-.23,-.38);}c.userData.input=null;});
+ c.addEventListener('disconnected',()=>{if(left===c){left=null;camera.add(lamp);lamp.position.set(-.24,-.21,-.31);camera.add(watch);watch.position.set(-.28,-.31,-.39);}if(right===c){right=null;camera.add(gun);gun.position.set(.27,-.275,-.46);}c.userData.input=null;});
   c.addEventListener('selectstart',()=>{
    if(c===left){toggleFlashlight();return;}
    if(c!==right)return;
@@ -305,7 +465,7 @@ const modelReady=(async()=>{
    const mats=Array.isArray(o.material)?o.material:[o.material];
    for(const m of mats){
     if(m.map){m.map.magFilter=THREE.NearestFilter;m.map.minFilter=THREE.NearestMipmapNearestFilter;m.map.needsUpdate=true;}
-    if(m.emissiveMap){m.emissiveMap.magFilter=THREE.NearestFilter;m.emissiveIntensity=2.1;}
+    if(m.emissiveMap){m.emissiveMap.magFilter=THREE.NearestFilter;m.emissiveIntensity=0;}
    }
   });
   $('startlabel').textContent='ENTER THE FOREST';
@@ -379,6 +539,8 @@ function createZombie(angle=0,dist=30,initialAlert=false,forcedKind=null){
  if(!zombieTemplate||zombies.length>=maxZombies())return null;
  const obj=cloneSkeleton(zombieTemplate);
  const roll=Math.random(),kind=forcedKind||(roll<.55?'shambler':roll<.91?'stalker':'runner');
+ const eliteChance=Math.min(.34,.022+Math.max(0,elapsed)/900*.32);
+ const elite=Math.random()<eliteChance;
  const scale=rnd(.84,1.10);
  const speed=kind==='runner'?rnd(1.33,1.68):kind==='shambler'?rnd(.49,.79):rnd(.84,1.20);
  const skinTone=pick([0xbac5a9,0xb0bbb0,0x9bb8a7,0xc6b7ab,0x8da59b]);
@@ -389,14 +551,14 @@ function createZombie(angle=0,dist=30,initialAlert=false,forcedKind=null){
   mixer:new THREE.AnimationMixer(obj),voice:rnd(.45,2.4),hasScreamed:false,
   lurch:rnd(0,Math.PI*2),roamTimer:rnd(1.2,5),roamAngle:rnd(-3.14,3.14),
   attackTimer:rnd(1,2.5),walkAction:null,sprintAction:null,attackAction:null,
-  fromY:0,hitScale:rnd(.94,1.05),hp:3.6,legHits:0,limp:1,flinch:0,animAccum:0,headBone:obj.getObjectByName('Head'),navTree:-1,navSide:1};
+  fromY:0,hitScale:rnd(.94,1.05),hp:elite?7.5:3.6,elite,headHits:0,legHits:0,limp:1,flinch:0,animAccum:0,headBone:obj.getObjectByName('Head'),navTree:-1,navSide:1};
  obj.traverse(o=>{
   if(o.isSkinnedMesh||o.isMesh){
    o.userData.zombie=z;o.frustumCulled=false;
    if(o.material){const materials=Array.isArray(o.material)?o.material:[o.material];o.material=materials.map(m=>{
     const copy=m.clone();if(copy.color)copy.color.multiplyScalar(rnd(.89,1.08));
     if(copy.map){copy.map.magFilter=THREE.NearestFilter;copy.map.minFilter=THREE.NearestMipmapNearestFilter;}
-    if(copy.emissiveMap)copy.emissiveIntensity=2.1;
+    if(copy.emissiveMap)copy.emissiveIntensity=elite?1.15:0;
     return copy;
    });if(!Array.isArray(zombieTemplate?.material))o.material=o.material[0];}
   }
@@ -574,7 +736,7 @@ laserDot.add(laserGlow);
 const aimOrigin=new THREE.Vector3(),aimDir=new THREE.Vector3(),aimQuat=new THREE.Quaternion();
 function getAim(){
  gun.updateWorldMatrix(true,false);
- gun.localToWorld(aimOrigin.set(0,-.012,-.408));
+ gun.localToWorld(aimOrigin.copy(muzzleLocal));
  gun.getWorldQuaternion(aimQuat);
  aimDir.set(0,0,-1).applyQuaternion(aimQuat).normalize();
  if(!renderer.xr.isPresenting){
@@ -672,7 +834,12 @@ let headshots=0;
 function applyZombieHit(z,zone,damage){
  if(!z||!zombies.includes(z))return;
  if(zone==='head'){
-  killZombie(z,true);return;
+  if(!z.elite||currentWeapon==='shotgun'||++z.headHits>=2||z.hp<=2.3){
+   killZombie(z,true);return;
+  }
+  z.hp=Math.max(.1,z.hp-2.3);z.flinch=.32;
+  notice('HARDENED · HEADSHOT '+z.headHits+'/2');
+  return;
  }
  const multiplier=zone==='limb'?.72:zone==='leg'?.84:1;
  const dealt=damage*multiplier;
@@ -743,7 +910,7 @@ function fire(){
  if(state!=='playing'||weaponCooldown>0||reloadCooldown>0)return;
  const cfg=specs[currentWeapon];
  if(ammo<=0){notice('EMPTY — RELOAD');sound('reload-short',.12,1.2);weaponCooldown=.32;return;}
- ammo--;weaponCooldown=cfg.rate;muzzleTime=.06;
+ ammo--;weaponCooldown=cfg.rate;muzzleTime=.13;
  const {origin,direction}=getAim(),start=origin.clone(),dir=direction.clone();
  signalNoise(currentWeapon==='shotgun'?59:currentWeapon==='smg'?51:48,start);
  sound(cfg.sound,currentWeapon==='shotgun'?.78:.55,rnd(.9,1.1));
@@ -776,31 +943,75 @@ function reload(){if(state!=='playing'||reloadCooldown>0)return;const max=specs[
  sound(currentWeapon==='smg'?'reload-smg-short':'reload-short',.48,1);notice('RELOADING...');}
 function pickupLabel(text){const c=document.createElement('canvas');c.width=512;c.height=128;const g=c.getContext('2d');g.fillStyle='#10170fe6';g.fillRect(0,14,512,104);g.strokeStyle='#e2f17b';g.strokeRect(3,17,506,98);g.font='bold 38px monospace';g.textAlign='center';g.fillStyle='#e2f17b';g.fillText(text,256,81);const tex=new THREE.CanvasTexture(c),mesh=new THREE.Mesh(new THREE.PlaneGeometry(1.45,.36),new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false,side:THREE.DoubleSide}));mesh.position.y=1.63;return mesh;}
 // Ground-level supply crates replace oversized floating labels/icons.
+// Compact, unmistakable upgrade icons rather than identical treasure chests.
+function pickupTexture(kind){
+ const canvas=document.createElement('canvas');canvas.width=canvas.height=128;
+ const g=canvas.getContext('2d');
+ const palette={flash:'#abd69d',shotgun:'#dca574',smg:'#95bbd8',ammo:'#d4bb73'};
+ const color=palette[kind]||'#abb8a2';
+ g.fillStyle='#0d1510c8';g.fillRect(7,5,114,117);
+ g.strokeStyle=color;g.lineWidth=5;g.strokeRect(10,8,108,110);
+ g.fillStyle='#ffffff12';g.fillRect(13,11,102,73);
+ g.fillStyle=color;
+ if(kind==='flash'){
+  // Flashlight with clear beam / charge symbol.
+  g.save();g.translate(58,56);g.rotate(-.35);
+  g.fillRect(-16,-21,28,48);
+  g.fillStyle='#26392c';g.fillRect(-12,-15,20,32);
+  g.fillStyle=color;g.fillRect(-20,-27,36,11);g.fillRect(-15,25,27,9);
+  g.restore();
+  g.strokeStyle=color;g.lineWidth=4;g.beginPath();g.moveTo(71,28);g.lineTo(92,16);g.moveTo(76,49);g.lineTo(102,43);g.stroke();
+ }else if(kind==='shotgun'){
+  // Long barrel and wooden pump, viewed in profile.
+  g.fillRect(19,36,87,10);g.fillRect(48,45,30,17);
+  g.fillRect(76,29,25,6);
+  g.fillStyle='#634532';g.fillRect(18,41,27,29);
+  g.fillStyle=color;g.fillRect(49,58,13,20);g.fillRect(78,46,18,9);
+ }else if(kind==='smg'){
+  // Box receiver, short barrel, stick magazine, and rear stock.
+  g.fillRect(24,34,69,19);g.fillRect(89,37,19,9);
+  g.fillRect(11,42,16,9);g.fillRect(23,48,15,6);
+  g.fillRect(47,52,14,31);g.fillRect(75,53,10,15);
+  g.fillRect(55,24,29,7);
+ }else{
+  // Ammo magazine and three round silhouettes.
+  g.fillRect(35,44,51,37);g.fillStyle='#263324';g.fillRect(39,48,43,28);
+  g.fillStyle=color;
+  for(const x of [39,54,69]){
+   g.fillRect(x,30,11,25);g.beginPath();g.moveTo(x,30);g.lineTo(x+5.5,20);g.lineTo(x+11,30);g.fill();
+  }
+  g.fillRect(40,79,41,6);
+ }
+ const title={flash:'LIGHT +10s',shotgun:'SHOTGUN',smg:'SMG',ammo:'AMMO +'}[kind];
+ g.font='bold 15px monospace';g.fillStyle=color;g.textAlign='center';g.fillText(title,64,108);
+ const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+ texture.magFilter=THREE.NearestFilter;texture.minFilter=THREE.LinearFilter;
+ return texture;
+}
+const pickupTextures=Object.fromEntries(['flash','shotgun','smg','ammo'].map(kind=>[kind,pickupTexture(kind)]));
 function makePickup(kind){
  if(pickups.length>=3)return;
  const a=rnd(-Math.PI,Math.PI),d=rnd(6.5,10.5),g=new THREE.Group();
  g.position.set(rig.position.x+Math.sin(a)*d,0,rig.position.z+Math.cos(a)*d);
- const color=kind==='flash'?0xa4cb87:kind==='shotgun'?0xcc9a70:0x84b5cd;
- const wood=new THREE.MeshStandardMaterial({color:0x54402b,roughness:.96});
- const trim=new THREE.MeshStandardMaterial({color:0x353b31,metalness:.18,roughness:.79});
- const halo=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.24,depthWrite:false,side:THREE.DoubleSide});
- const crate=new THREE.Mesh(new THREE.BoxGeometry(.51,.24,.37),wood);crate.position.y=.125;g.add(crate);
- const lid=new THREE.Mesh(new THREE.BoxGeometry(.57,.072,.43),trim);lid.position.y=.283;g.add(lid);
- for(const x of [-.18,.18]){
-  const metal=new THREE.Mesh(new THREE.BoxGeometry(.045,.28,.405),trim);metal.position.set(x,.14,0);g.add(metal);
- }
- const latch=new THREE.Mesh(new THREE.BoxGeometry(.12,.11,.029),new THREE.MeshBasicMaterial({color}));latch.position.set(0,.225,.212);g.add(latch);
- const glow=new THREE.PointLight(color,.23,2.35,2);glow.position.set(0,.35,0);g.add(glow);
- const ring=new THREE.Mesh(new THREE.RingGeometry(.32,.56,24),halo);ring.rotation.x=-Math.PI/2;ring.position.y=.022;g.add(ring);
- scene.add(g);
- pickups.push({g,kind,age:0,latch,glow});
+ const colors={flash:0xa4cb87,shotgun:0xcc9a70,smg:0x84b5cd,ammo:0xd4bb73};
+ const color=colors[kind]||0xc0ccaf;
+ const icon=new THREE.Sprite(new THREE.SpriteMaterial({map:pickupTextures[kind],transparent:true,depthWrite:false,opacity:.89}));
+ icon.position.y=.52;icon.scale.set(.63,.63,1);g.add(icon);
+ const baseMat=new THREE.MeshStandardMaterial({color:0x242c24,roughness:1});
+ const plinth=new THREE.Mesh(new THREE.CylinderGeometry(.23,.28,.11,6),baseMat);
+ plinth.position.y=.063;g.add(plinth);
+ const ringMat=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.26,depthWrite:false,side:THREE.DoubleSide});
+ const ring=new THREE.Mesh(new THREE.RingGeometry(.24,.41,24),ringMat);
+ ring.rotation.x=-Math.PI/2;ring.position.y=.016;g.add(ring);
+ const glow=new THREE.PointLight(color,.24,2.3,2);glow.position.y=.44;g.add(glow);
+ scene.add(g);pickups.push({g,kind,age:0,icon,glow});
 }
 
-function grab(p){scene.remove(p.g);pickups.splice(pickups.indexOf(p),1);if(p.kind==='flash'){flashRunSeconds=Math.min(90,flashRunSeconds+10);flashRange=Math.min(30,flashRange+3);flashDrain=batteryMax/flashRunSeconds;battery=clamp(battery+35,0,batteryMax);notice('FLASHLIGHT '+flashRunSeconds+'S RUNTIME');}else{currentWeapon=p.kind;bonusMagazine=0;ammo=specs[currentWeapon].mag;notice(currentWeapon==='shotgun'?'SHOTGUN ACQUIRED':'SMG ACQUIRED');}sound('reload-short',.58,1.25);updateUI();}
+function grab(p){scene.remove(p.g);pickups.splice(pickups.indexOf(p),1);if(p.kind==='flash'){flashRunSeconds=Math.min(90,flashRunSeconds+10);flashRange=Math.min(30,flashRange+3);flashDrain=batteryMax/flashRunSeconds;battery=clamp(battery+35,0,batteryMax);notice('FLASHLIGHT '+flashRunSeconds+'S RUNTIME');}else if(p.kind==='ammo'){const gain=currentWeapon==='smg'?6:2;bonusMagazine=Math.min(24,bonusMagazine+gain);ammo=Math.min(specs[currentWeapon].mag+bonusMagazine,ammo+gain);notice('EXTENDED MAGAZINE +'+gain);}else{currentWeapon=p.kind;setWeaponVisual();bonusMagazine=0;ammo=specs[currentWeapon].mag;notice(currentWeapon==='shotgun'?'SHOTGUN ACQUIRED':'SMG ACQUIRED');}sound('reload-short',.58,1.25);updateUI();}
 function clearWorld(){for(const z of zombies){scene.remove(z.obj);z.mixer.stopAllAction();}zombies.length=0;for(const p of pickups)scene.remove(p.g);pickups.length=0;for(const p of particles)scene.remove(p.obj);particles.length=0;for(const fx of hitFx)scene.remove(fx.mesh);hitFx.length=0;for(const mark of barkMarks)scene.remove(mark.obj);barkMarks.length=0;}
-function startGame(){if(state==='dead'&&!deathReady)return;if(!zombieTemplate){notice('LOADING 3D MODEL...');return;}clearDeathReplay();deathReady=false;gun.visible=true;lamp.visible=true;crowdBudget=64;perfSeconds=0;perfSamples=0;perfWindows=0;clearWorld();state='playing';elapsed=0;wave=2;score=0;headshots=0;ammo=6;currentWeapon='pistol';bonusMagazine=0;battery=100;batteryMax=100;flashRange=22;flashRunSeconds=30;flashDrain=100/30;setFlashlightOn(true,false);lastToggleTime=-100;setBeamMode('wide',false);nextSpawn=1.9;nextDrop=24;noisePulses.length=0;playerMovingUntil=0;nextAheadCheck=0;frame=0;weaponCooldown=0;reloadCooldown=0;rig.position.set(0,0,0);leftTriggerHeld=false;
+function startGame(){if(state==='dead'&&!deathReady)return;if(!zombieTemplate){notice('LOADING 3D MODEL...');return;}clearDeathReplay();deathReady=false;gun.visible=true;lamp.visible=true;crowdBudget=64;perfSeconds=0;perfSamples=0;perfWindows=0;clearWorld();state='playing';elapsed=0;wave=2;score=0;headshots=0;ammo=6;currentWeapon='pistol';setWeaponVisual();bonusMagazine=0;battery=100;batteryMax=100;flashRange=22;flashRunSeconds=30;flashDrain=100/30;setFlashlightOn(true,false);lastToggleTime=-100;setBeamMode('wide',false);nextSpawn=1.9;nextDrop=24;noisePulses.length=0;playerMovingUntil=0;nextAheadCheck=0;frame=0;weaponCooldown=0;reloadCooldown=0;rig.position.set(0,0,0);leftTriggerHeld=false;
  const v=renderer.xr.isPresenting;vrPanel.visible=false;deathPanel.visible=false;leftXHeld=false;leftYHeld=false;touchMoveX=0;touchMoveY=0;document.body.classList.add('playing');$('menu').classList.add('off');for(const id of ['hud','battery','elims'])$(id).classList.remove('hidden');$('reticle').classList.toggle('hidden',v);
- populateForest();audioInit();if(!v&&!isTouchDevice)renderer.domElement.requestPointerLock?.().catch(()=>{});updateUI();}
+ populateForest();updateAvatar();audioInit();if(!v&&!isTouchDevice)renderer.domElement.requestPointerLock?.().catch(()=>{});updateUI();}
 // A short third-person reconstruction explains the fatal hit without forcibly
 // moving the VR headset camera (which could make the user uncomfortable).
 let deathReplay=null,deathReady=false,deathDirection='BEHIND YOU';
@@ -906,8 +1117,8 @@ function dead(attacker){
  notice('FATAL ATTACK '+deathDirection);
 }
 function paintDeath(){const g=deathCanvas.getContext('2d');g.clearRect(0,0,900,560);g.fillStyle='#030b08ee';g.fillRect(0,0,900,560);g.strokeStyle='#d0f078';g.lineWidth=4;g.strokeRect(8,8,884,544);g.textAlign='center';g.fillStyle='#f98c71';g.font='bold 92px sans-serif';g.fillText('YOU DIED',450,156);g.fillStyle='#e6eecc';g.font='bold 50px monospace';g.fillText('SURVIVED  '+fmt(elapsed),450,252);g.fillStyle='#f6a18d';g.font='bold 28px monospace';g.fillText('ATTACKED '+deathDirection,450,420);g.font='34px monospace';g.fillText('KILLS '+score+'   HEADSHOTS '+headshots,450,320);g.fillText('PERSONAL BEST  '+fmt(peak),450,375);g.fillStyle='#d6ed94';g.font='30px monospace';g.fillText('PRESS RIGHT TRIGGER OR A TO RETRY',450,478);deathTex.needsUpdate=true;}
-function paintVR(){const g=gfxCanvas.getContext('2d');g.clearRect(0,0,768,232);g.fillStyle='#030c0aea';g.fillRect(0,0,768,205);g.strokeStyle='#9ba880';g.strokeRect(2,2,764,201);g.fillStyle='#e2f17b';g.font='19px monospace';g.fillText('ZOMBIEZ // THE LAST LIGHT',19,32);g.fillStyle='#f4f4e4';g.font='bold 39px monospace';g.fillText(fmt(elapsed),21,88);g.fillText(''+ammo+'/'+(specs[currentWeapon].mag+bonusMagazine),274,88);g.fillText(Math.ceil(battery)+'%',579,88);g.font='16px monospace';g.fillStyle='#b0bfae';g.fillText('TIME',22,111);g.fillText(currentWeapon.toUpperCase()+' / RELOAD A-B',274,111);g.fillText('LIGHT',581,111);g.fillStyle='#384d36';g.fillRect(20,137,725,12);g.fillStyle=battery<20?'#ff745b':'#e2f17b';g.fillRect(20,137,725*battery/batteryMax,12);g.font='17px monospace';g.fillStyle='#dfebca';g.fillText('WAVE '+wave+'    ELIMINATIONS '+score+'    SHAKE LEFT HAND TO CHARGE',20,183);gfx.needsUpdate=true;}
-function updateUI(){if(state!=='playing')return;$('time').textContent=fmt(elapsed);$('wave').textContent='WAVE '+String(wave).padStart(2,'0');$('ammo').textContent=String(ammo).padStart(2,'0');document.querySelector('.stat.right>small').textContent=specs[currentWeapon].label;document.querySelector('.stat.right em').textContent='/ '+(specs[currentWeapon].mag+bonusMagazine);$('batnum').textContent=Math.ceil(battery/batteryMax*100)+'%';$('batfill').style.width=(battery/batteryMax*100)+'%';$('batfill').style.background=battery<15?'#f68465':'#e2f17b';$('bathint').textContent=renderer.xr.isPresenting?'SHAKE LEFT HAND TO CHARGE':'TAP F TO CHARGE FLASHLIGHT';$('kills').textContent=String(score).padStart(2,'0');$('reload').textContent=ammo<=0?'RELOAD NOW':currentWeapon==='smg'?'A / B — RELOAD':'R — RELOAD';$('hp').textContent='1 HIT';$('hpfill').style.width='100%';document.querySelector('.health>small').childNodes[0].textContent='NO SECOND CHANCES ';paintWatch();}
+function paintVR(){const g=gfxCanvas.getContext('2d');g.clearRect(0,0,768,232);g.fillStyle='#030c0aea';g.fillRect(0,0,768,205);g.strokeStyle='#9ba880';g.strokeRect(2,2,764,201);g.fillStyle='#e2f17b';g.font='19px monospace';g.fillText('ZOMBIEZ // THE LAST LIGHT',19,32);g.fillStyle='#f4f4e4';g.font='bold 39px monospace';g.fillText(fmt(elapsed),21,88);g.fillText(''+ammo+'/'+(specs[currentWeapon].mag+bonusMagazine),274,88);g.fillText(Math.ceil(battery)+'%',579,88);g.font='16px monospace';g.fillStyle='#b0bfae';g.fillText('TIME',22,111);g.fillText(currentWeapon.toUpperCase()+' / RELOAD A-B',274,111);g.fillText('LIGHT',581,111);g.fillStyle='#384d36';g.fillRect(20,137,725,12);g.fillStyle=battery<20?'#ff745b':'#e2f17b';g.fillRect(20,137,725*battery/batteryMax,12);g.font='17px monospace';g.fillStyle='#dfebca';g.fillText('WAVE '+wave+'    ELIMINATIONS '+score+'    LEFT TRIGGER · LIGHT ON / OFF',20,183);gfx.needsUpdate=true;}
+function updateUI(){if(state!=='playing')return;$('time').textContent=fmt(elapsed);$('wave').textContent='WAVE '+String(wave).padStart(2,'0');$('ammo').textContent=String(ammo).padStart(2,'0');document.querySelector('.stat.right>small').textContent=specs[currentWeapon].label;document.querySelector('.stat.right em').textContent='/ '+(specs[currentWeapon].mag+bonusMagazine);$('batnum').textContent=Math.ceil(battery/batteryMax*100)+'%';$('batfill').style.width=(battery/batteryMax*100)+'%';$('batfill').style.background=battery<15?'#f68465':'#e2f17b';$('bathint').textContent=flashlightOn?'LIGHT ON · SWITCH OFF TO RECHARGE':'RECHARGING · LIGHT OFF';$('kills').textContent=String(score).padStart(2,'0');$('reload').textContent=ammo<=0?'RELOAD NOW':currentWeapon==='smg'?'A / B — RELOAD':'R — RELOAD';$('hp').textContent='1 HIT';$('hpfill').style.width='100%';document.querySelector('.health>small').childNodes[0].textContent='NO SECOND CHANCES ';paintWatch();}
 // Quest Touch commonly places the thumbstick on axes 2/3; some WebXR profiles use 0/1.
 // Choose whichever stick is actually moving so left-stick movement never appears dead.
 function leftStick(gamepad){
@@ -1052,8 +1263,8 @@ function updateZombies(dt){
 function updatePickups(dt){
  for(let i=pickups.length-1;i>=0;i--){
   const p=pickups[i];p.age+=dt;
-  p.glow.intensity=.16+.08*Math.sin(p.age*2.4);
-  p.latch.material.color.setHex(p.kind==='flash'?0xa4cb87:p.kind==='shotgun'?0xcc9a70:0x84b5cd);
+  p.glow.intensity=.17+.07*Math.sin(p.age*2.4);
+  p.icon.position.y=.52+.035*Math.sin(p.age*2.1);
   if(Math.hypot(p.g.position.x-rig.position.x,p.g.position.z-rig.position.z)<1.15)grab(p);
   else if(p.age>55){scene.remove(p.g);pickups.splice(i,1);}
  }
@@ -1074,9 +1285,9 @@ function loop(now){const wallDt=Math.min(.9,Math.max(0,(now-lastTime)/1000||.016
  if((shootHeld||touchFiring)&&currentWeapon==='smg'&&weaponCooldown<=0)fire();
  // Charging happens automatically whenever the flashlight is switched off.
  adaptCrowd(wallDt);move(dt);updateZombies(dt);if(state==='playing'){updatePickups(dt);if(elapsed>nextAheadCheck){keepForestPopulatedAhead();nextAheadCheck=elapsed+3.4;}if(elapsed>nextSpawn){populateReplacement();if(elapsed>60||elapsed<playerMovingUntil)populateReplacement();if(elapsed>180)populateReplacement();nextSpawn=elapsed+Math.max(.55,2.15-wave*.095)+rnd(-.22,.25);}
- if(elapsed>nextDrop){let kind=elapsed<45?'flash':elapsed<80?'shotgun':elapsed<115?'smg':pick(['flash','shotgun','smg']);makePickup(kind);nextDrop=elapsed+Math.max(23,31-wave);}
+ if(elapsed>nextDrop){let kind=elapsed<45?'flash':elapsed<80?'shotgun':elapsed<115?'smg':pick(['flash','shotgun','smg','ammo','ammo']);makePickup(kind);nextDrop=elapsed+Math.max(23,31-wave);}
  updateFlashlightBattery(wallDt);
- if(++treeTick%47===0)maintainForest();muzzleTime=Math.max(0,muzzleTime-dt);flash.intensity=muzzleTime>0?8:0;const lightPower=flashlightOn&&battery>0?.82+.18*Math.min(1,battery/(batteryMax*.15)):0;
+ if(++treeTick%47===0)maintainForest();updateMuzzleFlash(dt);const lightPower=flashlightOn&&battery>0?.82+.18*Math.min(1,battery/(batteryMax*.15)):0;
  light.intensity=(beamMode==='focus'?205:155)*lightPower;
  light.distance=beamMode==='focus'?flashRange:flashRange*.61;
  spill.intensity=(beamMode==='focus'?25:48)*lightPower;
@@ -1085,7 +1296,7 @@ function loop(now){const wallDt=Math.min(.9,Math.max(0,(now-lastTime)/1000||.016
  uiClock+=dt;if(uiClock>.16){uiClock=0;updateUI();}
  }}else{light.intensity=state==='menu'?38:7;spill.intensity=state==='menu'?15:2;}
  if(state==='dead'&&deathReady&&renderer.xr.isPresenting){const buttons=right?.userData.input?.gamepad?.buttons;if(buttons){const yes=Boolean(buttons[4]?.pressed||buttons[5]?.pressed);if(yes&&!rightRetryHeld)startGame();rightRetryHeld=yes;}}
- if(state==='dead')updateDeathReplay(wallDt);if(state!=='playing')muzzleTime=0;updateLaser();listenerUpdate();updateNotice();renderer.render(scene,camera);}
+ if(state==='dead')updateDeathReplay(wallDt);if(state!=='playing')muzzleTime=0;updateAvatar();updateLaser();listenerUpdate();updateNotice();renderer.render(scene,camera);}
 renderer.setAnimationLoop(loop);
 vrPanel.visible=false;
 document.querySelector('.health>small').childNodes[0].textContent='NO SECOND CHANCES ';

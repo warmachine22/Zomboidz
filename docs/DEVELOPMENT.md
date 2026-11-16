@@ -81,3 +81,12 @@ The public repository must not include the **original downloadable zip or source
 - The horde cap (64) is exploratory. A WebGL desktop browser handling 64 does not prove Quest can sustain comfortable 72/90Hz.
 - One zombie model with cosmetic variations, limited animation variety.
 - Model and audio files are required; missing assets prevent or degrade gameplay.
+
+## v0.11 implementation notes
+
+- **Build visibility:** `index.html` renders `#build-version` directly beneath the game subtitle with a visible v0.11 label, and the top bar and browser title also identify the build. The browser bootstrap imports `src/game.js?v=0.11` to help avoid cached code.
+- **Directional muzzle light:** The gun group owns `muzzleRig`, a small additive sprite/cone, a warm `PointLight`, and a `SpotLight` pointing along weapon-local `-Z`. The forward spot follows the active weapon's muzzle, uses a brief 130ms intensity pulse, and illuminates nearby `MeshStandardMaterial` forest/zombie meshes even when the flashlight is off. This is not full post-process bloom.
+- **Zombie emissive eyes:** The template's emissive eye map intensity defaults to zero. Per-instance material copies keep emissive intensity zero for ordinary walkers and 1.15 for rare hardened walkers. Hardened HP is 7.5 and head damage requires two accurate head hits, except shotgun headshots. Hardened probability grows with elapsed time.
+- **Visible avatar:** A simple torso and leg rig is attached to the player rig. Lower arms and gloves are positioned each render frame, taking Quest world-space controller locations or fixed camera-relative desktop touch hand positions.
+- **Weapons and icons:** Each weapon shape is a small Three.js group constructed from primitive geometry; `setWeaponVisual()` changes the visible model and muzzle endpoint. Pickup icon images are generated as compact CanvasTextures and represented by small sprites at ground level; ammo pickups increase magazine capacity.
+- **QA:** Desktop and emulated-iPad Playwright checks validated startup, model switching, normal/hardened headshots, pickup sprites, avatar groups, and no page errors. A rendered darkness/flash comparison measured central luminance rising from ~19 to ~57 under muzzle illumination; flashlight was disabled. Headset-specific visual alignment/performance remains unverified.

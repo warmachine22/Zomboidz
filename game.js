@@ -1,4 +1,4 @@
-import('./src/game.js?v=0.10').catch(e=>{
+import('./src/game.js?v=0.11').catch(e=>{
  console.error('Zomboidz failed to load:',e);
  document.getElementById('startlabel').textContent='GAME LOAD ERROR';
  document.getElementById('start').disabled=true;

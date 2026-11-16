@@ -16,7 +16,7 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 ## Core design principles
 
 1. **Fear comes from uncertainty.** Visibility is limited to the left-hand flashlight. Spatial growls, screams, and other sounds hint at threats behind and beside you.
-2. **Aim for the brain.** Headshots kill instantly. Torso and limb damage takes multiple rounds; repeated leg hits can cause limping.
+2. **Aim for the brain.** Normal walkers fall to a single headshot. Rare hardened glowing-eyed walkers require **two** headshots (or a powerful shotgun headshot), become more common as time passes, and have additional body health. Torso and limb damage takes multiple rounds; repeated leg hits can cause limping.
 3. **Slow walkers, overwhelming numbers.** Individual undead shuffle rather than sprint, but their population grows throughout a run. Standing still or wasting ammunition invites encirclement.
 4. **The flashlight is a survival tool.** Choose between long, focused light and a wide, short-range beam. It provides 30 seconds of light per full charge, and recharges automatically in 5 seconds while switched off. Use the left controller trigger to toggle it; no shaking required. Flashlight pickups extend its on-time in 10-second increments, up to 90 seconds.
 5. **Minimal interface.** In VR, health, rounds, and flashlight charge live on a dim wristwatch rather than a floating HUD. Death is explained by a short third-person reenactment.
@@ -35,9 +35,9 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 
 ## Survival mechanics
 
-- **Weapons:** six-round pistol; shotgun and SMG found as pickups.
+- **Weapons:** six-round pistol; shotgun and SMG found as pickups, each with its own detailed, proportionate low-poly model. A short muzzle flash briefly illuminates the forest ahead.
 - **Enemies:** rigged PSX-style zombie character with animation variations and sound-driven pursuit.
-- **Damage:** one headshot; approximately three pistol torso shots; limb shots are weaker.
+- **Damage:** one headshot for regular zombies; hardened walkers need two headshots or a shotgun headshot. Approximately three pistol torso shots for ordinary enemies; limb shots are weaker.
 - **Crowd:** starts around 18 enemies, increases by roughly three every 30 seconds, targeting up to 64 in Quest with an adaptive frame-rate-based ceiling. **64 is a target, not a validated headset-performance guarantee.**
 - **Environment:** dense procedurally populated forest with low-poly pixelated trees, bark, shrubs and foliage. Tree obstruction uses the exact visible tapered and tilted trunk mesh rather than an oversized invisible cylinder. Walkers steer around the true ground-level trunk bases.
 - **Impact feedback:** a few dark-red voxel flecks on zombies; bark chips and a small damage mark on tree hits. The aiming laser shows amber for bark, red for the body, and gold for the head.
@@ -79,6 +79,16 @@ The repository does not grant a license to use original third-party artwork outs
 ## v0.10: shooting and obstacle improvements
 
 Bullets and the laser now intersect the visible seven-sided tree-trunk mesh, so a clear gap next to a trunk is no longer blocked by the old larger invisible cylinder. Zombie navigation uses the trunk's actual base and tangent steering to go around obstacles. Small bark gouges and fragments help diagnose tree hits; dark-red particles provide restrained zombie hit feedback. The center crosshair defines the shot on desktop/iPad, while Quest continues to use its tracked pistol.
+
+## v0.11: visible version, muzzle light, harder zombies, player body
+
+**The opening menu now prominently displays `LIVE VERSION v0.11`**, and the top bar identifies the same build so you can tell whether you have the latest deployment.
+
+- Shooting emits a brief additive flare and warm **forward-facing spotlight**, illuminating nearby trees and walkers in the bullet's direction even when the flashlight is off. This is a lightweight bloom-like effect, not an expensive post-processing bloom pass.
+- Regular zombies' emissive eye textures are disabled. A rare **hardened** type keeps subdued glowing eyes, needs two headshots or a strong shotgun headshot, and grows more common during long runs.
+- Simplified first-person **torso, legs, hands and sleeves** give the player a visible body. In VR the arms follow the motion controllers; desktop and touch use the virtual hand positions.
+- Distinct, smaller low-poly pistol, pump shotgun and SMG models replace the generic weapon shape.
+- Pickup chests are replaced by modest floating icons for **flashlight**, **shotgun**, **SMG**, and **ammo/magazine** upgrades. They remain low to the ground with soft colored light.
 
 ## Known limitations
 
