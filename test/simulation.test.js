@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addEnemy, createRun, enemyPose, flarePower, hordeTarget, setLoot, shoot, stepRun, STEP, traceAim } from '../src/simulation.js';
+import { addEnemy, createRun, enemyPose, flarePower, GUNS, hordeTarget, magazineCapacity,
+  setLoot, shoot, stepRun, STEP, traceAim } from '../src/simulation.js';
 import { animatedAnchors } from '../src/enemy-motion.js';
 import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
 import { createWorld, distance, START } from '../src/world.js';
@@ -34,6 +35,112 @@ test('a partial reload takes time, blocks fire, and only transfers available rou
   assert.equal(p.ammo, 3);
   assert.equal(p.reserve, 0);
   assert.equal(p.reload, null);
+});
+
+for (const [weapon, tiers] of Object.entries({
+  pistol: [6, 12, 24, 50], shotgun: [4, 5, 6, 7], smg: [24, 28, 32, 36], carbine: [16, 20, 24, 28],
+})) {
+  test(weapon + ' reloads to the listed capacity at all four tiers', () => {
+    const run = room(), p = run.player;
+    if (weapon !== p.weapon) {
+      setLoot(run, weapon, p.x, p.z);
+      stepRun(run, { interact: true });
+    }
+    if (p.ammo === tiers[0]) { // Make room to exercise the base reload as well.
+      advance(run, .3);
+      stepRun(run, { fire: true });
+    }
+    for (const [tier, capacity] of tiers.entries()) {
+      if (tier > 0) {
+        const before = [p.ammo, p.reserve];
+        setLoot(run, 'capacity', p.x, p.z);
+        const pickup = stepRun(run).find(event => event.type === 'pickup');
+        assert.equal(pickup.message, 'Extended Capacity · ' + capacity + (weapon === 'shotgun' ? ' shells' : ' rounds'));
+        assert.deepEqual([p.ammo, p.reserve], before);
+      }
+      const pool = p.ammo + p.reserve;
+      assert.equal(p.upgrades.capacity, tier);
+      assert.equal(magazineCapacity(p), capacity);
+      stepRun(run, { reload: true });
+      assert.equal(p.reload.duration, GUNS[weapon].reload);
+      advance(run, p.reload.duration);
+      assert.equal(p.ammo, capacity);
+      assert.equal(p.reserve, pool - capacity);
+      stepRun(run, { reload: true });
+      assert.equal(p.reload, null);
+    }
+    assert.equal(magazineCapacity({ ...room().player, weapon }), tiers[0]);
+  });
+}
+
+test('the max-tier pistol fires all 50 rounds, and a fourth pickup has no effect', () => {
+  const run = room(), p = run.player;
+  for (let i = 0; i < 4; i++) {
+    setLoot(run, 'capacity', p.x, p.z);
+    stepRun(run);
+  }
+  assert.equal(p.upgrades.capacity, 3);
+  assert.equal(run.metrics.pickups.capacity, 3);
+  assert.deepEqual([p.ammo, p.reserve], [6, 50]);
+  stepRun(run, { reload: true });
+  advance(run, GUNS.pistol.reload);
+  for (let shot = 1; shot <= 50; shot++) {
+    stepRun(run, { fire: true });
+    assert.equal(run.metrics.shots, shot);
+    assert.equal(p.ammo, 50 - shot);
+    advance(run, Math.ceil(GUNS.pistol.interval / STEP) * STEP);
+  }
+  assert.equal(p.reserve, 6);
+  assert.equal(stepRun(run, { fire: true }).find(event => event.type === 'dry').reason, 'Reload');
+  const fresh = room().player;
+  assert.deepEqual([fresh.upgrades.capacity, fresh.ammo, fresh.reserve], [0, 6, 50]);
+});
+
+test('capacity follows weapon swaps, and reloads retain Speed Loader and reserve limits', () => {
+  const run = room(), p = run.player;
+  for (const kind of ['capacity', 'capacity', 'reload']) setLoot(run, kind, p.x, p.z);
+  stepRun(run);
+  stepRun(run, { reload: true });
+  assert.equal(p.reload.duration, GUNS.pistol.reload * .85);
+  advance(run, 1.3);
+  assert.equal(p.ammo, 24);
+  setLoot(run, 'shotgun', p.x, p.z);
+  stepRun(run, { interact: true });
+  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['shotgun', 2, 6, 50]);
+  advance(run, 2.6);
+  stepRun(run, { interact: true });
+  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['pistol', 2, 6, 50]);
+  p.reserve = 3;
+  stepRun(run, { reload: true });
+  advance(run, 1.3);
+  assert.deepEqual([p.ammo, p.reserve], [9, 0]);
+});
+
+test('timed and combat loot can drop Extended Capacity only below its cap', () => {
+  for (const tier of [2, 3]) {
+    const run = room(), p = run.player;
+    for (let i = 0; i < tier; i++) {
+      setLoot(run, 'capacity', p.x, p.z);
+      stepRun(run);
+    }
+    run.populate = true;
+    run.nextLoot = 0;
+    run.nextSpawn = Infinity;
+    run.rng = () => .8;
+    stepRun(run);
+    assert.equal(run.loot.some(item => item.kind === 'capacity' && !item.lost), tier < 3);
+
+    const enemy = addEnemy(run, 'shambler', p.x, p.z - 3);
+    const origin = { x:p.x, y:p.y + 1.6, z:p.z };
+    const head = enemyPose(enemy).head;
+    const values = [.5, .04, .8];
+    run.rng = () => values.shift();
+    const before = run.loot.length;
+    shoot(run, { origin, ray: { x:head.x - origin.x, y:head.y - origin.y, z:head.z - origin.z } });
+    assert.equal(run.player.kills, 1);
+    assert.equal(run.loot.length, before + 1);
+    assert.equal(run.loot.at(-1).kind === 'capacity', tier < 3);
+  }
 });
 
 test('battery lasts 30 seconds, recharges in five, and gets a longer runtime from loot', () => {

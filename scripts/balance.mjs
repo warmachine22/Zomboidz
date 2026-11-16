@@ -1,4 +1,4 @@
-import { beamSettings, createRun, enemyPose, flarePower, GUNS, stepRun, visibleTargets } from '../src/simulation.js';
+import { beamSettings, createRun, enemyPose, flarePower, GUNS, magazineCapacity, stepRun, visibleTargets } from '../src/simulation.js';
 import { angleDelta, clamp, direction, distance, random } from '../src/world.js';
 
 const rules = {
@@ -79,7 +79,7 @@ function play(seed, style) {
         aim = { origin, ray: { x:(at.x-origin.x)/d+(rng()-.5)*r.aimError,
           y:(at.y-origin.y)/d+(rng()-.5)*r.aimError, z:(at.z-origin.z)/d+(rng()-.5)*r.aimError } };
       }
-      const reload = !p.reload && p.reserve && (!p.ammo || (!shoot && p.ammo < GUNS[p.weapon].capacity * .50));
+      const reload = !p.reload && p.reserve && (!p.ammo || (!shoot && p.ammo < magazineCapacity(p) * .50));
       const dark = p.flashlight && (p.battery < .12 || (style === 'cautious' && !threat && p.battery < .54));
       const lit = !p.flashlight && p.battery > (gap < 8 ? .27 : .96);
       if (!p.ammo && !p.reserve) sawEmpty = true;

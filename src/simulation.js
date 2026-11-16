@@ -6,12 +6,12 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.6';
+export const BUILD = '1.0.7';
 export const GUNS = {
-  pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
-  shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
-  smg: { name: 'Compact SMG', capacity: 24, reload: 1.8, interval: .102, range: 49, damage: .93, noise: 48, rounds: 1, spread: .02 },
-  carbine: { name: 'Ranger carbine', capacity: 16, reload: 2, interval: .24, range: 75, damage: 1.49, noise: 53, rounds: 1, spread: 0 },
+  pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
+  shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
+  smg: { name: 'Compact SMG', capacities: [24, 28, 32, 36], reload: 1.8, interval: .102, range: 49, damage: .93, noise: 48, rounds: 1, spread: .02 },
+  carbine: { name: 'Ranger carbine', capacities: [16, 20, 24, 28], reload: 2, interval: .24, range: 75, damage: 1.49, noise: 53, rounds: 1, spread: 0 },
 };
 export const ENEMIES = {
   shambler: { speed: 1.12, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
@@ -24,6 +24,7 @@ export const UPGRADES = {
   reload: { name: 'Speed loader', icon: '↻', cap: 3, color: '#f1cd86', description: '15% faster reload' },
   battery: { name: 'Battery cells', icon: 'ϟ', cap: 3, color: '#a6d6a0', description: '+8 seconds of light' },
   lens: { name: 'Focus lens', icon: '◇', cap: 3, color: '#9adae6', description: '+3 metres of light' },
+  capacity: { name: 'Extended Capacity', icon: '▤', cap: 3, color: '#e2d18d' },
 };
 export const LOOT = {
   ...UPGRADES,
@@ -41,6 +42,10 @@ const ARMS = .29;
 const RESERVE_MAX = 125;
 const MAX_LOOSE_LOOT = 72;
 const eye = (world, next, tall = 1.4) => ({ x: next.x, y: world.height(next.x, next.z) + tall, z: next.z });
+
+export function magazineCapacity(player) {
+  return GUNS[player.weapon].capacities[player.upgrades.capacity];
+}
 
 export function flarePower(age) {
   if (age <= 5) return 1;
@@ -179,7 +184,7 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
   const run = {
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit,
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
-      weapon: 'pistol', ammo: 6, reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
+      weapon: 'pistol', ammo: GUNS.pistol.capacities[0], reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
       flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
       travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
     enemies: [], loot: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
@@ -352,7 +357,7 @@ export function shoot(run, aim) {
 
 export function startReload(run) {
   const p = run.player, gun = GUNS[p.weapon];
-  if (p.reload || !p.reserve || p.ammo >= gun.capacity || run.status !== 'playing') return false;
+  if (p.reload || !p.reserve || p.ammo >= magazineCapacity(p) || run.status !== 'playing') return false;
   const duration = gun.reload * .85 ** p.upgrades.reload;
   p.reload = { duration, left: duration, weapon: p.weapon };
   emit(run, 'reload', { weapon: p.weapon });
@@ -382,7 +387,10 @@ function takeLoot(run, confirm) {
     } else if (k in UPGRADES && p.upgrades[k] < UPGRADES[k].cap) {
       p.upgrades[k]++;
       run.metrics.upgrades++;
-      take(run, l, LOOT[k].name + ' · ' + UPGRADES[k].description);
+      const effect = k === 'capacity'
+        ? magazineCapacity(p) + (p.weapon === 'shotgun' ? ' shells' : ' rounds')
+        : UPGRADES[k].description;
+      take(run, l, LOOT[k].name + ' · ' + effect);
     }
   }
   if (!confirm || !swap) return;
@@ -391,7 +399,7 @@ function takeLoot(run, confirm) {
     // Preserve the rounds in the replaced gun without creating ammunition.
     const pool = p.reserve + p.ammo;
     p.weapon = swap.kind;
-    p.ammo = Math.min(p.ammo, GUNS[p.weapon].capacity);
+    p.ammo = Math.min(p.ammo, magazineCapacity(p));
     p.reserve = pool - p.ammo;
     p.reload = null;
     p.cooldown = .25;
@@ -808,7 +816,7 @@ export function stepRun(run, input = {}, dt = STEP) {
   if (p.reload) {
     p.reload.left -= dt;
     if (p.reload.left <= 1e-8) {
-      const amount = Math.min(GUNS[p.weapon].capacity - p.ammo, p.reserve);
+      const amount = Math.min(magazineCapacity(p) - p.ammo, p.reserve);
       p.ammo += amount; p.reserve -= amount; p.reload = null;
       emit(run, 'loaded', { weapon: p.weapon });
     }
