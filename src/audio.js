@@ -1,7 +1,7 @@
 import { ENEMIES } from './simulation.js';
 
 const samples = ['pistol', 'shotgun', 'smg', 'pump', 'reload-short', 'reload-smg-short',
-  'growl2', 'z1', 'z5', 'z10', 'z14', 'z20', 'zombienoise3', 'fastzombie1'];
+  'growl2', 'z1', 'z5', 'z10', 'z14', 'z20', 'zombienoise3', 'fastzombie1', 'radio-reply'];
 const voices = {
   shambler: ['growl2', 'z1', 'z5', 'zombienoise3'],
   shrieker: ['fastzombie1', 'z14'],
@@ -272,7 +272,10 @@ export function createAudio() {
   function events(batch, run) {
     if (!context) return;
     for (const e of batch) {
-      if (e.type === 'shot') {
+      if (e.type === 'extraction') {
+        play('switch', { gain: .13 });
+        play('radio-reply', { gain: 1.18 });
+      } else if (e.type === 'shot') {
         const gain = e.weapon === 'shotgun' ? .81 : e.weapon === 'carbine' ? .72 : .59;
         play(buffers.has(e.weapon) ? e.weapon : 'fallback', { bus: weapons, gain,
           speed: .94 + Math.random() * .13 });

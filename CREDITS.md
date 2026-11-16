@@ -10,4 +10,5 @@ Gunshots: Gunshot Sounds (CC0), https://opengameart.org/content/gunshot-sounds
 Reloads: Gun Reload Sounds (CC0), https://opengameart.org/content/gun-reload-sounds
 Zombie voices: Zombies Sound Pack (CC0), https://opengameart.org/content/zombies-sound-pack
 Zombie voices: Zombie Noises and Moans (CC0), https://opengameart.org/content/zombie-noises-and-moans
+The extraction radio reply uses a synthetic voice generated with Windows speech synthesis and processed for radio playback.
 Runtime Three.js (MIT); glTF Transform and meshoptimizer (MIT), used at build time.

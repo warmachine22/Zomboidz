@@ -4,9 +4,10 @@ import { animatedAnchors, attackContact, attackDirection, burstPhase, BURST_BRAK
 import { replenishHorde, seedHorde } from './horde.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
+import { reachableRadio, visitBuildings } from './extraction.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.12';
+export const BUILD = '1.0.13';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -14,7 +15,7 @@ export const GUNS = {
   carbine: { name: 'Ranger carbine', capacities: [16, 20, 24, 28], reload: 2, interval: .24, range: 75, damage: 1.49, noise: 53, rounds: 1, spread: 0 },
 };
 export const ENEMIES = {
-  shambler: { speed: 1.12, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
+  shambler: { speed: .985, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
   shrieker: { speed: 1.62, height: 1.66, width: .23, hp: 2.4, windup: .38, reach: 1.16 },
   brute: { speed: .83, height: 2, width: .36, hp: 6.6, windup: .83, reach: 1.35 },
 };
@@ -169,7 +170,8 @@ function traceRay(world, origin, ray, range, targets) {
   for (const { e, points, radii } of targets) {
     let best = limit, zone = null;
     for (const [i, [a,b,tag]] of HIT_SEGMENTS.entries()) {
-      const t = rayCapsule(origin, ray, points[a], points[b], radii[i]);
+      const radius = tag === 'head' ? radii[i] * 1.21 + .007 : radii[i];
+      const t = rayCapsule(origin, ray, points[a], points[b], radius);
       if (t < best) { best = t; zone = tag; }
     }
     if (zone) hits.push({ e, t:best, zone, point:rayPoint(origin,ray,best) });
@@ -205,7 +207,8 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
       flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
       travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
     enemies: [], loot: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
-    nextId: 1, nextSpawn: 2, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, dryKills: 0,
+    search: { visits: new Map(), sheds: 0, radio: null },
+    nextId: 1, nextSpawn: 2, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, lastBuildingCheck: -Infinity, dryKills: 0,
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
     metrics: { shots: 0, dryFire: 0, roundsPicked: 0, upgrades: 0, guarded: 0, lootFlareSeconds: 0,
       pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0,
@@ -350,12 +353,11 @@ export function shoot(run, aim, offhand = false) {
     const penetrates = 1 + (p.weapon === 'shotgun' && shot !== 0 ? 0 : p.upgrades.pierce);
     for (let i = 0; i < Math.min(penetrates, candidates.length); i++) {
       const hit = candidates[i];
-      const current = hits.get(hit.e) || { total: 0, head: false, firstHead: false, leg: false, point: hit.point };
+      const current = hits.get(hit.e) || { total: 0, head: false, leg: false, point: hit.point };
       const headshot = hit.zone === 'head';
       current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i *
         (headshot ? 2.8 : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
       current.head ||= headshot;
-      current.firstHead ||= headshot && i === 0;
       current.leg ||= hit.zone === 'leg';
       hits.set(hit.e, current);
     }
@@ -374,7 +376,7 @@ export function shoot(run, aim, offhand = false) {
     }
     if (hit.leg) enemy.slow = 1.3;
     emit(run, 'impact', { ...hit.point, surface: 'body' });
-    if ((hit.firstHead && enemy.kind !== 'brute') || enemy.hp <= 0) eliminate(run, enemy, hit.head);
+    if (hit.head || enemy.hp <= 0) eliminate(run, enemy, hit.head);
   }
 }
 
@@ -863,7 +865,23 @@ export function stepRun(run, input = {}, dt = STEP) {
     updateLandmarks(run);
     run.lastChunkCheck = run.time;
   }
-  takeLoot(run, input.interact);
+  const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
+  if (run.time - run.lastBuildingCheck >= .40) {
+    visitBuildings(run,run.populate ? cap : 0,addEnemy);
+    run.lastBuildingCheck = run.time;
+  }
+  const radio = reachableRadio(run);
+  takeLoot(run, input.interact && !radio);
+  if (radio) {
+    run.offer = radio;
+    if (input.interact) {
+      run.status = 'escaped';
+      p.reload = null;
+      if (p.offhand) p.offhand.reload = null;
+      emit(run, 'extraction', { ...radio });
+      return run.events;
+    }
+  }
   if (!p.ammo && !p.reload && p.reserve > 0) startReload(run);
   if (p.offhand?.ammo === 0 && !p.offhand.reload && p.reserve > 0) startReload(run, true);
   if (run.populate && run.time >= run.nextLoot) {
@@ -871,7 +889,6 @@ export function stepRun(run, input = {}, dt = STEP) {
     run.nextLoot = run.time + 48 + run.rng() * 14;
   }
   if (run.populate && run.time >= run.nextSpawn) {
-    const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
     replenishHorde(run, cap, lamps, addEnemy);
     run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
   }

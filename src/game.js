@@ -9,6 +9,7 @@ import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, s
 import { drawDebug } from './debug-map.js';
 import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim, toolLayouts } from './held-tools.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
+import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
 
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -61,7 +62,7 @@ let resultNote = '', deathMessage = '', pauseReason = '';
 let yaw = .20, pitch = -.026, roomX = 0, roomZ = 0;
 let joystick = { x: 0, y: 0 }, desktopFire = false, touchFire = false, inspectDrag = false, dragDistance = 0;
 let lastTime, accumulator = 0, manualClock = false, manualRemainder = 0, hudAt = -1, debugAt = -1;
-let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '', useMouseDrag = false;
+let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, replyUntil = 0, panelKey = '', useMouseDrag = false;
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
 const perfTimes = [];
 let debugVisible = false;
@@ -70,6 +71,7 @@ let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
 const text = (id, value) => { $(id).textContent = value; };
+const objective = 'Survive and escape. Search sheds for a radio.';
 
 function clearInput() {
   held.clear();
@@ -89,10 +91,12 @@ function setPhase(next) {
   const running = phase === 'playing', inspecting = phase === 'inspect', isXR = !!xr.active;
   document.body.classList.toggle('running', running);
   document.body.classList.toggle('inspecting', inspecting);
+  document.body.classList.toggle('extracting', phase === 'extracting');
   $('shell').hidden = phase !== 'menu';
   $('hud').hidden = !running || isXR;
   $('touch').hidden = !(running || inspecting) || !touch || isXR;
   $('death-view').hidden = !inspecting || isXR;
+  $('radio-reply').hidden = phase !== 'extracting' || isXR;
   $('pause').hidden = phase !== 'paused';
   $('results').hidden = phase !== 'results';
   $('debug').hidden = !running || !debugVisible || isXR;
@@ -111,7 +115,7 @@ function pointerLock() {
     const request = canvas.requestPointerLock?.();
     request?.catch?.(() => {
       useMouseDrag = true;
-      setNotice('Click and drag to look', 5);
+      setNotice(run.time < 5 && !motionReplay ? objective + ' · Drag to look' : 'Click and drag to look', 5);
     });
     if (!canvas.requestPointerLock) useMouseDrag = true;
   } catch { useMouseDrag = true; }
@@ -120,7 +124,7 @@ function pointerLock() {
 function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
-  const encounter = ['roadside', 'night', 'shelter', 'motion'].includes(scenario);
+  const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape'].includes(scenario);
   run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48,
     populate: !encounter, difficulty, legendary: settings.legendary });
   yaw = pitch = roomX = roomZ = 0;
@@ -139,6 +143,12 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
     if (!run.legendary) run.player.flashlight = false;
   } else if (scenario === 'shelter') {
     Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: run.legendary });
+  } else if (scenario === 'escape') {
+    const site = run.world.districtSites(0,-1).find(building => building.radio);
+    const x = site.door.x, z = site.door.z + Math.sign(site.door.z-site.z)*1.7;
+    yaw = Math.atan2(site.x-x,z-site.z);
+    Object.assign(run.player,{ x,z,y:run.world.height(x,z),yaw });
+    run.search.sheds = RADIO_GUARANTEE - 1;
   } else if (motionReplay) {
     const area = run.world.chunk(0,0);
     const tree = { x:1.05, z:14.7, y:run.world.height(1.05,14.7)-.12,
@@ -163,8 +173,7 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   void audio.unlock();
   setPhase('playing');
   if (!xr.active) pointerLock();
-  const opening = run.legendary ? 'Legendary Mode'
-    : motionReplay ? (art.legacyShambler ? 'Original shambler' : 'Rebuilt shambler') : 'Follow the road for supplies';
+  const opening = motionReplay ? (art.legacyShambler ? 'Original shambler' : 'Rebuilt shambler') : objective;
   setNotice(opening, 5);
   updateHUD(true);
 }
@@ -212,10 +221,7 @@ function inspectDeath() {
   const { kind, yaw: angle } = run.death;
   const bearing = Math.abs(angle) < .60 ? 'ahead' : Math.abs(angle) > 2.35 ? 'behind you' : angle < 0 ? 'on your left' : 'on your right';
   deathMessage = 'A ' + kind + ' landed a hit ' + (bearing === 'ahead' ? 'from ahead' : bearing) + '.';
-  text('death-reason', deathMessage);
-  text('result-time', formatTime(run.time));
-  text('result-kills', run.player.kills);
-  text('result-heads', run.player.headshots);
+  fillResults('The light went out.', deathMessage, false);
   $('result-initials').value = settings.initials;
   resultScore();
   const p = run.player;
@@ -225,6 +231,29 @@ function inspectDeath() {
   text('death-view-reason', deathMessage);
   text('death-view-controls', touch ? 'Drag to look · Aim with the light controls' : 'Drag to look · F / Q for light · Esc for results');
   lookAround();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+
+function fillResults(title, description, escaped) {
+  text('results-title', title);
+  text('result-eyebrow', escaped ? 'EXTRACTION' : 'AFTER THE ATTACK');
+  text('death-reason', description);
+  text('result-time-label', escaped ? 'ESCAPE TIME' : 'SURVIVED');
+  text('result-time', formatTime(run.time));
+  text('result-kills', run.player.kills);
+  text('result-heads', run.player.headshots);
+  $('look-around').hidden = escaped;
+  $('result-initials').parentElement.hidden = escaped;
+}
+
+function inspectEscape() {
+  replyUntil = performance.now() + 3850;
+  deathAt = 0;
+  resultNote = 'Seed ' + run.seed;
+  text('radio-reply', RADIO_REPLY);
+  text('result-storage', resultNote);
+  fillResults('Escaped', RADIO_REPLY, true);
+  setPhase('extracting');
   if (document.pointerLockElement === canvas) document.exitPointerLock();
 }
 
@@ -523,6 +552,7 @@ function handleEvent(batch) {
   for (const event of batch) {
     if (event.type === 'dry') setNotice(event.reason, 1.25);
     else if (event.type === 'pickup') setNotice(event.message);
+    else if (event.type === 'extraction') inspectEscape();
     else if (event.type === 'weaponSwitch') setNotice(GUNS[event.weapon].name, 1.25);
     else if (event.type === 'light' && event.empty) setNotice('Battery depleted. Recharging.');
     else if (event.type === 'shot') {
@@ -555,11 +585,14 @@ function updateHUD(force = false) {
   $('armor').setAttribute('aria-label', p.armor + ' armor charges');
   text('notice', run.time < noticeUntil ? notice : '');
   $('offer').hidden = !run.offer;
-  if (run.offer) text('offer', (touch ? 'EQUIP' : 'E TO EQUIP') + ' · ' + LOOT[run.offer.kind].name);
+  const radio = run.offer?.kind === 'radio';
+  if (radio) text('offer', touch ? 'CALL EXTRACTION' : 'E TO CALL EXTRACTION');
+  else if (run.offer) text('offer', (touch ? 'EQUIP' : 'E TO EQUIP') + ' · ' + LOOT[run.offer.kind].name);
   const reload = p.reload || p.offhand?.reload;
   $('reload-meter').hidden = !reload;
   $('touch-cycle').disabled = Object.keys(p.magazines).length < 2;
   if (touch) {
+    text('touch-interact', radio ? 'Call' : 'Equip');
     text('touch-beam', p.offhand ? (settings.leftHanded ? 'L Beam' : 'R Beam') : 'Beam');
     text('touch-light', p.offhand ? (settings.leftHanded ? 'R Beam' : 'L Beam') : 'Light');
   }
@@ -571,15 +604,15 @@ function xrUI(sample, trackedView) {
     xr.drawAimPreview(null);
     return;
   }
-  if (phase === 'inspect') {
+  if (phase === 'inspect' || phase === 'extracting') {
     xr.hidePanel();
     xr.drawAimPreview(null);
-    xr.drawPrompt('A · RESULTS', trackedView.view);
+    xr.drawPrompt(phase === 'inspect' ? 'A · RESULTS' : RADIO_REPLY, trackedView.view);
     return;
   }
   if (phase === 'playing') {
     xr.hidePanel();
-    const target = run.offer && 'GRIP  ·  ' + LOOT[run.offer.kind].name;
+    const target = run.offer?.kind === 'radio' ? 'GRIP  ·  CALL EXTRACTION' : run.offer && 'GRIP  ·  ' + LOOT[run.offer.kind].name;
     const frameReport = showPerformance && perfSample
       ? perfSample.fps + ' FPS · P95 ' + perfSample.p95Ms + ' ms · ' + Math.round(perfSample.missed * 100)
         + '% missed · ' + perfSample.active + '/' + perfSample.limit
@@ -595,14 +628,14 @@ function xrUI(sample, trackedView) {
       menu: {
         title: 'Enter the forest',
         lines: settings.legendary ? [
-          'Legendary Mode · two 50-round pistols.',
+          'Search sheds for a radio and call for extraction.',
           'Each trigger fires its pistol. A reloads. X pauses.',
           'B cycles right light. Y cycles left light. Wide, Focus, Off.',
           'Weapon grip picks up armor. Ammo collects automatically.',
-        ] : [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
+        ] : ['Search sheds for a radio and call for extraction.',
+          DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
           'A reloads. B cycles weapons. Y pauses.',
-          'Light trigger toggles light. X changes beam in play.',
-          'Weapon grip picks up gear. Light grip braces the gun.'],
+          'Weapon grip uses the radio. Light trigger toggles light.'],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
         second: 'A  ·  GUN ANGLE',
       },
@@ -613,9 +646,11 @@ function xrUI(sample, trackedView) {
         'Weapon stick adjusts pitch and yaw by 1°.',
         'Pitch ' + settings.gunPitch + '°    /    Yaw ' + settings.gunYaw + '°',
       ], hint: 'TRIGGER  ·  DONE', second: 'WEAPON GRIP  ·  RESET TO DEFAULT' },
-      results: { title: 'The light went out.', lines: [deathMessage, formatTime(run.time) + ' survived   /   ' + run.player.kills + ' kills',
-        run.player.headshots + ' headshots   /   ' + resultNote], hint: 'TRIGGER  ·  NEW FOREST',
-        second: 'GRIP  ·  SAME SEED      A  ·  LOOK AROUND' },
+      results: { title: run.status === 'escaped' ? 'Escaped' : 'The light went out.',
+        lines: [run.status === 'escaped' ? RADIO_REPLY : deathMessage,
+          formatTime(run.time) + (run.status === 'escaped' ? ' escape time' : ' survived') + '   /   ' + run.player.kills + ' kills',
+          run.player.headshots + ' headshots   /   ' + resultNote], hint: 'TRIGGER  ·  NEW FOREST',
+        second: run.status === 'escaped' ? 'GRIP  ·  SAME SEED' : 'GRIP  ·  SAME SEED      A  ·  LOOK AROUND' },
     };
     const page = calibrating ? 'angle' : phase;
     xr.drawPanel(page, trackedView.view, cards[page]);
@@ -693,6 +728,7 @@ function frame(now, xrFrame) {
   const elapsed = lastTime === undefined ? .016 : Math.min(.5, Math.max(0, (now - lastTime) / 1000));
   lastTime = now;
   const stereo = !!xrFrame && !!xr.active;
+  if (phase === 'extracting' && performance.now() >= replyUntil) openResults();
   const previous = phase;
   const sample = stereo ? xr.sample(xrFrame, run.player, settings, phase) : null;
   if (stereo) {
@@ -712,7 +748,7 @@ function frame(now, xrFrame) {
         if (sample.reload) openResults();
         else inspectFlashlights(run, sample);
       } else if (phase === 'results') {
-        if (sample.reload) lookAround();
+        if (sample.reload && run.status === 'dead') lookAround();
         else if (performance.now() - deathAt > 950) {
           if (sample.fire) start();
           else if (sample.interact) start(run.seed, run.difficulty);
@@ -734,7 +770,7 @@ function frame(now, xrFrame) {
   if (phase === 'playing' && !manualClock && (!stereo || xr.active.visibilityState === 'visible'))
     simulate(previous === phase && (!stereo || sample) ? dt : 0, sample, stereo);
   const view = trackedView(stereo, false, null, 0, accumulator);
-  const active = phase === 'playing', inspecting = phase === 'inspect', p = run.player;
+  const active = phase === 'playing', inspecting = phase === 'inspect' || phase === 'extracting', p = run.player;
   const laser = active && settings.laserDot;
   aimHit = laser && !p.reload && view.aim ? traceAim(run, view.aim) : null;
   offhandAimHit = laser && p.offhand && !p.offhand.reload && view.offhandAim ? traceAim(run, view.offhandAim) : null;

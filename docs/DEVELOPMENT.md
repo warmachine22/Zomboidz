@@ -10,6 +10,8 @@ The shared fixed-step simulation owns damage, timers, aim rays, sound and light 
 
 Terrain chunks are keyed by seed and world coordinates. The renderer streams a 3×3 ring, while simulation maintains a bounded geometry cache and a set of collected landmarks. Shots and perception share terrain and cover queries. Importing the older alpha snapshot is only useful for restoring an older release.
 
+Use `?debug&scenario=escape` on the development server to enter a seeded district beside a shed and exercise the guaranteed radio placement. The regular hunt rolls once per eligible shed within 12 metres and forces placement on the 30th distinct shed if the earlier rolls miss. On Quest, use `?perf=1` during a late run to compare a district with the earlier open-forest build. Record frame time, missed frames, and active enemies together.
+
 ## Art and audio
 
 To regenerate the original GLBs, run Blender 4.5 LTS in the background.

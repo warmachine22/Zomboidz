@@ -14,8 +14,9 @@ test('Hard ramps faster on the same seed and has shorter ambush intervals', () =
   const standard=createRun('rain'), hard=createRun('rain',{difficulty:'hard'});
   assert.equal(hordeTarget(210,'hard'),32);
   assert.equal(hordeTarget(390,'hard'),48);
-  assert.equal(hordeTarget(300,'standard'),32);
-  assert.equal(hordeTarget(540,'standard'),48);
+  assert.equal(hordeTarget(300,'standard'),26);
+  assert.equal(hordeTarget(390,'standard'),32);
+  assert.equal(hordeTarget(660,'standard'),48);
   assert.deepEqual(hard.enemies.map(e=>[e.spawn.x,e.spawn.z]),standard.enemies.map(e=>[e.spawn.x,e.spawn.z]));
   assert.ok(hard.nextAmbush < standard.nextAmbush);
   assert.ok(hard.enemies.every(e=>e.approach.at>=18 && e.approach.at<26));

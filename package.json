@@ -1,6 +1,6 @@
 {
   "name": "zomboidz",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "type": "module",
   "description": "Meta Quest WebXR first-person endless zombie survival game",

@@ -1,3 +1,5 @@
+import { buildDistrictSite, makeDistrict, trackDistance } from './districts.js';
+
 export const CHUNK = 48;
 export const START = { x: 0, z: 20 };
 export const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -22,6 +24,12 @@ export function random(seed) {
 }
 
 function rayBox(origin, ray, box, max) {
+  if (box.slope) {
+    const c = Math.cos(box.slope), s = Math.sin(box.slope), x = origin.x - box.x, y = origin.y - box.y;
+    return rayBox({ x:x*c+y*s, y:y*c-x*s, z:origin.z-box.z },
+      { x:ray.x*c+ray.y*s, y:ray.y*c-ray.x*s, z:ray.z },
+      { x:0,y:0,z:0,rx:box.rx,ry:box.ry,rz:box.rz },max);
+  }
   let near = 0, far = max;
   for (const axis of ['x', 'y', 'z']) {
     const lo = box[axis] - box['r' + axis];
@@ -80,21 +88,46 @@ function polylineOffset(n) {
 
 export function createWorld(seed) {
   const chunks = new Map();
+  const districts = new Map(), districtSize = CHUNK * 12;
   const phase = random(seed + ':land')() * 7;
+  const district = (x, z) => {
+    const cx = Math.floor(x/districtSize), cz = Math.floor(z/districtSize), key = cx + ',' + cz;
+    if (!districts.has(key)) {
+      districts.set(key, makeDistrict(seed,cx,cz,CHUNK,random));
+      if (districts.size > 64) districts.delete(districts.keys().next().value);
+    }
+    return districts.get(key);
+  };
+  const region = (x,z) => {
+    const broad = Math.sin(x*.009+phase)*Math.cos(z*.008-phase);
+    const ridge = Math.sin(z*.011+x*.007+phase);
+    return broad > .31 ? 'pine' : broad < -.30 ? 'clearing' : ridge > .32 ? 'ridge' : 'gully';
+  };
   const density = (x, z) => clamp(.51 + .31*Math.sin(x*.037+z*.023+phase)
-    + .23*Math.sin(z*.061-x*.047-phase), .03, .98);
+    + .23*Math.sin(z*.061-x*.047-phase) + ({ pine:.23, clearing:-.55, ridge:-.13, gully:.03 }[region(x,z)]), .03, .98);
 
   const roadDistance = (x, z) => {
     const u = x - polylineOffset(z);
     const v = z - 87 - polylineOffset(x);
     return Math.min(Math.abs(u - Math.round(u / 126) * 126),
-      Math.abs(v - Math.round(v / 154) * 154));
+      Math.abs(v - Math.round(v / 154) * 154), trackDistance(x,z,district(x,z).tracks));
   };
-  const sample = (x, z) => {
+  const ground = (x, z) => {
     const offRoad = clamp((roadDistance(x, z) - 1.9) / 9, 0, 1);
     const hills = Math.sin(x * .049 + phase) * Math.cos(z * .042 - phase) * 1.55
       + Math.sin(z * .099 + x * .061) * .36;
-    return hills * (.42 + offRoad * .58) + Math.sin(x * .29 + z * .22) * .10 * offRoad;
+    const ridge = Math.sin(x*.027+z*.017+phase);
+    const contour = .46*Math.sin(x*.013-z*.019+phase)*ridge + .80*ridge**3
+      - 1.45*Math.exp(-((Math.sin(z*.012-x*.016+phase)/.18)**2));
+    return hills * (.42 + offRoad * .58) + (contour + Math.sin(x * .29 + z * .22) * .10) * offRoad;
+  };
+  const sample = (x,z) => {
+    const surface = ground(x,z);
+    const key = Math.floor(x/CHUNK) + ',' + Math.floor(z/CHUNK);
+    const building = district(x,z).buildings.get(key);
+    if (!building) return surface;
+    const blend = clamp((12 - distance(building,{x,z}))/4,0,1);
+    return blend ? surface + (ground(building.x,building.z) - surface)*blend : surface;
   };
   // Same triangles used by the terrain mesh. Heights agree between neighbouring chunks.
   const height = (x, z) => {
@@ -107,19 +140,21 @@ export function createWorld(seed) {
     const key = cx + ',' + cz;
     const rng = random(seed + ':chunk:' + key);
     const left = cx * CHUNK, top = cz * CHUNK;
-    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [], lights: [] };
+    const biome = region(left+CHUNK/2,top+CHUNK/2);
+    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [], lights: [], buildings: [], biome };
     const sites = [];
 
-    const box = (x, z, w, h, d, base = height(x, z), kind = 'stone') => {
-      const item = { x, z, y: base + h / 2, rx: w / 2, ry: h / 2, rz: d / 2, kind };
+    const box = (x, z, w, h, d, base = height(x, z), kind = 'stone', tint) => {
+      const item = { x, z, y: base + h / 2, rx: w / 2, ry: h / 2, rz: d / 2, kind, tint };
       area.colliders.push(item);
       area.props.push(item);
+      return item;
     };
     const cache = (id, x, z, kind, unlock = 0) => {
       area.loot.push({ id: key + ':' + id, x, z, kind, unlock });
     };
-    const site = (type, x, z, lit = false) => {
-      sites.push({ x, z, r: type === 'house' || type === 'camp' ? 7 : type === 'shed' ? 5.8 : 4 });
+    const site = (type, x, z, lit = false, supplies = true) => {
+      sites.push({ x, z, r: type === 'house' || type === 'camp' ? 7 : 4 });
       if (type === 'house') {
         const y = height(x, z) - .17;
         box(x, z - 2.5, 6.5, 2.7, .38, y, 'houseBack');
@@ -132,17 +167,6 @@ export function createWorld(seed) {
           ray:{ x:0,y:-.98,z:.20 }, radius:5.6, angle:.83 });
         cache('inside', x + 1.05, z - 1.05, rng() > .55 ? 'smg' : 'armor2', 42);
         cache('porch', x - .7, z + 3.5, 'ammo', 16);
-      } else if (type === 'shed') {
-        const y = height(x,z)-.14;
-        box(x,z+1.7,3.7,2.25,.25,y,'shedWall');
-        box(x-1.76,z,.22,2.17,3.5,y,'shedWall');
-        box(x+1.76,z,.22,2.17,3.5,y,'shedWall');
-        box(x-1.38,z-1.7,.95,2.08,.20,y,'shedWall');
-        box(x+1.38,z-1.7,.95,2.08,.20,y,'shedWall');
-        box(x,z+.06,3.92,.13,3.8,y+2.225,'shedRoof');
-        if (lit) area.lights.push({type:'shelter',x:x-.5,y:y+2.1,z:z+.47,
-          ray:{x:0,y:-.98,z:-.2},radius:4.8,angle:.80});
-        cache('shed-supplies',x+.62,z+.85,hash(seed+key)%4===0?'battery':'ammo',30);
       } else if (type === 'camp') {
         const y = height(x,z);
         area.props.push({x,y,z,kind:'firepit'});
@@ -161,8 +185,10 @@ export function createWorld(seed) {
           area.lights.push({ type:'wreck', x:x+side*.64, y:y+.73, z:z+1.95,
             ray:{ x:side*.025, y:-.13, z:.9912 }, radius:18, angle:.62 });
         }
-        cache('trunk', x - 1.65, z + .7, 'shotgun', 27);
-        cache('road', x - 2.3, z + 4.8, 'ammo', 12);
+        if (supplies) {
+          cache('trunk', x - 1.65, z + .7, 'shotgun', 27);
+          cache('road', x - 2.3, z + 4.8, 'ammo', 12);
+        }
       } else {
         for (let i = 0; i < 5; i++) {
           const px = x + (i % 2 ? 1 : -1) * (1.5 + rng()), pz = z + (i - 2) * 2.6;
@@ -172,22 +198,36 @@ export function createWorld(seed) {
         cache('rocks', x, z - 3.3, rng() > .5 ? 'pierce' : 'reload', 34);
       }
     };
-    if (cx === 0 && cz === 0) site('wreck', 3.8, 5.4, true);
+    const building = district(left,top).buildings.get(key);
+    if (building) {
+      sites.push({ x:building.x, z:building.z, r:10.8 });
+      buildDistrictSite(building,area,height,box,random,(...args)=>site('wreck',...args));
+    } else if (cx === 0 && cz === 0) site('wreck', 3.8, 5.4, true);
     else if (cx === 0 && cz === -1) site('house', 12, -18, true);
     else if (cx === -1 && cz === 0) site('rocks', -11, 7);
-    else if (rng() < .32) site(['house', 'wreck', 'rocks'][Math.floor(rng() * 3)],
+    else if (rng() < .32) site(rng() < .46 ? 'wreck' : 'rocks',
       left + 10 + rng() * 28, top + 10 + rng() * 28, hash(seed+':lit:'+key) % 5 === 0);
     const fieldSite = random(seed + ':field-site:' + key);
-    if (Math.abs(cx)+Math.abs(cz)>1 && fieldSite() < .29) {
+    if (!building && Math.abs(cx)+Math.abs(cz)>1 && fieldSite() < .22) {
       for (let i=0; i<5; i++) {
         const x=left+10+fieldSite()*28, z=top+10+fieldSite()*28;
         if (roadDistance(x,z)<6 || sites.some(s=>distance(s,{x,z}) < s.r+8)) continue;
-        site(fieldSite() < .55 ? 'camp' : 'shed',x,z,fieldSite()<.18);
+        site('camp',x,z);
         break;
       }
     }
 
-    for (let i = 0; i < 152; i++) {
+    if (!building && biome === 'ridge') {
+      const rocks = random(seed+':ridge:'+key);
+      for (let i=0; i<7; i++) {
+        const x=left+4+rocks()*40,z=top+4+rocks()*40;
+        if (roadDistance(x,z)<3.5 || distance(START,{x,z})<10 || sites.some(s=>distance(s,{x,z})<s.r+1.2)) continue;
+        const size=.54+rocks()*1.42;
+        box(x,z,size*1.2,size*.7,size);
+        sites.push({x,z,r:size+.35});
+      }
+    }
+    for (let i = 0; i < (biome === 'clearing' ? 72 : 152); i++) {
       const x = left + 1.7 + rng() * (CHUNK - 3.4), z = top + 1.7 + rng() * (CHUNK - 3.4);
       const thick = density(x,z);
       const roll = rng(), elder = roll < .075 + thick*.075;
@@ -249,7 +289,7 @@ export function createWorld(seed) {
 
   function blocks(x, z, radius = .26) {
     return around(x, z, radius + 3.5).some(area => area.colliders.some(o => {
-      if (o.kind === 'shedRoof') return false;
+      if (o.kind === 'shedRoof' || o.kind === 'districtRoof' || o.kind === 'districtLintel') return false;
       if (o.r) return (x - o.x) ** 2 + (z - o.z) ** 2 < (o.r + radius) ** 2;
       const dx = Math.max(0, Math.abs(x - o.x) - o.rx), dz = Math.max(0, Math.abs(z - o.z) - o.rz);
       return dx * dx + dz * dz < radius * radius;
@@ -304,5 +344,7 @@ export function createWorld(seed) {
     return len <= .14 || !raycast(a, { x: dx / len, y: dy / len, z: dz / len }, len - .12, ground);
   }
 
-  return { seed, height, sample, density, roadDistance, chunk, around, blocks, move, raycast, clear };
+  const districtSites = (x,z) => [...district(x,z).buildings.values()]
+    .flatMap(site => chunk(Math.floor(site.x/CHUNK),Math.floor(site.z/CHUNK)).buildings);
+  return { seed, height, sample, density, region, roadDistance, chunk, around, blocks, move, raycast, clear, districtSites };
 }

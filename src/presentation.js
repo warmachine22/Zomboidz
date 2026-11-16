@@ -14,6 +14,14 @@ const up = v3(0, 1, 0);
 const forward = v3(0, 0, -1);
 const temp = new THREE.Object3D();
 const baseBox = new THREE.BoxGeometry(1, 1, 1);
+const gableGeometry = (() => {
+  const end = new THREE.Shape();
+  end.moveTo(-.5,0);
+  end.lineTo(.5,0);
+  end.lineTo(0,1);
+  end.closePath();
+  return new THREE.ExtrudeGeometry(end,{depth:1,bevelEnabled:false}).translate(0,0,-.5);
+})();
 const branchGeometry = new THREE.CylinderGeometry(.24, .5, 1, 5);
 const trunkGeometry = new THREE.CylinderGeometry(.25, .5, 1, 9, 1, false);
 const rockGeometry = new THREE.IcosahedronGeometry(1, 1);
@@ -44,6 +52,7 @@ const surfaces = {
   leaves: new THREE.MeshStandardMaterial({ color: 0x555e50, roughness: .98, side: THREE.DoubleSide, vertexColors: true }),
   fern: new THREE.MeshStandardMaterial({ color: 0x687153, roughness: .99, side: THREE.DoubleSide, vertexColors: true }),
   boards: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x687277, roughness: .98 }),
+  siding: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0xf5efdd, roughness: .94 }),
   mortar: new THREE.MeshStandardMaterial({ map: image('stone'), color: 0x66645b, roughness: .98 }),
   trim: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x3c4038, roughness: .97 }),
   canvas: new THREE.MeshStandardMaterial({ color:0x555744, roughness:.98, side:THREE.DoubleSide }),
@@ -128,9 +137,9 @@ tentGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
 tentGeometry.setIndex([0,3,5,0,5,2,1,2,5,1,5,4,3,4,5]);
 tentGeometry.computeVertexNormals();
 
-function place(mesh, index, x, y, z, sx, sy, sz, angle, color) {
+function place(mesh, index, x, y, z, sx, sy, sz, angle, color, roll = 0) {
   temp.position.set(x, y, z);
-  temp.rotation.set(0, angle || 0, 0);
+  temp.rotation.set(0, angle || 0, roll);
   temp.scale.set(sx, sy, sz);
   temp.updateMatrix();
   mesh.setMatrixAt(index, temp.matrix);
@@ -158,13 +167,19 @@ function instance(group, geo, mat, count, shadow = false) {
 
 function terrain(world, area) {
   const positions = [], color = [], indices = [], uv = [];
-  const size = CHUNK / 2 + 1, tint = new THREE.Color();
+  const size = CHUNK / 2 + 1, tint = new THREE.Color(), ridge = new THREE.Color(.42,.42,.39);
   for (let z = 0; z < size; z++) {
     for (let x = 0; x < size; x++) {
       const px = area.cx * CHUNK + x * 2, pz = area.cz * CHUNK + z * 2;
       const road = world.roadDistance(px, pz);
       const shade = .83 + .13 * Math.sin(px * .33 + pz * .61) + .04 * Math.cos(pz);
       turf(tint, road, shade);
+      if (road > 3) {
+        const biome = world.region(px,pz);
+        if (biome === 'pine') tint.multiplyScalar(.83);
+        if (biome === 'ridge') tint.lerp(ridge, .3);
+        if (biome === 'gully') tint.multiplyScalar(.92);
+      }
       positions.push(px, world.sample(px, pz), pz);
       color.push(tint.r, tint.g, tint.b);
       uv.push(px * .33, pz * .33);
@@ -240,6 +255,16 @@ function makeChunk(world, area, art) {
       new THREE.Color(shade * .90, shade, shade * .97));
   }
   const boards = [], masonry = [], broken = [];
+  const districtParts = area.props.filter(o => (o.kind.startsWith('district') && o.kind !== 'districtGable') || o.kind === 'shedRoof');
+  const districtMesh = instance(group, baseBox, surfaces.siding, districtParts.length, true);
+  for (const [i,o] of districtParts.entries()) {
+    const tint = new THREE.Color(o.tint ?? 0x5b645b).multiplyScalar(.78 + rng()*.22);
+    place(districtMesh,i,o.x,o.y,o.z,o.rx*2,o.ry*2,o.rz*2,0,tint,o.slope ?? 0);
+  }
+  const gables = area.props.filter(o => o.kind === 'districtGable');
+  const ends = instance(group,gableGeometry,surfaces.siding,gables.length,true);
+  for (const [i,end] of gables.entries())
+    place(ends,i,end.x,end.y,end.z,end.width,end.height,.22,0,new THREE.Color(end.tint));
   for (const o of area.props) {
     if (o.kind === 'wreck') {
       const car = art.wreck.scene.clone();
@@ -263,21 +288,6 @@ function makeChunk(world, area, art) {
         const x = o.x + (index - 3.5) * .8;
         broken.push([x, o.y + 2.68 + rng() * .15, o.z - .72 + rng() * .37, .102, .141, 2.4 + rng() * 2.6, 0]);
       }
-    } else if (o.kind === 'shedWall') {
-      const alongZ = o.rz > o.rx;
-      for (let i=0; i<Math.ceil((alongZ?o.rz:o.rx)*10); i++) {
-        const ground=o.y-o.ry;
-        const strip=i*.20-(alongZ?o.rz:o.rx)+.095;
-        boards.push([o.x+(alongZ?0:strip),ground+o.ry,o.z+(alongZ?strip:0),
-          alongZ?o.rx*2:.195,o.ry*2,alongZ?.195:o.rz*2,(rng()-.5)*.035]);
-      }
-    } else if (o.kind === 'shedRoof') {
-      const roof=new THREE.Mesh(baseBox,surfaces.trim);
-      roof.position.set(o.x,o.y,o.z);
-      roof.scale.set(o.rx*2,o.ry*2,o.rz*2);
-      roof.castShadow=roof.receiveShadow=true;
-      group.add(roof);
-      broken.push([o.x,o.y-.08,o.z-1.9,3.91,.16,.17,0]);
     } else if (o.kind === 'campTent') {
       const tent=new THREE.Mesh(tentGeometry,surfaces.canvas);
       tent.position.set(o.x,o.y,o.z);
@@ -405,6 +415,28 @@ function makeLamp(map = beamTexture()) {
   return lamp;
 }
 
+function makeRadio() {
+  const group = new THREE.Group();
+  const casing = new THREE.MeshStandardMaterial({ color:0x505b46, roughness:.72, metalness:.25 });
+  const panel = new THREE.MeshStandardMaterial({ color:0x292e29, roughness:.86 });
+  const display = new THREE.MeshStandardMaterial({ color:0x99a86c, emissive:0x718248, emissiveIntensity:.44 });
+  function part(material, x,y,z, w,h,d) {
+    const mesh = new THREE.Mesh(baseBox, material);
+    mesh.position.set(x,y,z);
+    mesh.scale.set(w,h,d);
+    group.add(mesh);
+    return mesh;
+  }
+  part(casing,0,0,0,.49,.23,.25);
+  part(panel,0,.005,-.127,.441,.18,.017);
+  part(display,-.080,.024,-.139,.19,.042,.014);
+  for (let i=0; i<4; i++) part(casing,.048+i*.032,-.029,-.141,.016,.055,.013);
+  part(panel,-.153,.228,.073,.016,.285,.016).rotation.z = .17;
+  part(casing,.156,.125,-.026,.059,.036,.059);
+  group.visible = false;
+  return group;
+}
+
 function fogSky(scene) {
   const shader = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
@@ -458,6 +490,8 @@ export function createPresentation(scene, art, layouts) {
   moon.position.copy(moonDirection).multiplyScalar(70); scene.add(moon);
   const canopyLighting = createCanopyLighting();
   const sky = fogSky(scene);
+  const radioModel = makeRadio();
+  scene.add(radioModel);
   const lamp = makeLamp();
   const offhandLamp = makeLamp(lamp.map);
   offhandLamp.visible = false;
@@ -988,7 +1022,13 @@ export function createPresentation(scene, art, layouts) {
       { active, inspecting, stereo, calibration, menu, aimHit, aim, offhandAimHit, offhandAim, beam, offhandBeam, viewpoint, enemyAlpha }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
-    const frozen = run.status === 'dead';
+    const frozen = run.status !== 'playing';
+    const radio = run.search.radio;
+    radioModel.visible = Boolean(radio && distance(radio,p) < 25);
+    if (radioModel.visible) {
+      radioModel.position.set(radio.x,radio.y,radio.z);
+      radioModel.rotation.y = radio.turn === 2 ? Math.PI : 0;
+    }
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);

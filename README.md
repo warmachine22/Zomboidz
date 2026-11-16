@@ -4,6 +4,8 @@ An endless first-person zombie survival game for Meta Quest 3 Browser and deskto
 
 [Play the current release](https://zombiez.vercel.app/). Refresh the page to load the latest release.
 
+Survive and escape by following roads and tracks to search sheds. When you find the working radio, approach it and press **E**, use the **weapon grip** in VR, or tap **Call** on touch. The reply confirms extraction and ends the run with your escape time.
+
 ## Play locally
 
 Requires Node.js 20 or newer.

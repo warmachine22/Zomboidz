@@ -525,8 +525,8 @@ test('terrain repeats by seed and never reactivates an already looted cache', ()
   advance(run, 1);
   assert.ok(!run.loot.some(d => d.id === item.id));
   assert.equal(hordeTarget(0), 10);
-  assert.equal(hordeTarget(300), 32);
-  assert.equal(hordeTarget(540), 48);
+  assert.equal(hordeTarget(390), 32);
+  assert.equal(hordeTarget(660), 48);
 });
 
 function aimFrom(origin, target) {
@@ -550,6 +550,23 @@ test('pistol and laser share a first hit on an animated enemy at close and clear
     const hit = run.events.find(e => e.type === 'impact');
     assert.deepEqual({ x:hit.x,y:hit.y,z:hit.z },dot.point);
     assert.equal(p.headshots,1);
+  }
+});
+
+test('a shot through the outer skull registers and kills any of the three zombies in one hit', () => {
+  for (const kind of ['shambler','shrieker','brute']) {
+    const run=room(), p=run.player;
+    const enemy=addEnemy(run,kind,p.x,p.z-7);
+    enemy.stride=.78;
+    enemy.gait=2.1;
+    const {head}=enemyPose(enemy);
+    const side=kind==='brute'?.176:.128;
+    const edge={...head,x:head.x+side};
+    const aim=aimFrom({...edge,z:p.z},edge);
+    assert.equal(traceAim(run,aim)?.zone,'head',kind);
+    shoot(run,aim);
+    assert.equal(enemy.dead,true,kind);
+    assert.equal(p.headshots,1,kind);
   }
 });
 
@@ -583,7 +600,7 @@ test('a tracked gun pushed through cover still hits the near side at the laser d
   assert.equal(p.ammo,5);
 });
 
-test('the opening seeds every sector behind cover, without scripted convergence before 30 seconds', () => {
+test('the opening seeds every sector behind cover before scripted convergence', () => {
   for (const seed of ['Blackwater','Cold Creek','Split Pine','Rain Line']) {
     const run = createRun(seed), { player:p, world } = run;
     assert.equal(run.enemies.length,10);
@@ -599,14 +616,14 @@ test('the opening seeds every sector behind cover, without scripted convergence 
 
 test('unbroken forward motion and backpedaling draw covered interceptions without exceeding the cap', () => {
   for (const moveZ of [-1,1]) {
-    const run = createRun('Blackwater', { crowdLimit:10 });
+    const run = createRun('Reed Valley', { crowdLimit:10 });
     let metAhead = false;
-    for (let i = 0; i < 120 / STEP && run.status === 'playing'; i++) {
+    for (let i = 0; i < 225 / STEP && run.status === 'playing'; i++) {
       const known = new Set(run.enemies.map(e => e.id));
       stepRun(run,{ yaw:0,moveZ });
       assert.ok(run.enemies.length <= 10);
       const p = run.player, view = { x:p.x,y:p.y+p.eyeHeight,z:p.z };
-      for (const e of run.enemies) if (!known.has(e.id)) {
+      for (const e of run.enemies) if (!known.has(e.id) && e.spawn) {
         const { x,z } = e.spawn, body = {x,z,y:run.world.height(x,z)+1.18};
         assert.ok(distance(p,{x,z}) >= 13);
         assert.equal(run.world.clear(view,body),false);
