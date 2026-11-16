@@ -76,16 +76,15 @@ export function createXR(renderer, scene, rig) {
   function controller(frame, reference, source) {
     if (!source) return null;
     const grip = source.gripSpace && frame.getPose(source.gripSpace, reference);
-    const ray = frame.getPose(source.targetRaySpace, reference);
-    if (!grip && !ray) return null;
-    return { grip: poseOf(grip || ray), ray: poseOf(ray || grip), gamepad: source.gamepad };
+    if (!grip) return null;
+    return { grip: poseOf(grip), gamepad: source.gamepad };
   }
 
   function sample(frame, p, settings, phase) {
     if (!frame || !active) return null;
     const reference = renderer.xr.getReferenceSpace();
     const view = reference && frame.getViewerPose(reference);
-    if (!view) { current = null; return null; }
+    if (!view) { current = null; sources = {}; return null; }
     rawView = poseOf(view);
     if (seatedHeight === null) seatedHeight = rawView.position.y;
     baseHeight = clamp(rawView.position.y + (settings.seated ? 1.57 - seatedHeight : 0), .62, 2.25);
@@ -140,10 +139,7 @@ export function createXR(renderer, scene, rig) {
     });
     const tracked = (settings.leftHanded ? sources.left : sources.right);
     const lamp = (settings.leftHanded ? sources.right : sources.left);
-    const orient = controller => controller && asWorld({
-      position: controller.grip.position, quaternion: controller.ray.quaternion,
-    });
-    return { tracking: { weapon: orient(tracked), lamp: orient(lamp) }, view: asWorld(rawView) };
+    return { tracking: { weapon: asWorld(tracked?.grip), lamp: asWorld(lamp?.grip) }, view: asWorld(rawView) };
   }
 
   function drawPanel(page, view, { title, lines = [], hint, second }) {

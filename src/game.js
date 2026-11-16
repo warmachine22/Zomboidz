@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, flarePower, GUNS, LOOT, setLoot, STEP, stepRun } from './simulation.js';
+import { addEnemy, BUILD, createRun, flarePower, GUNS, LOOT, setLoot, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
+import { heldPose, mountedAim, toolLayouts } from './held-tools.js';
 
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -39,7 +40,8 @@ canvas.tabIndex = -1;
 const xr = createXR(renderer, scene, rig);
 
 const art = await loadArt();
-const presentation = createPresentation(scene, camera, art);
+const layouts = toolLayouts(art);
+const presentation = createPresentation(scene, art, layouts);
 $('start').disabled = false;
 $('start').textContent = touch ? 'Start on this screen' : 'Enter the forest';
 $('build').textContent = 'BUILD ' + BUILD;
@@ -57,6 +59,7 @@ let lastTime, accumulator = 0, manualClock = false, manualRemainder = 0, hudAt =
 let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '', useMouseDrag = false;
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
 let debugVisible = false;
+let aimHit = null;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
 const text = (id, value) => { $(id).textContent = value; };
@@ -361,25 +364,18 @@ function desktopView() {
     quaternion: view.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(a,b,0))),
   });
   const span = touch ? .19 : .236;
-  const long = p.weapon === 'shotgun' ? -.59 : -.43;
+  const long = p.weapon === 'shotgun' ? -.63 : -.48;
   return { view, tracking: {
-    weapon: hold(sign * span, -.279, long, .037, sign * .085),
-    lamp: hold(-sign * (span + .009), -.231, -.400, -.037, -sign * .072),
+    weapon: hold(sign * span, -.323, long, .037, sign * .085),
+    lamp: hold(-sign * (span + .009), -.264, -.435, -.037, -sign * .072),
   } };
 }
 
-const ports = {
-  pistol: new THREE.Vector3(0, .081, -.163),
-  shotgun: new THREE.Vector3(0, .071, -.723),
-  smg: new THREE.Vector3(0, .060, -.414),
-  lamp: new THREE.Vector3(0, .020, -.175),
-};
-function deviceAim(pose, port, stereo, view) {
-  if (!pose) return undefined;
-  const origin = port.clone().applyQuaternion(pose.quaternion).add(pose.position);
-  const ray = stereo || port === ports.lamp ? direction0.clone().applyQuaternion(pose.quaternion)
-    : view.position.clone().addScaledVector(direction0.clone().applyQuaternion(view.quaternion), 27).sub(origin).normalize();
-  return { origin, ray };
+function trackedView(stereo) {
+  const view = stereo ? xr.sync(run.player, settings) : desktopView();
+  view.tracking.weapon = heldPose(view.tracking.weapon, true, stereo);
+  view.tracking.lamp = heldPose(view.tracking.lamp, false, stereo);
+  return view;
 }
 
 function desktopInput() {
@@ -480,21 +476,21 @@ function measure(wall, stereo) {
 }
 
 function simulate(t, sample, stereo) {
-  let view = stereo ? xr.sync(run.player, settings) : desktopView();
+  let view = trackedView(stereo);
   accumulator = Math.min(.22, accumulator + t);
   while (accumulator + 1e-9 >= STEP && phase === 'playing') {
     accumulator -= STEP;
     const state = stereo ? { yaw: sample?.yaw, eyeHeight: sample?.eyeHeight,
       fireHeld: sample?.fireHeld, moveX: sample?.moveX, moveZ: sample?.moveZ, walk: sample?.walk } : desktopInput();
     const input = { ...state, ...queued,
-      roomX, roomZ, aim: deviceAim(view.tracking.weapon, ports[run.player.weapon], stereo, view.view),
-      lamp: deviceAim(view.tracking.lamp, ports.lamp, stereo, view.view),
+      roomX, roomZ, aim: mountedAim(view.tracking.weapon, layouts[run.player.weapon], view.view, !stereo),
+      lamp: mountedAim(view.tracking.lamp, layouts.flashlight, view.view, false),
     };
     roomX = roomZ = 0;
     for (const key of Object.keys(queued)) delete queued[key];
     const batch = stepRun(run, input);
     handleEvent(batch);
-    view = stereo ? xr.sync(run.player, settings) : desktopView();
+    view = trackedView(stereo);
   }
   return view;
 }
@@ -528,8 +524,13 @@ function frame(now, xrFrame) {
   measure(elapsed, stereo);
   const view = phase === 'playing' && !manualClock && (!stereo || (sample?.tracked && xr.active.visibilityState === 'visible'))
     ? simulate(previous === phase ? dt : 0, sample, stereo)
-    : stereo ? xr.sync(run.player, settings) : desktopView();
-  presentation.update(run, dt, settings, view.tracking, phase === 'playing', stereo);
+    : trackedView(stereo);
+  const active = phase === 'playing';
+  aimHit = active && !run.player.reload && settings.laserDot && (!stereo || sample?.tracked)
+    ? traceAim(run, mountedAim(view.tracking.weapon, layouts[run.player.weapon], view.view, !stereo)) : null;
+  presentation.update(run, dt, settings, view.tracking, {
+    active, stereo, menu: phase === 'menu' && !stereo, aimHit, viewpoint: view.view?.position,
+  });
   if (view.view) {
     audio.listener(view.view.position, direction0.clone().applyQuaternion(view.view.quaternion),
       vertical.clone().applyQuaternion(view.view.quaternion), run);
@@ -557,6 +558,7 @@ if (debugEnabled) {
     enemies: run.enemies.map(({ id, kind, x, z, reason, route }) => ({ id, kind, x, z, reason, route })),
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.kind === 'ammo' ? 0 : flarePower(run.time - l.born) })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,
+    laser: aimHit ? { zone:aimHit.zone, point:aimHit.point } : null,
   });
   window.advanceTime = milliseconds => {
     manualClock = true;

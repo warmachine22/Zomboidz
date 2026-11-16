@@ -1,12 +1,15 @@
 """Author the original runtime models. Run with Blender --background --python."""
 import math
 import random
+import json
 from pathlib import Path
 import bpy
+from mathutils import Vector
 
 OUT = Path(__file__).resolve().parent.parent / "assets" / "art"
 OUT.mkdir(parents=True, exist_ok=True)
 RNG = random.Random(1308)
+HIT_ANCHORS = {}
 
 
 def reset():
@@ -231,7 +234,14 @@ def hardware(kind):
         block("Rubber switch", (0, .086, .049), (.023, .029, .010), carbon, .003, root)
         block("Battery indicator", (0, .060, .050), (.006, .009, .002), red, .001, root)
         muzzle, muzzle_y = .175, .020
-    empty("Bore", (0, muzzle, muzzle_y))
+    palm = {
+        "pistol": (0, -.037, -.020),
+        "shotgun": (0, -.086, -.022),
+        "smg": (0, -.075, -.033),
+        "flashlight": (0, -.011, -.008),
+    }[kind]
+    empty("GripSocket", palm).parent = root
+    empty("MuzzleSocket", (0, muzzle, muzzle_y)).parent = root
     merge_static_materials()
     export(kind)
 
@@ -242,15 +252,18 @@ def glove():
     leather = material("Weathered leather", (.066, .064, .054))
     seam = material("Knuckle stitching", (.145, .132, .095))
     root = empty("Grip")
-    block("Palm", (0, -.035, -.040), (.076, .062, .082), leather, .016, root, .10)
-    block("Cuff", (0, -.087, -.063), (.088, .070, .094), textile, .014, root, -.20)
-    for i in range(4):
-        z = -.012 - i * .019
-        block("Wrapped fingers", (-.034, -.004, z), (.033, .049, .016), leather, .007, root, -.06)
-        block("Finger seam", (-.046, -.022, z), (.012, .006, .013), seam, .002, root)
-    block("Thumb", (.032, -.016, -.021), (.027, .048, .029), leather, .007, root, -.28)
+    block("Palm", (0, -.040, -.040), (.066, .069, .078), leather, .019, root, .14)
+    block("Cuff", (0, -.092, -.059), (.078, .075, .086), textile, .018, root, -.22)
+    for i in range(3):
+        z = -.023 - i * .019
+        block("Wrapped fingers", (-.029, -.004, z), (.027, .040 - i*.003, .016), leather, .007, root, -.15)
+        block("Finger seam", (-.037, -.019, z), (.011, .006, .012), seam, .002, root)
+    block("Trigger finger", (-.033, .011, .005), (.024, .066, .017), leather, .007, root, -.16)
+    block("Trigger fingertip", (-.023, .044, -.002), (.028, .023, .016), leather, .007, root, -.31)
+    block("Thumb", (.026, -.019, -.015), (.026, .050, .028), leather, .009, root, -.28)
     for i in range(3):
         block("Palm rib", (.036, -.054+i*.013, -.056), (.005, .005, .050), seam, .001, root)
+    empty("GloveSocket", (0, -.031, -.035)).parent = root
     merge_static_materials()
     export("glove")
 
@@ -432,6 +445,31 @@ def zombie(kind):
     for b in rig.pose.bones:
         b.rotation_mode = "XYZ"
 
+    anchors = [
+        ("Head", (0, head_y, 1.570)), ("Head", (0, head_y, 1.666)),
+        ("Spine", (0, -.028, 1.33)), ("Hips", (0, .014, .96)),
+    ]
+    radii = [(.126 if kind == "brute" else .113) * max(s, width), .205 * width]
+    for side, suffix in [(-1, ".L"), (1, ".R")]:
+        anchors.extend([
+            ("Arm"+suffix, (side*.236,.002,1.331)),
+            ("Fore"+suffix, (side*.301,-.117,1.037)),
+            ("Fore"+suffix, (side*.321,-.181,.796)),
+            ("Thigh"+suffix, (side*.115,.020,.881)),
+            ("Shin"+suffix, (side*.134,.033,.497)),
+            ("Shin"+suffix, (side*.136,-.025,.109)),
+        ])
+        radii.extend([.082*width,.057*width,.108*width,.077*width])
+    samples = {}
+    rest_points = [(joint, arm_data.bones[joint].matrix_local.inverted() @
+                    Vector((p[0]*width,p[1]*s,p[2]*s))) for joint,p in anchors]
+    boot_soles = []
+    for side, suffix in [(-1, ".L"), (1, ".R")]:
+        joint = "Shin"+suffix
+        inverse = arm_data.bones[joint].matrix_local.inverted()
+        for heel_or_toe in [-.145,.063]:
+            boot_soles.append((joint, inverse @ Vector((side*.136*width, heel_or_toe*s, .026*s))))
+
     def action(name, frames, motion):
         anim = bpy.data.actions.new(name)
         rig.animation_data_create()
@@ -443,26 +481,51 @@ def zombie(kind):
                 b.keyframe_insert(data_path="rotation_euler", frame=frame, group=b.name)
             hips = rig.pose.bones["Hips"]
             hips.location = (0,pose.get("lift",0)*s,0)
+            if name in ("Walk", "Stumble"):
+                bpy.context.view_layer.update()
+                foot = min((rig.pose.bones[joint].matrix @ point).z for joint,point in boot_soles)
+                hips.location.y += max(-.070, min(.090, .016*s-foot))
             hips.keyframe_insert(data_path="location", frame=frame, group="Hips")
+        output = []
+        for frame in range(frames + 1):
+            bpy.context.scene.frame_set(frame)
+            coords = []
+            for joint, point in rest_points:
+                x, y, z = rig.pose.bones[joint].matrix @ point
+                coords.extend(round(v, 4) for v in (x, z, -y))  # glTF coordinates
+            output.append(coords)
+        samples[name] = output
         rig.animation_data.action = None
         track = rig.animation_data.nla_tracks.new()
         track.name = name
         track.strips.new(name, 0, anim)
         track.mute = True
 
-    def walking(t):
-        a = 2*math.pi*t
-        stride = {"shambler":.41,"shrieker":.59,"brute":.34}[kind]
-        swing = math.sin(a)
-        set_pose = {"Spine": (-.08 if kind == "brute" else -.15, .09*swing, .065*swing),
-                    "Head": (.04, .05*math.cos(a), -.073*swing), "lift": .023*math.cos(2*a)}
+    def walking(t, stumble=False):
+        angle = 2*math.pi*t
+        a = angle + .28*math.sin(angle) - .13*math.sin(angle*2)
+        stride = {"shambler":.46,"shrieker":.63,"brute":.39}[kind]
+        lean = {"shambler":.19,"shrieker":.34,"brute":.12}[kind]
+        reach = {"shambler":.70,"shrieker":.91,"brute":.56}[kind]
+        sag = math.sin(math.pi*t)**2 if stumble else 0
+        roll = .10*math.sin(a) + sag*.13
+        set_pose = {
+            "Hips": (0,.045*math.sin(a),-.07*math.sin(a)),
+            "Spine": (lean + .12*math.sin(a*2+.4) + sag*.28,.13*math.sin(a+.6),roll),
+            "Head": (-lean*.48-.08*math.sin(a*2)+sag*.08,.12*math.cos(a),-.15*math.sin(a-.35)-sag*.24),
+            "lift": .016*math.cos(2*a)-.075*sag,
+        }
         for index, suffix in enumerate([".L",".R"]):
-            w = swing if index == 0 else -swing
-            bias = 1 if index == 0 else .76
-            set_pose["Thigh"+suffix] = (stride*w*bias,0,0)
-            set_pose["Shin"+suffix] = (-max(0, -w) * .54,0,0)
-            set_pose["Arm"+suffix] = (.24 + w*.34 if kind == "shrieker" else .33 + w*.24,0,(-.10 if index==0 else .10))
-            set_pose["Fore"+suffix] = (.24+.25*max(0,w),0,0)
+            phase = a + (0 if index == 0 else math.pi + .31)
+            foot = math.sin(phase)
+            bias = 1 if index == 0 else (.59 if kind == "shambler" else .83)
+            drag = sag * (.47 if index == 1 else -.15)
+            set_pose["Thigh"+suffix] = (stride*foot*bias + drag,0,.055*foot)
+            set_pose["Shin"+suffix] = (-max(0,-foot)*(.68 if index==0 else .41)-.24*sag,0,0)
+            reach_wave = math.sin(phase-.42) * (.28 if index==0 else .40)
+            set_pose["Arm"+suffix] = (-reach - reach_wave - sag*(.30 if index==0 else .65),.13*foot,
+                                      (-.16 if index==0 else .14) + sag*(-.13 if index==0 else .24))
+            set_pose["Fore"+suffix] = (-.24+.22*math.cos(phase)-.32*sag,0,.10*foot)
         return set_pose
 
     def lunge(t):
@@ -479,8 +542,10 @@ def zombie(kind):
                 "Arm.R": (-.36*wave,0,0), "Arm.L": (-.26*wave,0,0)}
 
     action("Walk", 25 if kind == "shrieker" else 36 if kind == "brute" else 32, walking)
+    action("Stumble", 22, lambda t: walking(t, True))
     action("Attack", 24, lunge)
     action("Hit", 12, flinch)
+    HIT_ANCHORS[kind] = {"radii": [round(r,4) for r in radii], "clips": samples}
     export(kind, True)
 
 
@@ -490,3 +555,8 @@ glove()
 wreck()
 for zombie_type in ["shambler","shrieker","brute"]:
     zombie(zombie_type)
+(OUT.parent.parent / "src" / "hit-anchors.js").write_text(
+    "// Generated from the Blender rig by scripts/author-assets.py.\nexport const HIT_ANCHORS = "
+    + json.dumps(HIT_ANCHORS, separators=(",", ":")) + ";\n",
+    encoding="utf-8"
+)

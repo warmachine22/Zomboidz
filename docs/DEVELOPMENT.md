@@ -14,7 +14,7 @@ To regenerate the original GLBs, run Blender 4.5 LTS in the background.
 blender --background --factory-startup --python-exit-code 1 --python scripts/author-assets.py
 ```
 
-The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies with separate movement, attack, and hit clips. The render loop controls reload, recoil, pump, death poses, and gear placement. Ground, bark, and rock use optimized WebP textures. See the credits for asset sources.
+The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies. It also exports the hit anchors from the walk, stumble, attack, and flinch clips. Rendering and ballistics share clip phases and blend weights. Grip and muzzle sockets in the GLBs align the held models with the Quest grip pose. Ground, bark, and rock use optimized WebP textures. See the credits for asset sources.
 
 ## Quest release check
 

@@ -2,7 +2,8 @@ import { BUILD } from './simulation.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
-const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false, volume: .75, initials: 'YOU' };
+const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false,
+  laserDot: false, volume: .75, initials: 'YOU' };
 let fallbackScores = [];
 
 function read(key, otherwise) {

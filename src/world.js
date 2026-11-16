@@ -105,7 +105,7 @@ export function createWorld(seed) {
     const key = cx + ',' + cz;
     const rng = random(seed + ':chunk:' + key);
     const left = cx * CHUNK, top = cz * CHUNK;
-    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [] };
+    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [], lights: [] };
     const sites = [];
 
     const box = (x, z, w, h, d, base = height(x, z), kind = 'stone') => {
@@ -116,7 +116,7 @@ export function createWorld(seed) {
     const cache = (id, x, z, kind, unlock = 0) => {
       area.loot.push({ id: key + ':' + id, x, z, kind, unlock });
     };
-    const site = (type, x, z) => {
+    const site = (type, x, z, lit = false) => {
       sites.push({ x, z, r: type === 'house' ? 7 : 4 });
       if (type === 'house') {
         const y = height(x, z) - .17;
@@ -126,10 +126,15 @@ export function createWorld(seed) {
         box(x + 1.8, z + 2.45, 2.6, 2.45, .35, y, 'houseFront');
         box(x - 2.5, z + 2.45, 1.4, 1.9, .35, y, 'houseFront');
         area.props.push({ x, z, y, kind: 'rafters' });
+        if (lit) area.lights.push({ type:'shelter', x:x-1.1, y:y+2.40, z:z-.8,
+          ray:{ x:0,y:-.98,z:.20 }, radius:5.6, angle:.83 });
         cache('inside', x + 1.05, z - 1.05, rng() > .55 ? 'smg' : 'armor2', 42);
         cache('porch', x - .7, z + 3.5, 'ammo', 16);
       } else if (type === 'wreck') {
-        box(x, z, 1.86, 1.48, 3.85, height(x, z) - .16, 'wreck');
+        const y = height(x, z)-.16;
+        box(x, z, 1.86, 1.48, 3.85, y, 'wreck');
+        if (lit) area.lights.push({ type:'wreck', x, y:y+.70, z:z+1.96,
+          ray:{ x:-.17,y:-.21,z:.96 }, radius:12.4, angle:.59 });
         cache('trunk', x - 1.65, z + .7, 'shotgun', 27);
         cache('road', x - 2.3, z + 4.8, 'ammo', 12);
       } else {
@@ -141,11 +146,11 @@ export function createWorld(seed) {
         cache('rocks', x, z - 3.3, rng() > .5 ? 'pierce' : 'reload', 34);
       }
     };
-    if (cx === 0 && cz === 0) site('wreck', 3.8, 5.4);
-    else if (cx === 0 && cz === -1) site('house', 12, -18);
+    if (cx === 0 && cz === 0) site('wreck', 3.8, 5.4, true);
+    else if (cx === 0 && cz === -1) site('house', 12, -18, true);
     else if (cx === -1 && cz === 0) site('rocks', -11, 7);
     else if (rng() < .32) site(['house', 'wreck', 'rocks'][Math.floor(rng() * 3)],
-      left + 10 + rng() * 28, top + 10 + rng() * 28);
+      left + 10 + rng() * 28, top + 10 + rng() * 28, hash(seed+':lit:'+key) % 5 === 0);
 
     for (let i = 0; i < 88; i++) {
       const x = left + 1.7 + rng() * (CHUNK - 3.4), z = top + 1.7 + rng() * (CHUNK - 3.4);

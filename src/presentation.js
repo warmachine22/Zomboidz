@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
 import { beamSettings, ENEMIES, flarePower, GUNS, LOOT } from './simulation.js';
+import { enemyMotion } from './enemy-motion.js';
 
 const textures = new THREE.TextureLoader();
 const models = new GLTFLoader();
@@ -15,6 +16,9 @@ const branchGeometry = new THREE.CylinderGeometry(.24, .5, 1, 5);
 const trunkGeometry = new THREE.CylinderGeometry(.25, .5, 1, 9, 1, false);
 const rockGeometry = new THREE.IcosahedronGeometry(1, 1);
 const forest = new THREE.Group();
+const headlampLens = new THREE.MeshBasicMaterial({ color:0xffe1a6, toneMapped:false });
+const shelterLens = new THREE.MeshBasicMaterial({ color:0xf6ad68, toneMapped:false });
+const laserColors = { head:0xffcf65, cover:0xf3f7ff };
 const rockPos = rockGeometry.attributes.position;
 for (let i = 0; i < rockPos.count; i++) {
   const x = rockPos.getX(i), y = rockPos.getY(i), z = rockPos.getZ(i);
@@ -232,6 +236,24 @@ function makeChunk(world, area, art) {
     }
     group.add(sign);
   }
+  for (const light of area.lights) {
+    if (light.type === 'wreck') {
+      for (const x of [-.64, .64]) {
+        const lens = new THREE.Mesh(baseBox, headlampLens);
+        lens.position.set(light.x+x, light.y-.006, light.z-.054);
+        lens.scale.set(.246,.126,.022);
+        group.add(lens);
+      }
+    } else {
+      const fixture = new THREE.Mesh(baseBox, surfaces.trim);
+      fixture.position.set(light.x,light.y+.082,light.z);
+      fixture.scale.set(.25,.16,.18);
+      const lens = new THREE.Mesh(baseBox, shelterLens);
+      lens.position.set(light.x,light.y,light.z);
+      lens.scale.set(.19,.036,.13);
+      group.add(fixture,lens);
+    }
+  }
   return group;
 }
 
@@ -288,8 +310,7 @@ function makeLamp() {
   lamp.shadow.mapSize.set(512, 512);
   lamp.shadow.camera.near = .14; lamp.shadow.camera.far = 34;
   lamp.shadow.bias = -.00019; lamp.shadow.normalBias = .028;
-  const spill = new THREE.SpotLight(0xdfeddf, 0, 7.4, .84, .82, 1.65);
-  return { lamp, spill };
+  return lamp;
 }
 
 function fogSky(scene) {
@@ -316,17 +337,24 @@ function fogSky(scene) {
   return sky;
 }
 
-export function createPresentation(scene, camera, art) {
+export function createPresentation(scene, art, layouts) {
   const localForest = forest.clone();
   scene.add(localForest);
-  scene.fog = new THREE.FogExp2(0x172127, .040);
-  scene.add(new THREE.HemisphereLight(0x9eb7cc, 0x566270, .63));
-  const moon = new THREE.DirectionalLight(0x92b5cd, .34);
+  scene.background = new THREE.Color(0);
+  scene.fog = new THREE.FogExp2(0, .040);
+  const ambient = new THREE.HemisphereLight(0x9eb7cc, 0x566270, 0);
+  scene.add(ambient);
+  const moon = new THREE.DirectionalLight(0x92b5cd, 0);
   moon.position.set(-16, 12, -25); scene.add(moon);
   const sky = fogSky(scene);
-  const { lamp, spill } = makeLamp();
+  const lamp = makeLamp();
   const muzzle = new THREE.SpotLight(0xffa660, 0, 13, .61, .66, 1.48);
-  scene.add(lamp, lamp.target, spill, spill.target, muzzle, muzzle.target);
+  const fixtureLights = Array.from({ length:2 }, () => new THREE.SpotLight(0xffd9a0, 0, 10, .63, .62, 1.65));
+  scene.add(lamp, lamp.target, muzzle, muzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(.012, 9, 6),
+    new THREE.MeshBasicMaterial({ color:0xf54a36, toneMapped:false, fog:false }));
+  dot.visible = false;
+  scene.add(dot);
   const glow = radialTexture(), burst = radialTexture(true);
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -335,19 +363,23 @@ export function createPresentation(scene, camera, art) {
   const weaponAnchor = new THREE.Group(), lampAnchor = new THREE.Group();
   scene.add(weaponAnchor, lampAnchor);
   weaponAnchor.add(weaponMount); lampAnchor.add(lampMount);
-  const gloveR = art.glove.scene.clone(), gloveL = art.glove.scene.clone();
-  weaponMount.add(gloveR); lampMount.add(gloveL);
-  const guns = Object.fromEntries(Object.keys(GUNS).map(w => [w, art[w].scene.clone()]));
-  for (const g of Object.values(guns)) weaponMount.add(g);
-  const flashlight = art.flashlight.scene.clone();
-  lampMount.add(flashlight);
+  function tool(name, mount) {
+    const model = art[name].scene.clone();
+    model.position.copy(layouts[name].offset);
+    model.scale.setScalar(layouts[name].scale);
+    mount.add(model);
+    return model;
+  }
+  const gloveR = tool('glove', weaponMount), gloveL = tool('glove', lampMount);
+  const guns = Object.fromEntries(Object.keys(GUNS).map(w => [w, tool(w, weaponMount)]));
+  const flashlight = tool('flashlight', lampMount);
   const firstPersonMats = new Map();
   for (const model of [gloveR, gloveL, flashlight, ...Object.values(guns)]) {
     model.traverse(node => {
       if (!node.isMesh) return;
       if (!firstPersonMats.has(node.material)) {
         const lit = node.material.clone();
-        lit.emissive.copy(lit.color).multiplyScalar(.14);
+        lit.emissive.copy(lit.color).multiplyScalar(.09);
         firstPersonMats.set(node.material, lit);
       }
       node.material = firstPersonMats.get(node.material);
@@ -371,11 +403,12 @@ export function createPresentation(scene, camera, art) {
   const effects = [];
   const effectGeometry = new THREE.TetrahedronGeometry(.038);
   const effectMaterials = {
-    body: new THREE.MeshBasicMaterial({ color: 0x693b36 }),
-    other: new THREE.MeshBasicMaterial({ color: 0xb09b7e }),
+    body: new THREE.MeshStandardMaterial({ color: 0x693b36 }),
+    other: new THREE.MeshStandardMaterial({ color: 0xb09b7e }),
     casing: new THREE.MeshStandardMaterial({ color: 0x988257, roughness: .4, metalness: .5 }),
   };
   let shot = null, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
+  let artworkLit = null;
 
   function reset(run) {
     currentRun = run;
@@ -410,6 +443,7 @@ export function createPresentation(scene, camera, art) {
       const area = world.chunk(x, z);
       if (chunks.has(area.key)) continue;
       const view = makeChunk(world, area, art);
+      view.userData.lights = area.lights;
       chunks.set(area.key, view); localForest.add(view);
     }
   }
@@ -444,7 +478,7 @@ export function createPresentation(scene, camera, art) {
     pool[v.kind].push(v);
   }
 
-  function updateEnemies(run, dt) {
+  function updateEnemies(run, dt, aimedId) {
     tick++;
     const desired = new Set();
     const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
@@ -467,27 +501,13 @@ export function createPresentation(scene, camera, art) {
       }
       v.age += dt;
       const skip = d < 12 ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
-      if ((tick + e.id) % skip) continue;
-      const { Walk, Attack, Hit } = v.actions;
-      const attack = e.windup > 0;
-      const attackProgress = !attack ? 0 : .05 + .50 * (1 - e.windup / ENEMIES[e.kind].windup);
-      const recovering = !attack && e.recover > .34;
-      const attackWeight = attack ? .94 : recovering ? .56 : 0;
-      const hit = e.stun > 0 ? Math.min(.82, e.stun * 5.6) : 0;
-      if (Walk) {
-        Walk.setEffectiveWeight(Math.max(0, 1 - attackWeight - hit));
-        Walk.paused = true;
-        Walk.time = ((e.gait / (2 * Math.PI)) % 1) * Walk.getClip().duration;
-      }
-      if (Attack) {
-        Attack.setEffectiveWeight(attackWeight);
-        Attack.paused = true;
-        Attack.time = (attack ? attackProgress : .58 + (1 - e.recover) * .39) * Attack.getClip().duration;
-      }
-      if (Hit) {
-        Hit.setEffectiveWeight(hit);
-        Hit.paused = true;
-        Hit.time = clamp((.15 - e.stun) * 5.4, 0, .94) * Hit.getClip().duration;
+      if ((tick + e.id) % skip && e.id !== aimedId) continue;
+      for (const [name, phase, weight] of enemyMotion(e, ENEMIES[e.kind].windup)) {
+        const action = v.actions[name];
+        if (!action) continue;
+        action.setEffectiveWeight(weight);
+        action.paused = true;
+        action.time = phase * action.getClip().duration;
       }
       v.mixer.update(v.age);
       v.age = 0;
@@ -500,9 +520,36 @@ export function createPresentation(scene, camera, art) {
     view.icon.material.dispose(); view.halo.material.dispose();
   }
 
-  function updateLoot(run) {
-    const desired = new Set(), nearest = [];
+  function updateFixtures(player) {
+    const candidates = [...chunks.values()].flatMap(group => group.userData.lights)
+      .filter(light => distance(light, player) < light.radius + 13)
+      .sort((a,b) => distance(a,player) - distance(b,player));
+    for (const [i, light] of fixtureLights.entries()) {
+      const source = candidates[i];
+      light.intensity = !source ? 0 : source.type === 'wreck' ? 70 : 23;
+      if (!source) continue;
+      light.position.set(source.x,source.y,source.z);
+      light.target.position.copy(light.position).add(v3(source.ray.x,source.ray.y,source.ray.z));
+      light.angle = source.angle;
+      light.distance = source.radius;
+      light.color.setHex(source.type === 'wreck' ? 0xffe6be : 0xffb66f);
+    }
+    return candidates.slice(0, fixtureLights.length);
+  }
+
+  function coneReaches(world, from, ray, target, range, angle) {
+    const delta = target.clone().sub(from);
+    const d = delta.length();
+    return d <= range && delta.dot(ray) > Math.cos(angle)*d && world.clear(from,target);
+  }
+
+  function updateLoot(run, fixtures, active) {
+    const desired = new Set();
     const p = run.player, beam = run.beam;
+    const nearest = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && distance(item,p) < 34)
+      .map(item => ({item, d:distance(item,p), power:flarePower(run.time-item.born)}))
+      .filter(item => item.power > .005)
+      .sort((a,b) => a.d - b.d);
     for (const item of run.loot) {
       const d = distance(item, p);
       if (item.lost || d > 34) continue;
@@ -524,13 +571,12 @@ export function createPresentation(scene, camera, art) {
       const power = item.kind === 'ammo' ? 0 : flarePower(run.time - item.born);
       const range = beamSettings(p);
       const spot = v3(item.x, item.y + .45, item.z);
-      let lit = false;
-      if (p.flashlight && beam && d < range.range) {
-        const delta = spot.clone().sub(beam.origin);
-        const dot = delta.normalize().dot(beam.ray);
-        lit = dot > Math.cos(range.angle * 1.25) && run.world.clear(beam.origin, spot);
-      }
-      const strength = Math.max(lit ? .90 : 0, power * .95, d < 3 ? .68 : item.kind === 'ammo' ? .20 : .065);
+      const lit = (active && p.flashlight && beam && coneReaches(run.world, beam.origin, beam.ray, spot, range.range, range.angle)) ||
+        fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
+        nearest.slice(0,quality).some(({item:other,power}) => other.id !== item.id &&
+          distance(item,other) < 2.3+power*3.1 && run.world.clear({ ...other,y:other.y+.33 },spot));
+      const strength = Math.max(lit ? .80 : 0, power * .95);
+      view.icon.visible = strength > .02;
       view.icon.material.opacity = strength;
       const scale = (item.kind === 'ammo' ? .24 : .53) * (1 + power * .13);
       view.icon.scale.set(scale, scale, 1);
@@ -539,10 +585,8 @@ export function createPresentation(scene, camera, art) {
       view.halo.position.y = .37;
       view.halo.material.opacity = power * .61;
       view.halo.scale.setScalar(.66 + power * .63);
-      if (power > 0) nearest.push({ item, d, power });
     }
     for (const [id, view] of pickups) if (!desired.has(id)) { discardLoot(view); pickups.delete(id); }
-    nearest.sort((a, b) => a.d - b.d);
     for (const [i, light] of flares.entries()) {
       const near = nearest[i];
       light.intensity = near && i < quality ? 13.5 * near.power : 0;
@@ -639,8 +683,8 @@ export function createPresentation(scene, camera, art) {
       muzzle.position.copy(o); muzzle.target.position.copy(o).add(ray);
       const scale = shot.weapon === 'shotgun' ? 1.65 : shot.weapon === 'smg' ? .7 : 1;
       const reduced = settings.reducedFlashes ? .25 : 1;
-      muzzle.intensity = active ? 52 * scale * recoil ** 2 * reduced : 0;
-      spark.position.copy(o).addScaledVector(ray, .105);
+      muzzle.intensity = active && !shot.blocked ? 52 * scale * recoil ** 2 * reduced : 0;
+      spark.position.copy(o).addScaledVector(ray, shot.blocked ? 0 : .105);
       spark.material.opacity = Math.max(0, shot.spark / .058) * .96 * reduced;
       spark.material.rotation = shot.life * 11;
       spark.scale.set(.43 * scale, .32 * scale, 1);
@@ -659,25 +703,41 @@ export function createPresentation(scene, camera, art) {
     lamp.angle = angle;
     lamp.distance = range;
     const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
-    lamp.intensity = active && p.flashlight ? (p.beam === 'focus' ? 128 : 104) * power : 0;
-    spill.position.copy(lamp.position); spill.target.position.copy(lamp.target.position);
-    spill.intensity = lamp.intensity * .16;
+    lamp.intensity = active && tracking.lamp && p.flashlight ? (p.beam === 'focus' ? 137 : 116) * power : 0;
+    const litByLamp = lamp.intensity > 0;
+    if (artworkLit !== litByLamp) {
+      artworkLit = litByLamp;
+      for (const mat of firstPersonMats.values()) mat.emissiveIntensity = litByLamp ? .85 : 0;
+    }
     updateWatch(run);
   }
 
-  function update(run, dt, settings, tracking, active, stereo) {
+  function update(run, dt, settings, tracking, { active, stereo, menu, aimHit, viewpoint }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
     sky.position.set(p.x, p.y, p.z);
     if (!chunks.size || tick % 12 === 0) updateChunks(run.world, p);
-    updateEnemies(run, dt);
-    updateLoot(run);
+    const fixtures = updateFixtures(p);
+    updateEnemies(run, dt, aimHit?.e?.id);
+    updateLoot(run, fixtures, active);
     updateTools(run, dt, settings, tracking, active, stereo);
-    const ambiance = settings.visibility ? 'bright' : 'dark';
+    dot.visible = Boolean(aimHit && viewpoint);
+    if (dot.visible) {
+      dot.position.set(aimHit.point.x,aimHit.point.y,aimHit.point.z);
+      const away = v3(viewpoint.x,viewpoint.y,viewpoint.z).sub(dot.position);
+      const distance = away.length();
+      const scale = clamp(distance / 9,.65,2.8);
+      dot.position.addScaledVector(away.normalize(), .025+.009*scale);
+      dot.scale.setScalar(scale);
+      dot.material.color.setHex(laserColors[aimHit.zone] ?? 0xf35347);
+    }
+    const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'dark';
     if (tone !== ambiance) {
       tone = ambiance;
-      moon.intensity = settings.visibility ? .60 : .34;
-      scene.fog.color.set(settings.visibility ? 0x23333a : 0x172127);
+      sky.visible = menu;
+      moon.intensity = menu ? .34 : 0;
+      ambient.intensity = menu ? .63 : settings.visibility ? .065 : 0;
+      scene.fog.color.set(menu ? 0x172127 : 0x000000);
     }
     for (let i = effects.length - 1; i >= 0; i--) {
       const effect = effects[i];
@@ -692,6 +752,11 @@ export function createPresentation(scene, camera, art) {
 
   return { update, events, reset, setQuality(value) {
     quality = value;
-    lamp.castShadow = value > 1;
+    const resolution = value > 1 ? 512 : 256;
+    if (lamp.shadow.mapSize.x !== resolution) {
+      lamp.shadow.map?.dispose();
+      lamp.shadow.map = null;
+      lamp.shadow.mapSize.set(resolution,resolution);
+    }
   } };
 }

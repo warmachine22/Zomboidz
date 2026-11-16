@@ -13,6 +13,8 @@ npm run dev
 
 Open [localhost:8080](http://localhost:8080). Use WASD and the mouse, click or Space to shoot, R to reload, F for the flashlight, Q to change the beam, and E to equip nearby gear. The game also has an in-page control guide and settings for handedness, seated VR, flash intensity, brightness, and volume.
 
+The woods go dark beyond the flashlight, landmark lights, and active flares. Main-menu **Laser dot** is off by default. Enable it to check aim. Gold marks the head, red marks the body, and white marks cover. For the SMG and shotgun it marks the center of spread.
+
 Quest Browser needs an HTTPS deployment to enter immersive VR. On the headset, use **Enter VR**, then the weapon trigger to start. The left stick moves, the right stick snap turns, the weapon hand's primary button reloads, and its grip equips. The other hand controls the flashlight. The wrist display tracks rounds, battery, and armor.
 
 ## Development and QA

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addEnemy, createRun, enemyPose, flarePower, hordeTarget, setLoot, stepRun, STEP } from '../src/simulation.js';
-import { createWorld, START } from '../src/world.js';
+import { addEnemy, createRun, enemyPose, flarePower, hordeTarget, setLoot, shoot, stepRun, STEP, traceAim } from '../src/simulation.js';
+import { animatedAnchors } from '../src/enemy-motion.js';
+import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
+import { createWorld, distance, START } from '../src/world.js';
 
 function advance(run, seconds, input = {}) {
   for (let i = 0; i < Math.round(seconds / STEP) && run.status === 'playing'; i++)
@@ -139,4 +141,97 @@ test('terrain repeats by seed and never reactivates an already looted cache', ()
   assert.equal(hordeTarget(0), 10);
   assert.equal(hordeTarget(300), 32);
   assert.equal(hordeTarget(540), 48);
+});
+
+function aimFrom(origin, target) {
+  const x = target.x-origin.x, y = target.y-origin.y, z = target.z-origin.z;
+  const d = Math.hypot(x,y,z);
+  return { origin, ray:{ x:x/d, y:y/d, z:z/d } };
+}
+
+test('pistol and laser share a first hit on an animated enemy at close and clearing distances', () => {
+  for (const gap of [2.8, 24]) {
+    const run = room(), p = run.player;
+    const enemy = addEnemy(run, 'shambler', p.x, p.z-gap);
+    const rest = enemyPose(enemy).head;
+    enemy.stumbleDuration = .8; enemy.stumble = .39;
+    const { head } = enemyPose(enemy);
+    assert.ok(Math.abs(head.y-rest.y) > .035);
+    const aim = aimFrom({ x:p.x,y:1.48,z:p.z },head);
+    const dot = traceAim(run,aim);
+    assert.equal(dot.zone,'head');
+    shoot(run,aim);
+    const hit = run.events.find(e => e.type === 'impact');
+    assert.deepEqual({ x:hit.x,y:hit.y,z:hit.z },dot.point);
+    assert.equal(p.headshots,1);
+  }
+});
+
+test('visible reaching arms can take a hit', () => {
+  const run = room(), p = run.player;
+  const enemy = addEnemy(run, 'shrieker', p.x, p.z-4);
+  enemy.stumbleDuration = .6; enemy.stumble = .32;
+  const wrist = animatedAnchors(enemy,.38)[6];
+  const aim = aimFrom({ x:p.x-.6,y:wrist.y,z:p.z },wrist);
+  assert.equal(traceAim(run,aim).zone,'arm');
+  shoot(run,aim);
+  assert.ok(enemy.hp < 2.4);
+  assert.equal(p.headshots,0);
+});
+
+test('a tracked gun pushed through cover still hits the near side at the laser dot', () => {
+  const run = room(), p = run.player;
+  const e = addEnemy(run,'shambler',p.x,p.z-6);
+  const aim = { ...aimFrom({x:p.x,y:1.45,z:p.z-2}, enemyPose(e).head),
+    viewOrigin:{x:p.x,y:1.63,z:p.z} };
+  run.world.raycast = (origin, ray, range) => {
+    const t = (p.z-1-origin.z)/ray.z;
+    return t >= 0 && t <= range ? { t, kind:'houseSide' } : null;
+  };
+  const dot = traceAim(run,aim);
+  assert.equal(dot.zone,'cover');
+  shoot(run,aim);
+  const impact = run.events.find(e => e.type === 'impact');
+  assert.deepEqual({ x:impact.x,y:impact.y,z:impact.z },dot.point);
+  assert.equal(e.hp,3.2);
+  assert.equal(p.ammo,5);
+});
+
+test('the opening seeds every sector behind cover, without scripted convergence before 30 seconds', () => {
+  for (const seed of ['Blackwater','Cold Creek','Split Pine','Rain Line']) {
+    const run = createRun(seed), { player:p, world } = run;
+    assert.equal(run.enemies.length,10);
+    assert.ok(hordeSectors(run).every(count => count > 0));
+    const view = { x:p.x,y:p.y+p.eyeHeight,z:p.z };
+    for (const e of run.enemies) {
+      assert.ok(distance(p,e) >= 25);
+      assert.equal(world.clear(view,{x:e.x,y:e.y+1.78,z:e.z}),false);
+      assert.ok(e.approach.at >= OPENING_SECONDS);
+    }
+  }
+});
+
+test('unbroken forward motion and backpedaling draw covered interceptions without exceeding the cap', () => {
+  for (const moveZ of [-1,1]) {
+    const run = createRun('Blackwater', { crowdLimit:10 });
+    let metAhead = false;
+    for (let i = 0; i < 120 / STEP && run.status === 'playing'; i++) {
+      const known = new Set(run.enemies.map(e => e.id));
+      stepRun(run,{ yaw:0,moveZ });
+      assert.ok(run.enemies.length <= 10);
+      const p = run.player, view = { x:p.x,y:p.y+p.eyeHeight,z:p.z };
+      for (const e of run.enemies) if (!known.has(e.id)) {
+        const { x,z } = e.spawn, body = {x,z,y:run.world.height(x,z)+1.18};
+        assert.ok(distance(p,{x,z}) >= 13);
+        assert.equal(run.world.clear(view,body),false);
+        const b = run.beam, dx = body.x-b.origin.x, dy=body.y-b.origin.y, dz=body.z-b.origin.z;
+        if (p.flashlight && Math.hypot(dx,dy,dz)<15 &&
+          dx*b.ray.x+dy*b.ray.y+dz*b.ray.z > Math.cos(.49)*Math.hypot(dx,dy,dz))
+          assert.equal(run.world.clear(b.origin,body),false);
+        if (run.time > OPENING_SECONDS && (z-p.z)*moveZ > 9) metAhead = true;
+      }
+    }
+    assert.ok(metAhead);
+    assert.equal(run.status,'dead');
+  }
 });

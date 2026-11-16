@@ -1,9 +1,11 @@
 import { angleDelta, clamp, createWorld, direction, distance, random, START } from './world.js';
+import { animatedAnchors, HIT_SEGMENTS, hitRadii } from './enemy-motion.js';
+import { OPENING_SECONDS, replenishHorde, seedHorde } from './horde.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.0';
+export const BUILD = '1.0.1';
 export const GUNS = {
-  pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: .003 },
+  pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
   smg: { name: 'Compact SMG', capacity: 24, reload: 1.8, interval: .102, range: 49, damage: .93, noise: 48, rounds: 1, spread: .02 },
 };
@@ -42,7 +44,9 @@ export function flarePower(age) {
 }
 
 export function hordeTarget(time) {
-  return Math.min(48, 10 + Math.floor(time < 300 ? time * 22 / 300 : 22 + (time - 300) * 16 / 240));
+  return Math.min(48, 10 + Math.floor(time < 300
+    ? Math.max(0, time - OPENING_SECONDS) * 22 / (300 - OPENING_SECONDS)
+    : 22 + (time - 300) * 16 / 240));
 }
 
 export function beamSettings(player) {
@@ -63,22 +67,90 @@ function inBeam(world, beam, at, range, angle) {
 }
 
 export function enemyPose(enemy) {
-  const shape = ENEMIES[enemy.kind];
-  const heading = direction(enemy.yaw);
-  const sway = (enemy.kind === 'shambler' ? .091 : .044) * Math.sin(enemy.gait);
-  const attack = enemy.windup <= 0 ? 0 : Math.sin(Math.PI * clamp(1 - enemy.windup / shape.windup, 0, 1));
-  const lean = (enemy.kind === 'shrieker' ? .16 : .065) + attack * .15;
-  return {
-    head: { x: enemy.x + heading.x * lean - heading.z * sway, y: enemy.y + shape.height - .14 + .022 * Math.sin(enemy.gait * 2), z: enemy.z + heading.z * lean + heading.x * sway },
-    torso: { x: enemy.x + heading.x * .035, y: enemy.y + shape.height * .63, z: enemy.z + heading.z * .035 },
-  };
+  const [chin, brow, chest, hips] = animatedAnchors(enemy, ENEMIES[enemy.kind].windup, 4);
+  const center = (a,b) => ({ x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 });
+  return { head:center(chin,brow), torso:center(chest,hips) };
 }
 
 function raySphere(origin, ray, center, radius) {
   const x = center.x - origin.x, y = center.y - origin.y, z = center.z - origin.z;
   const projection = x * ray.x + y * ray.y + z * ray.z;
-  const h = radius * radius - (x*x + y*y + z*z - projection * projection);
+  const c = x*x + y*y + z*z - radius*radius;
+  if (c <= 0) return 0;
+  const h = projection*projection - c;
   return h >= 0 && projection >= 0 ? Math.max(0, projection - Math.sqrt(h)) : Infinity;
+}
+
+function rayCapsule(origin, ray, first, last, radius) {
+  const dx = last.x-first.x, dy = last.y-first.y, dz = last.z-first.z;
+  const x = origin.x-first.x, y = origin.y-first.y, z = origin.z-first.z;
+  const length2 = dx*dx+dy*dy+dz*dz;
+  const projection = dx*ray.x+dy*ray.y+dz*ray.z;
+  const from = dx*x+dy*y+dz*z;
+  const originRay = x*ray.x+y*ray.y+z*ray.z;
+  const a = length2-projection*projection;
+  const b = length2*originRay-from*projection;
+  const c = length2*(x*x+y*y+z*z-radius*radius)-from*from;
+  if (c <= 0 && from >= 0 && from <= length2) return 0;
+  const d = b*b-a*c;
+  if (a > 1e-8 && d >= 0) {
+    const t = (-b-Math.sqrt(d))/a, across = from+t*projection;
+    if (t >= 0 && across >= 0 && across <= length2) return t;
+  }
+  return Math.min(raySphere(origin, ray, first, radius), raySphere(origin, ray, last, radius));
+}
+
+const rayPoint = (origin, ray, t) => ({
+  x: origin.x + ray.x*t, y: origin.y + ray.y*t, z: origin.z + ray.z*t,
+});
+
+function muzzleCover(world, aim) {
+  if (!aim.viewOrigin) return null;
+  const head = aim.viewOrigin, o = aim.origin;
+  const dx = o.x-head.x, dy = o.y-head.y, dz = o.z-head.z;
+  const range = Math.hypot(dx,dy,dz);
+  if (range <= .01) return null;
+  const ray = { x:dx/range, y:dy/range, z:dz/range };
+  const hit = world.raycast(head, ray, range);
+  return hit && hit.t <= range ? { zone:'cover', surface:hit.kind, point:rayPoint(head,ray,hit.t), ray } : null;
+}
+
+function prepareTargets(run, origin, ray, range, spread = 0) {
+  const targets = [];
+  const horizontal = Math.hypot(ray.x, ray.z);
+  for (const e of run.enemies) {
+    if (e.dead) continue;
+    const x = e.x-origin.x, z = e.z-origin.z, gap = Math.hypot(x,z);
+    if (gap > range+1.2) continue;
+    if (horizontal > .01 && (x*ray.x+z*ray.z < -horizontal || Math.abs(x*ray.z-z*ray.x) / horizontal > .98 + gap*spread*1.8)) continue;
+    targets.push({ e, points:animatedAnchors(e, ENEMIES[e.kind].windup), radii:hitRadii(e.kind) });
+  }
+  return targets;
+}
+
+function traceRay(world, origin, ray, range, targets) {
+  const solid = world.raycast(origin, ray, range);
+  const limit = solid?.t ?? range;
+  const hits = [];
+  for (const { e, points, radii } of targets) {
+    let best = limit, zone = null;
+    for (const [i, [a,b,tag]] of HIT_SEGMENTS.entries()) {
+      const t = rayCapsule(origin, ray, points[a], points[b], radii[i]);
+      if (t < best) { best = t; zone = tag; }
+    }
+    if (zone) hits.push({ e, t:best, zone, point:rayPoint(origin,ray,best) });
+  }
+  hits.sort((a,b) => a.t-b.t);
+  return { hits, cover: solid && { zone:'cover', surface:solid.kind, point:rayPoint(origin,ray,solid.t) } };
+}
+
+export function traceAim(run, aim) {
+  if (!aim?.origin || !aim?.ray) return null;
+  const blocked = muzzleCover(run.world, aim);
+  if (blocked) return blocked;
+  const { range } = GUNS[run.player.weapon], ray = norm(aim.ray);
+  const { hits, cover } = traceRay(run.world, aim.origin, ray, range, prepareTargets(run, aim.origin, ray, range));
+  return hits[0] || cover;
 }
 
 function emit(run, type, data = {}) {
@@ -92,21 +164,16 @@ export function createRun(seed, { crowdLimit = 48, populate = true } = {}) {
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
       weapon: 'pistol', ammo: 6, reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
       flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
-      stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
+      travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
     enemies: [], loot: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
-    nextId: 1, nextSpawn: 2, nextLoot: 33, lastChunkCheck: -Infinity, dryKills: 0,
+    nextId: 1, nextSpawn: 2, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, dryKills: 0,
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
     metrics: { shots: 0, dryFire: 0, roundsPicked: 0, upgrades: 0, guarded: 0, lootFlareSeconds: 0,
-      pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0 },
+      pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0,
+      spawns: [0,0,0,0], aheadSpawns: 0 },
   };
   updateLandmarks(run);
-  if (populate) {
-    for (let i = 0; i < 26 && run.enemies.length < 10; i++) spawnFromCover(run, i % 2 === 0);
-    const disturbed = run.enemies.slice().sort((a,b) => distance(a, run.player) - distance(b, run.player)).slice(0, 3);
-    for (const enemy of disturbed) {
-      enemy.memory = { x: START.x, z: START.z - 1.6, id: 'disturbance', reason: 'footstep', chase: true, until: 25 };
-    }
-  }
+  if (populate) seedHorde(run, Math.min(crowdLimit, hordeTarget(0)), addEnemy);
   run.events.length = 0;
   return run;
 }
@@ -115,47 +182,16 @@ export function addEnemy(run, kind, x, z) {
   const index = run.nextId++, p = run.player, cfg = ENEMIES[kind];
   const enemy = { id: index, kind, x, y: run.world.height(x, z), z,
     yaw: Math.atan2(p.x - x, x === p.x && z === p.z ? -1 : z - p.z),
-    hp: cfg.hp, pace: .87 + run.rng() * .28, gait: run.rng() * Math.PI * 2,
+    hp: cfg.hp, pace: .74 + run.rng() * .46, gait: run.rng() * Math.PI * 2,
     nextThink: run.time + run.rng() * .36, nextVoice: run.time + 1 + run.rng() * 5,
     target: null, reason: 'roaming', memory: null, swapAfter: 0,
     flank: index % 5 < 2 ? (index % 2 ? -1 : 1) : 0,
     roam: run.rng() * Math.PI * 2, nextRoam: run.time + 3, windup: 0, recover: 0,
     slow: 0, stun: 0, burst: 0, nextBurst: run.time + 1, turnSide: index % 2 ? 1 : -1, stuck: 0, stride: 0,
+    stumble: 0, stumbleDuration: 0, nextStumble: run.time + 2 + index % 7,
   };
   run.enemies.push(enemy);
   return enemy;
-}
-
-function spawnFromCover(run, front) {
-  const { player: p, world } = run;
-  const view = eye(world, p, p.eyeHeight);
-  const forward = direction(p.yaw), beam = run.beam;
-  let sites = null;
-  for (let i = 0; i < 26; i++) {
-    let x, z;
-    if (i > 15) {
-      sites ||= world.around(p.x, p.z, 32).flatMap(area => area.entrances);
-      const site = sites[Math.floor(run.rng() * sites.length)];
-      if (!site) continue;
-      ({ x, z } = site);
-    } else {
-      const angle = (front ? p.yaw + (run.rng() < .5 ? -1 : 1) * (1.05 + run.rng() * .85) : run.rng() * Math.PI * 2);
-      const dir = direction(angle), d = 14 + run.rng() * 19;
-      x = p.x + dir.x * d; z = p.z + dir.z * d;
-    }
-    const d = distance(p, { x, z });
-    if (d < 13 || d > 35 || (forward.x * (x - p.x) + forward.z * (z - p.z)) / d > .53) continue;
-    if (world.blocks(x, z, .48) || run.enemies.some(e => distance(e, { x, z }) < 1.65)) continue;
-    const spot = eye(world, { x, z }, 1.35);
-    if (beam && p.flashlight && inBeam(world, beam, spot, beamSettings(p).range, beamSettings(p).angle)) continue;
-    if (world.clear(view, spot)) continue;
-    const roll = run.rng();
-    const brute = clamp((run.time - 47) / 570, 0, .23);
-    const shrieker = clamp((run.time - 23) / 400 + .05, .04, .26);
-    addEnemy(run, roll < brute ? 'brute' : roll < brute + shrieker ? 'shrieker' : 'shambler', x, z);
-    return true;
-  }
-  return false;
 }
 
 export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0, carried = false) {
@@ -234,49 +270,44 @@ export function shoot(run, aim) {
     return;
   }
   const o = aim.origin, center = norm(aim.ray);
+  const blocked = muzzleCover(world, aim);
   p.ammo--;
   p.cooldown = gun.interval;
   p.noisePeak = run.time + .28;
   run.metrics.shots++;
-  noise(run, 'gunshot', o, gun.noise, 2.8);
-  emit(run, 'shot', { ...o, ray: center, weapon: p.weapon });
-  const possible = run.enemies.filter(e => !e.dead && distance(e, o) <= gun.range + 1);
+  const flashOrigin = blocked ? rayPoint(blocked.point, blocked.ray, -.045) : o;
+  noise(run, 'gunshot', flashOrigin, gun.noise, 2.8);
+  emit(run, 'shot', { ...flashOrigin, ray: center, weapon: p.weapon, blocked: Boolean(blocked) });
+  if (blocked) {
+    emit(run, 'impact', { ...blocked.point, surface: blocked.surface });
+    return;
+  }
+  const possible = prepareTargets(run, o, center, gun.range, gun.spread);
   const hits = new Map();
   for (let shot = 0; shot < gun.rounds; shot++) {
-    const spread = gun.spread;
-    const ray = norm({ x: center.x + (run.rng() - .5) * spread * 2,
+    const spread = p.weapon === 'shotgun' && shot === 0 ? 0 : gun.spread;
+    const ray = spread === 0 ? center : norm({ x: center.x + (run.rng() - .5) * spread * 2,
       y: center.y + (run.rng() - .5) * spread * 2, z: center.z + (run.rng() - .5) * spread * 2 });
-    const solid = world.raycast(o, ray, gun.range);
-    const max = solid?.t ?? gun.range;
-    const candidates = [];
-    for (const e of possible) {
-      const cfg = ENEMIES[e.kind], { head, torso } = enemyPose(e);
-      const h = raySphere(o, ray, head, e.kind === 'brute' ? .175 : .147);
-      const b = Math.min(raySphere(o, ray, torso, cfg.width),
-        raySphere(o, ray, { ...torso, y: e.y + cfg.height * .49 }, cfg.width * .83));
-      const l = raySphere(o, ray, { x: e.x, y: e.y + cfg.height * .26, z: e.z }, cfg.width * .85);
-      const t = Math.min(h, b, l);
-      if (t < max) candidates.push({ e, t, head: h <= b && h <= l, limb: l < h && l < b });
-    }
-    candidates.sort((a, b) => a.t - b.t);
+    const { hits:candidates, cover } = traceRay(world, o, ray, gun.range, possible);
     const penetrates = 1 + (p.weapon === 'shotgun' && shot !== 0 ? 0 : p.upgrades.pierce);
     for (let i = 0; i < Math.min(penetrates, candidates.length); i++) {
       const hit = candidates[i];
-      const current = hits.get(hit.e) || { total: 0, head: false, firstHead: false, ...hit,
-        point: { x: o.x + ray.x * hit.t, y: o.y + ray.y * hit.t, z: o.z + ray.z * hit.t } };
-      current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i * (hit.head ? 2.8 : hit.limb ? .68 : 1);
-      current.head ||= hit.head;
-      current.firstHead ||= hit.head && i === 0;
-      current.limb ||= hit.limb;
+      const current = hits.get(hit.e) || { total: 0, head: false, firstHead: false, leg: false, point: hit.point };
+      const headshot = hit.zone === 'head';
+      current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i *
+        (headshot ? 2.8 : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
+      current.head ||= headshot;
+      current.firstHead ||= headshot && i === 0;
+      current.leg ||= hit.zone === 'leg';
       hits.set(hit.e, current);
     }
-    if (solid && shot === 0 && candidates.length < penetrates)
-      emit(run, 'impact', { x: o.x + ray.x * solid.t, y: o.y + ray.y * solid.t, z: o.z + ray.z * solid.t, surface: solid.kind });
+    if (cover && shot === 0 && candidates.length < penetrates)
+      emit(run, 'impact', { ...cover.point, surface: cover.surface });
   }
   for (const [enemy, hit] of hits) {
     enemy.hp -= hit.total;
     enemy.stun = hit.total > 1.1 ? .15 : .07;
-    if (hit.limb) enemy.slow = 1.3;
+    if (hit.leg) enemy.slow = 1.3;
     emit(run, 'impact', { ...hit.point, surface: 'body' });
     if ((hit.firstHead && enemy.kind !== 'brute') || enemy.hp <= 0) eliminate(run, enemy, hit.head);
   }
@@ -399,6 +430,8 @@ function perception(run, e, gap) {
   if (best?.chase) e.memory = { ...best, until: time + (best.reason === 'gunshot' ? 11 : 7) };
   if (!best && e.memory?.until > time && distance(e, e.memory) > 1.1)
     best = { ...e.memory, score: .19, reason: 'last ' + e.memory.reason };
+  if (!best && e.approach?.at <= time && e.approach.until > time && distance(e, e.approach) > 1)
+    best = get(e.approach.x, e.approach.z, .12, 'approaching', 'approach', false);
   if (best && e.target && e.target.id !== best.id && e.swapAfter > time &&
     best.score < 1.2 && (e.target.reason !== 'loot flare' || guard?.id === e.target.id))
     best = e.target;
@@ -429,20 +462,27 @@ function hurt(run, enemy) {
 function attack(run, enemy, gap, dt) {
   const p = run.player, shape = ENEMIES[enemy.kind];
   const toward = Math.atan2(p.x - enemy.x, enemy.z - p.z);
-  const canReach = () => gap < shape.reach &&
-    run.world.clear(eye(run.world, enemy, 1.02), eye(run.world, p, 1.02));
+  const canReach = range => gap < range && run.world.clear(eye(run.world, enemy, 1.02), eye(run.world, p, 1.02));
   enemy.recover = Math.max(0, enemy.recover - dt);
   if (enemy.windup > 0) {
     enemy.yaw += clamp(angleDelta(toward, enemy.yaw), -dt * 3.3, dt * 3.3);
     if (enemy.windup <= dt) {
       enemy.windup = 0;
       enemy.recover = enemy.kind === 'brute' ? 1.13 : .81;
-      if (canReach() && Math.abs(angleDelta(toward, enemy.yaw)) < .58) hurt(run, enemy);
+      if (canReach(shape.reach) && Math.abs(angleDelta(toward, enemy.yaw)) < .58) hurt(run, enemy);
       emit(run, 'swing', { x: enemy.x, y: enemy.y + 1.1, z: enemy.z });
-    } else enemy.windup -= dt;
+    } else {
+      const reach = enemy.kind === 'shrieker' ? 1.62 : enemy.kind === 'brute' ? .72 : 1.0;
+      if (gap > .76 && enemy.windup < shape.windup*.62 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
+        run.world.move(enemy, Math.sin(enemy.yaw)*reach*dt,-Math.cos(enemy.yaw)*reach*dt,shape.width*.83);
+        enemy.y = run.world.height(enemy.x,enemy.z);
+      }
+      enemy.windup -= dt;
+    }
     return true;
   }
-  if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach()) {
+  const triggerReach = shape.reach + (enemy.kind === 'shrieker' ? .54 : .36);
+  if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
     enemy.windup = shape.windup;
     run.nextAttack = run.time + .33;
     emit(run, 'windup', { x: enemy.x, y: enemy.y + 1.28, z: enemy.z, kind: enemy.kind });
@@ -466,7 +506,12 @@ function navigate(run, e, tx, tz, dt) {
   const targetAngle = Math.atan2(vx, -vz), look = e.kind === 'brute' ? 2.7 : 4.5;
   e.yaw += clamp(angleDelta(targetAngle, e.yaw), -dt * look, dt * look);
   const isBurst = e.burst > time;
-  const speed = (isBurst ? 3.48 : cfg.speed * e.pace) * (e.target ? 1 : .64) *
+  const phase = e.gait;
+  const stepPace = 1 + (e.kind === 'brute' ? .14 : .11) * Math.sin(2*phase) +
+    (e.kind === 'shambler' ? .14 : .06) * Math.sin(phase);
+  const progress = e.stumble > 0 ? 1 - e.stumble/e.stumbleDuration : 0;
+  const stumblePace = progress > 0 ? 1 - .43 * Math.sin(Math.PI*progress) + .16 * Math.sin(2*Math.PI*progress) : 1;
+  const speed = (isBurst ? 3.48 : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
   const oldX = e.x, oldZ = e.z, radius = cfg.width * .83;
   for (const turn of [0, .59, -.59, 1.15, -1.15, 1.72, -1.72, 2.22]) {
@@ -480,6 +525,11 @@ function navigate(run, e, tx, tz, dt) {
   const moved = Math.hypot(e.x - oldX, e.z - oldZ);
   e.stuck = moved < .001 ? e.stuck + dt : Math.max(0, e.stuck - dt * 3);
   if (e.stuck > 1.1) { e.turnSide *= -1; e.roam += 1.6; e.stuck = 0; }
+  if (moved > .012 && !isBurst && time > e.nextStumble) {
+    e.stumbleDuration = (e.kind === 'brute' ? .92 : e.kind === 'shrieker' ? .49 : .75) * (1.17 - .19*e.pace);
+    e.stumble = e.stumbleDuration;
+    e.nextStumble = time + 3.7 + run.rng()*6.5;
+  }
   e.stride = moved / dt;
   e.gait += moved * (e.kind === 'brute' ? 6.05 : e.kind === 'shrieker' ? 8.95 : 7.7);
   e.y = world.height(e.x, e.z);
@@ -504,6 +554,7 @@ function updateEnemies(run, dt) {
     if (e.reason === 'loot flare') diverted++;
     e.stun = Math.max(0, e.stun - dt);
     e.slow = Math.max(0, e.slow - dt);
+    e.stumble = Math.max(0, e.stumble - dt);
     e.stride = 0;
     if (attack(run, e, gap, dt)) {
       if (run.status === 'dead') break;
@@ -564,6 +615,19 @@ export function visibleTargets(run, soundMemory = false) {
   return visible.sort((a, b) => distance(p, a) - distance(p, b));
 }
 
+function movePlayer(run, dx, dz) {
+  const { player, world } = run;
+  if (!dx && !dz) return;
+  for (const enemy of run.enemies) {
+    if (enemy.dead) continue;
+    const x = enemy.x-player.x, z = enemy.z-player.z, near = Math.hypot(x,z);
+    if (near < .01 || Math.hypot(x-dx,z-dz) >= ARMS + ENEMIES[enemy.kind].width*.85) continue;
+    const toward = (dx*x+dz*z)/(near*near);
+    if (toward > 0) { dx -= toward*x; dz -= toward*z; }
+  }
+  world.move(player,dx,dz,ARMS);
+}
+
 export function stepRun(run, input = {}, dt = STEP) {
   run.events.length = 0;
   if (run.status !== 'playing') return run.events;
@@ -585,17 +649,21 @@ export function stepRun(run, input = {}, dt = STEP) {
     emit(run, 'light', { on: false, empty: true });
   }
   const mx = input.moveX || 0, mz = input.moveZ || 0, mag = Math.max(1, Math.hypot(mx, mz));
-  const old = { x: p.x, z: p.z };
+  const old = { x: p.x, y: p.y, z: p.z };
   const speed = input.walk ? 1.30 : 2.72;
-  world.move(p, mx / mag * dt * speed, mz / mag * dt * speed, ARMS);
+  movePlayer(run, mx/mag * dt*speed, mz/mag * dt*speed);
   if (input.roomX || input.roomZ) world.move(p, clamp(input.roomX || 0, -.36, .36), clamp(input.roomZ || 0, -.36, .36), ARMS);
-  const shift = { x: p.x - old.x, y: 0, z: p.z - old.z };
   p.y = world.height(p.x, p.z);
-  const shiftPose = pose => pose && { origin: { x: pose.origin.x + shift.x, y: pose.origin.y, z: pose.origin.z + shift.z }, ray: norm(pose.ray) };
-  let aim = shiftPose(input.aim) || defaultAim(run, input.pitch);
+  const shift = { x: p.x - old.x, y: p.y - old.y, z: p.z - old.z };
+  const velocityBlend = Math.min(1, dt*2.8);
+  p.travelX += ((shift.x/dt)-p.travelX)*velocityBlend;
+  p.travelZ += ((shift.z/dt)-p.travelZ)*velocityBlend;
+  const translate = origin => ({ x:origin.x+shift.x, y:origin.y+shift.y, z:origin.z+shift.z });
+  const shiftPose = pose => pose && { origin: translate(pose.origin), ray: norm(pose.ray),
+    viewOrigin: pose.viewOrigin && translate(pose.viewOrigin) };
+  const aim = shiftPose(input.aim) || defaultAim(run, input.pitch);
   const head = eye(world, p, p.eyeHeight);
-  // A real controller can pass through a wall. Resolve the shot on our side.
-  if (!world.clear(head, aim.origin, false)) aim = { ...aim, origin: head };
+  aim.viewOrigin ||= head;
   run.beam = shiftPose(input.lamp) || { origin: { ...head, y: head.y - .16 }, ray: aim.ray };
   if (!world.clear(head, run.beam.origin, false)) run.beam.origin = head;
   p.stepDistance += Math.hypot(shift.x, shift.z);
@@ -627,18 +695,8 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (run.populate && run.time >= run.nextSpawn) {
     const cap = Math.min(run.crowdLimit, hordeTarget(run.time));
-    if (run.enemies.length < cap) {
-      spawnFromCover(run, run.rng() < .64);
-      if (run.enemies.length < cap - 3) spawnFromCover(run, false);
-    } else {
-      const facing = direction(p.yaw);
-      const rear = run.enemies.find(e => distance(e, p) > (run.time > 480 ? 36 : 42) &&
-        (e.x - p.x) * facing.x + (e.z - p.z) * facing.z < -16 &&
-        !world.clear(head, eye(world, e)) &&
-        (!p.flashlight || !inBeam(world, run.beam, eye(world, e), beamSettings(p).range, beamSettings(p).angle)));
-      if (rear && spawnFromCover(run, true)) rear.dead = true;
-    }
-    run.nextSpawn = run.time + Math.max(.49, 1.57 - run.time / 610);
+    replenishHorde(run, cap, { ...run.beam, ...beamSettings(p) }, addEnemy);
+    run.nextSpawn = run.time + (run.time < OPENING_SECONDS ? 2.7 : Math.max(.60, 1.42 - run.time / 580));
   }
   updateEnemies(run, dt);
   run.noises = run.noises.filter(n => run.time < n.born + n.span);
