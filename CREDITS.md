@@ -1,5 +1,5 @@
 # Asset Credits
-The Last Light weapons, gloves, flashlight, wreck, zombie rigs, and geometry are authored for this project. The Blender source is in `scripts/author-assets.py`. The three zombie rigs and their animation clips are original.
+The Last Light weapons, gloves, flashlight, wreck, zombie rigs, and geometry are authored for this project. The Blender generator is in `scripts/author-assets.py`, with editable character scenes in `art-source`. The three rigs and their animation clips are original. Front and side motion studies used Carnegie Mellon Graphics Lab trials 17_05 (walk/hobble) and 91_25 (drag bad leg). [CMU Motion Capture Database](https://mocap.cs.cmu.edu/)
 
 - Forest ground by Charlotte Baglioni, [Forest Ground 06](https://polyhaven.com/a/forest_ground_06), CC0.
 - Cedar bark by Charlotte Baglioni, [Chinese Cedar Bark](https://polyhaven.com/a/chinese_cedar_bark), CC0.

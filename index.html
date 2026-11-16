@@ -21,6 +21,9 @@
       <p class="eyebrow">BLACKWATER FOREST</p>
       <h1 id="title">THE LAST<br><span>LIGHT</span></h1>
       <p class="lede">The woods hear every shot.<br>Keep your light charged. Stay alive.</p>
+      <label class="difficulty">Difficulty
+        <select id="difficulty"><option value="standard">Standard</option><option value="hard">Hard</option></select>
+      </label>
       <div class="actions">
         <button id="start" class="primary" disabled>Loading the forest…</button>
         <button id="vr" disabled>Enter VR</button>
@@ -64,6 +67,9 @@
     <section class="sheet" id="scores" hidden aria-labelledby="scores-title">
       <p class="eyebrow">SURVIVAL RECORDS</p>
       <h2 id="scores-title">Local scores</h2>
+      <label class="difficulty">Difficulty
+        <select id="score-difficulty"><option value="standard">Standard</option><option value="hard">Hard</option></select>
+      </label>
       <div id="score-table"></div>
       <button data-back>Back</button>
     </section>

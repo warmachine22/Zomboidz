@@ -1,8 +1,9 @@
 import { angleDelta, clamp, direction, distance } from './world.js';
+import { DIFFICULTIES } from './difficulty.js';
 
 const PI = Math.PI;
 const QUADRANT = PI / 2;
-export const OPENING_SECONDS = 30;
+export const OPENING_SECONDS = DIFFICULTIES.standard.opening;
 const eye = (world, p, y) => ({ x: p.x, y: world.height(p.x, p.z) + y, z: p.z });
 const heading = (from, to) => Math.atan2(to.x - from.x, from.z - to.z);
 const quadrant = (from, to) => (Math.round(heading(from, to) / QUADRANT) + 4) % 4;
@@ -72,16 +73,17 @@ function spawn(run, sector, bearing, opening, beam, addEnemy, replace = null) {
   const point = entrance(run, bearing, opening, beam, sector);
   if (!point) return false;
   const roll = run.rng();
-  const brute = clamp((run.time - 47) / 570, 0, .23);
-  const shrieker = clamp((run.time - 23) / 400 + .05, .04, .26);
+  const elapsed = run.time * DIFFICULTIES.standard.middle / run.rules.middle;
+  const brute = clamp((elapsed - 47) / 570, 0, .23);
+  const shrieker = clamp((elapsed - 23) / 400 + .05, .04, .26);
   const enemy = addEnemy(run, roll < brute ? 'brute' : roll < brute + shrieker ? 'shrieker' : 'shambler', point.x, point.z);
   if (replace) replace.dead = true;
   const moving = Math.hypot(run.player.travelX, run.player.travelZ) >= .82;
   const ahead = moving && quadrant(run.player, { x:run.player.x+run.player.travelX, z:run.player.z+run.player.travelZ }) === sector;
   enemy.approach = {
     ...waypoint(run, point, ahead && !opening),
-    at: opening ? OPENING_SECONDS + run.rng()*8 : run.time + .35 + run.rng()*1.85,
-    until: opening ? 71 : run.time + 33,
+    at: opening ? run.rules.opening + run.rng()*8 : run.time + .35 + run.rng()*1.85,
+    until: opening ? run.rules.opening + 41 : run.time + 33,
   };
   enemy.spawn = { x: enemy.x, z: enemy.z, sector, time: run.time };
   run.metrics.spawns[sector]++;
@@ -100,7 +102,7 @@ export function seedHorde(run, cap, addEnemy) {
 export function replenishHorde(run, cap, beam, addEnemy) {
   const { player, world, time } = run;
   const moving = Math.hypot(player.travelX, player.travelZ) >= .82;
-  const opening = time < OPENING_SECONDS;
+  const opening = time < run.rules.opening;
   const head = eye(world, player, player.eyeHeight);
   run.travelBearing = moving ? Math.atan2(player.travelX, -player.travelZ) : null;
   const ahead = moving ? (Math.round(run.travelBearing / QUADRANT) + 4) % 4 : null;
@@ -112,7 +114,7 @@ export function replenishHorde(run, cap, beam, addEnemy) {
   const live = run.enemies.filter(e => !e.dead).length;
   if (live >= cap) {
     if (opening || sectors[order[0]] >= Math.max(1, Math.floor(cap / 4))) return;
-    const recycle = run.enemies.filter(e => !e.dead && distance(e, player) > 29 &&
+    const recycle = run.enemies.filter(e => !e.dead && !e.ambush && distance(e, player) > 29 &&
       quadrant(player, e) !== order[0] && e.windup <= 0 && hidden(world, head, player, e, beam))
       .sort((a,b) => distance(b, player) - distance(a, player))[0];
     if (!recycle) return;

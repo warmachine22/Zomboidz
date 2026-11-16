@@ -26,7 +26,7 @@ const options = {
 };
 if (development) {
   await mkdir(out, { recursive: true });
-  const publicPaths = ['index.html', 'style.css', ...assetDirs];
+  const publicPaths = ['index.html', 'style.css', ...assetDirs, 'assets/dev'];
   const copy = p => cp(path.join(root, p), path.join(out, p), { recursive: true });
   await Promise.all(publicPaths.map(copy));
   const server = await context(options);

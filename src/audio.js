@@ -8,8 +8,8 @@ const voices = {
   brute: ['z20', 'rasp'],
 };
 const voiceSamples = new Set(Object.values(voices).flat().concat('z10'));
-const voiceLevel = { voice: .90, windup: 1.04, shriek: 1.18, swing: .64 };
-const voiceWeight = { voice: 1, windup: 1.65, shriek: 1.48, swing: 1.18 };
+const voiceLevel = { voice: .90, windup: 1.04, shriek: 1.18 };
+const voiceWeight = { voice: 1, windup: 1.65, shriek: 1.48 };
 const voiceLimit = 8;
 
 export function threatMix(metres, occluded) {
@@ -198,7 +198,7 @@ export function createAudio() {
       stopVoice(lowest);
     }
     const list = voices[kind];
-    const key = type === 'shriek' ? 'z10' : type === 'swing' ? 'swing' : list[Math.floor(Math.random() * list.length)];
+    const key = type === 'shriek' ? 'z10' : list[Math.floor(Math.random() * list.length)];
     const source = context.createBufferSource(), gain = context.createGain(), filter = context.createBiquadFilter();
     const panner = context.createPanner();
     source.buffer = buffers.get(key) || buffers.get('rasp');
@@ -287,6 +287,8 @@ export function createAudio() {
         play('flare', { gain: .39, loc: e });
       } else if (e.type === 'death' || e.type === 'armorHit') {
         play('armor', { gain: .61, speed: e.type === 'death' ? .62 : .91 });
+      } else if (e.type === 'swing') {
+        play('swing', { gain:.40, loc:e, speed:e.kind==='brute'?.72:e.kind==='shrieker'?1.19:1 });
       } else if (e.type in voiceLevel) playVoice(e, run);
     }
   }

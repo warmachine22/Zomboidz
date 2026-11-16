@@ -6,7 +6,7 @@ Push completed releases to GitHub `main` as `warmachine22`. The Vercel Git integ
 
 The public alias `zombiez.vercel.app` is assigned to the routing deployment in `deploy/public-url`. Its rewrites serve the current managed production build at the original browser origin, which keeps local scores and settings available. Vercel reserves the name against adding it directly as a project domain. For a routing change, deploy just that directory to the existing `zombiez` project as a preview, verify its page and assets, then assign the public alias to that routing deployment. Ordinary game releases require only the Git push.
 
-The shared fixed-step simulation owns damage, timers, aim rays, sound and light sensing, spawn choices, loot, and survival results. With a seed and a sequence of inputs it can run without Three.js or browser APIs. RequestAnimationFrame collects keyboard, touch, or WebXR input and renders state with Three.js. The top-down overlay reads the same runtime state and displays reasons for target switches.
+The shared fixed-step simulation owns damage, timers, aim rays, sound and light sensing, spawn choices, loot, and survival results. It runs headlessly with the same joint math used by the renderer. RequestAnimationFrame collects keyboard, touch, or WebXR input and renders state with Three.js. The top-down overlay reads the same runtime state and displays reasons for target switches and ambush behavior.
 
 Terrain chunks are keyed by seed and world coordinates. The renderer streams a 3×3 ring, while simulation maintains a bounded geometry cache and a set of collected landmarks. Shots and perception share terrain and cover queries. Importing the older alpha snapshot is only useful for restoring an older release.
 
@@ -18,14 +18,18 @@ To regenerate the original GLBs, run Blender 4.5 LTS in the background.
 blender --background --factory-startup --python-exit-code 1 --python scripts/author-assets.py
 ```
 
-The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies. It also exports the hit anchors from the walk, stumble, attack, and flinch clips. Rendering and ballistics share clip phases and blend weights. Grip, support, and muzzle sockets in the GLBs place the Quest hands and line up the visible barrel with its aim. To export only held hardware, append `-- pistol shotgun smg carbine flashlight`. Ground, bark, and rock use optimized WebP textures. See the credits for asset sources.
+The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies. To regenerate the enemy release assets alone, append `-- shambler shrieker brute` and then run `node scripts/export-enemy-rig.mjs`. The editable Blender files, named actions, and contact markers are in `art-source`. The second command samples the exported GLBs and binds the collision anchors to their joints. The game uses those joint transforms for both poses and hit detection. For held hardware, append `-- pistol shotgun smg carbine flashlight`. See the credits for asset sources.
+
+Run the shambler comparison on the dev server with `?debug&scenario=motion`. Append `&version=before` for the 1.0.3 model and baseline animation, `&view=side` for the close side view, or `&light=moon` to start with the flashlight off. Both versions walk around the same trunk and take scripted hits. The old GLB ships with the development server only.
+
+Run `npm run balance -- --difficulty=standard` and repeat with `--difficulty=hard` to compare the same seeds. The runner reports both crowd and ambush counts.
 
 ## Quest release check
 
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.
 2. Compare paths and nearby silhouettes with the flashlight off and on. Try firing and reloading while moving. Compare normal and reduced flashes near cover. Cross a road to an active flare and observe how the horde divides.
 3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
-4. Use `?perf=1` and Meta’s performance tools for a 15-minute stress run. Record active crowd size, frame timing and missed frames for the late run. The 48-enemy design target depends on hardware measurement.
+4. Use `?perf=1` and Meta’s performance tools for a 15-minute stress run with the flashlight on. The headset HUD shows FPS, 95th-percentile frame interval, missed frames, and active crowd versus its current cap. Record those together in the late run. The target is 72 Hz with 48 enemies on Quest 3.
 5. Stand still with the flashlight off. Have a second person confirm the approach direction of a zombie before calling it out, then turn your head and check that the sound stays with the zombie. Compare an approach in open ground with a zombie behind a wall. Check both the headset speakers and headphones if available.
 
 Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.

@@ -43,6 +43,8 @@ h1 {
 h1 span { color: #bdc9a9; }
 .lede { margin-top: 22px; color: #d0d2c3; font-size: clamp(15px, 2vw, 19px); line-height: 1.46; }
 .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 20px; }
+.difficulty { display: inline-flex; align-items: center; gap: 10px; margin-block: 14px 1px; color: #d0d2c3; font-size: 13px; }
+.difficulty select { background: #1a221e; color: #eae7d2; padding: 6px 10px; border: 1px solid #82907a; border-radius: 3px; font: inherit; }
 .hero .actions button { min-width: 130px; }
 .status { font: 11px/1.55 var(--mono); color: var(--muted); min-height: 17px; margin-top: 9px; }
 .menu-links { display: flex; flex-wrap: wrap; margin-top: 19px; gap: 6px; }

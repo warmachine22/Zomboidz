@@ -81,6 +81,8 @@ function polylineOffset(n) {
 export function createWorld(seed) {
   const chunks = new Map();
   const phase = random(seed + ':land')() * 7;
+  const density = (x, z) => clamp(.51 + .31*Math.sin(x*.037+z*.023+phase)
+    + .23*Math.sin(z*.061-x*.047-phase), .03, .98);
 
   const roadDistance = (x, z) => {
     const u = x - polylineOffset(z);
@@ -117,7 +119,7 @@ export function createWorld(seed) {
       area.loot.push({ id: key + ':' + id, x, z, kind, unlock });
     };
     const site = (type, x, z, lit = false) => {
-      sites.push({ x, z, r: type === 'house' ? 7 : 4 });
+      sites.push({ x, z, r: type === 'house' || type === 'camp' ? 7 : type === 'shed' ? 5.8 : 4 });
       if (type === 'house') {
         const y = height(x, z) - .17;
         box(x, z - 2.5, 6.5, 2.7, .38, y, 'houseBack');
@@ -130,6 +132,28 @@ export function createWorld(seed) {
           ray:{ x:0,y:-.98,z:.20 }, radius:5.6, angle:.83 });
         cache('inside', x + 1.05, z - 1.05, rng() > .55 ? 'smg' : 'armor2', 42);
         cache('porch', x - .7, z + 3.5, 'ammo', 16);
+      } else if (type === 'shed') {
+        const y = height(x,z)-.14;
+        box(x,z+1.7,3.7,2.25,.25,y,'shedWall');
+        box(x-1.76,z,.22,2.17,3.5,y,'shedWall');
+        box(x+1.76,z,.22,2.17,3.5,y,'shedWall');
+        box(x-1.38,z-1.7,.95,2.08,.20,y,'shedWall');
+        box(x+1.38,z-1.7,.95,2.08,.20,y,'shedWall');
+        box(x,z+.06,3.92,.13,3.8,y+2.225,'shedRoof');
+        if (lit) area.lights.push({type:'shelter',x:x-.5,y:y+2.1,z:z+.47,
+          ray:{x:0,y:-.98,z:-.2},radius:4.8,angle:.80});
+        cache('shed-supplies',x+.62,z+.85,hash(seed+key)%4===0?'battery':'ammo',30);
+      } else if (type === 'camp') {
+        const y = height(x,z);
+        area.props.push({x,y,z,kind:'firepit'});
+        for (const sign of [-1,1]) {
+          const tx=x+sign*2.8, tz=z-1.4+sign*.45, ty=height(tx,tz)-.04;
+          area.props.push({x:tx,y:ty,z:tz,kind:'campTent',turn:sign*.41});
+          box(tx,tz+.56,1.10,.27,.89,ty,'tentBody');
+        }
+        box(x+2.76,z+1.31,.94,1.29,.88,height(x+2.76,z+1.31),'campCrates');
+        box(x+1.65,z+1.75,.81,.63,.67,height(x+1.65,z+1.75),'campCrates');
+        if (hash(seed+'camp-cache'+key)%4 !== 0) cache('camp-kit',x+1.85,z+1.03,'ammo',18);
       } else if (type === 'wreck') {
         const y = height(x, z)-.16;
         box(x, z, 1.86, 1.48, 3.85, y, 'wreck');
@@ -153,14 +177,28 @@ export function createWorld(seed) {
     else if (cx === -1 && cz === 0) site('rocks', -11, 7);
     else if (rng() < .32) site(['house', 'wreck', 'rocks'][Math.floor(rng() * 3)],
       left + 10 + rng() * 28, top + 10 + rng() * 28, hash(seed+':lit:'+key) % 5 === 0);
+    const fieldSite = random(seed + ':field-site:' + key);
+    if (Math.abs(cx)+Math.abs(cz)>1 && fieldSite() < .29) {
+      for (let i=0; i<5; i++) {
+        const x=left+10+fieldSite()*28, z=top+10+fieldSite()*28;
+        if (roadDistance(x,z)<6 || sites.some(s=>distance(s,{x,z}) < s.r+8)) continue;
+        site(fieldSite() < .55 ? 'camp' : 'shed',x,z,fieldSite()<.18);
+        break;
+      }
+    }
 
-    for (let i = 0; i < 88; i++) {
+    for (let i = 0; i < 152; i++) {
       const x = left + 1.7 + rng() * (CHUNK - 3.4), z = top + 1.7 + rng() * (CHUNK - 3.4);
+      const thick = density(x,z);
+      const roll = rng(), elder = roll < .075 + thick*.075;
+      const r = elder ? .65+rng()*.37 : roll > .82 ? .11+rng()*.11 : .19+rng()*.37;
       if (roadDistance(x, z) < 2.8 || Math.hypot(x - START.x, z - START.z) < 8 ||
+          rng() > .41 + thick*.54 ||
           sites.some(s => Math.hypot(x - s.x, z - s.z) < s.r) ||
-          area.trees.some(t => Math.hypot(x - t.x, z - t.z) < 2.1)) continue;
-      const type = Math.floor(rng() * 4), r = .14 + rng() ** 2 * .42;
-      const tree = { x, z, y: height(x, z) - .12, r, height: 4.1 + r * 13 + rng() * 3,
+          area.trees.some(t => Math.hypot(x - t.x, z - t.z) < Math.max(1.84,r+t.r+1.10))) continue;
+      const type = Math.floor(rng() * 4), heightScale = elder ? 12.5+rng()*4.6 : 4.8+r*12+rng()*3.3;
+      const crown = (elder ? 3.56 : 1.62) + r*(1.4+thick*.7) + rng()*.74;
+      const tree = { x, z, y: height(x, z) - .12, r, height: heightScale, crown, thick,
         turn: rng() * Math.PI * 2, tint: rng(), type, kind: 'bark' };
       tree.normals = Array.from({ length: 9 }, (_, j) => {
         const angle = tree.turn + (j + .5) * Math.PI * 2 / 9;
@@ -211,6 +249,7 @@ export function createWorld(seed) {
 
   function blocks(x, z, radius = .26) {
     return around(x, z, radius + 3.5).some(area => area.colliders.some(o => {
+      if (o.kind === 'shedRoof') return false;
       if (o.r) return (x - o.x) ** 2 + (z - o.z) ** 2 < (o.r + radius) ** 2;
       const dx = Math.max(0, Math.abs(x - o.x) - o.rx), dz = Math.max(0, Math.abs(z - o.z) - o.rz);
       return dx * dx + dz * dz < radius * radius;
@@ -265,5 +304,5 @@ export function createWorld(seed) {
     return len <= .14 || !raycast(a, { x: dx / len, y: dy / len, z: dz / len }, len - .12, ground);
   }
 
-  return { seed, height, sample, roadDistance, chunk, around, blocks, move, raycast, clear };
+  return { seed, height, sample, density, roadDistance, chunk, around, blocks, move, raycast, clear };
 }

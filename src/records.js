@@ -1,10 +1,11 @@
 import { BUILD } from './simulation.js';
 import { gunAngle } from './held-tools.js';
+import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
 const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false,
-  laserDot: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0 };
+  laserDot: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0, difficulty: 'standard' };
 let fallbackScores = [];
 
 function read(key, otherwise) {
@@ -33,6 +34,7 @@ export function loadSettings() {
   settings.initials = initials(settings.initials);
   settings.gunPitch = gunAngle(settings.gunPitch);
   settings.gunYaw = gunAngle(settings.gunYaw);
+  settings.difficulty = difficultyKey(settings.difficulty);
   return settings;
 }
 
@@ -49,13 +51,17 @@ export function rapidSeed() {
   return Array.from(crypto.getRandomValues(new Uint32Array(2)), n => n.toString(36)).join('-');
 }
 
-export function listScores() {
+function allScores() {
   const stored = read(scoresKey, []);
   const scores = new Map((Array.isArray(stored) ? stored : []).filter(row =>
     typeof row?.id === 'string' && Number.isFinite(row.time) && Number.isFinite(row.kills) &&
     Number.isFinite(row.headshots) && typeof row.initials === 'string').map(row => [row.id, row]));
   for (const row of fallbackScores) scores.set(row.id, row);
-  return [...scores.values()].sort(compare).slice(0, 10);
+  return [...scores.values()].map(row => ({...row, difficulty:difficultyKey(row.difficulty)}));
+}
+
+export function listScores(difficulty = 'standard') {
+  return allScores().filter(row => row.difficulty === difficultyKey(difficulty)).sort(compare).slice(0, 10);
 }
 
 function compare(a, b) {
@@ -65,10 +71,11 @@ function compare(a, b) {
 export function recordRun(run, id, label) {
   const entry = {
     id, initials: initials(label), time: Math.floor(run.time * 100) / 100,
-    kills: run.player.kills, headshots: run.player.headshots, seed: run.seed, version: BUILD,
+    kills: run.player.kills, headshots: run.player.headshots, seed: run.seed, version: BUILD, difficulty:difficultyKey(run.difficulty),
   };
-  const records = [...listScores().filter(row => row.id !== id), entry].sort(compare).slice(0, 10);
+  const scores = [...allScores().filter(row => row.id !== id), entry].sort(compare);
+  const records = Object.keys(DIFFICULTIES).flatMap(level => scores.filter(row => row.difficulty === level).slice(0,10));
   fallbackScores = records;
   const saved = write(scoresKey, records);
-  return { saved, place: records.findIndex(row => row.id === id) + 1 };
+  return { saved, place: records.filter(row => row.difficulty === entry.difficulty).findIndex(row => row.id === id) + 1 };
 }

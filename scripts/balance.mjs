@@ -8,6 +8,8 @@ const rules = {
 };
 const kind = process.argv.find(a => a.startsWith('--strategy='))?.split('=')[1];
 if (kind && !(kind in rules)) throw Error('Choose stationary, cautious, or aggressive.');
+const difficulty = process.argv.find(a => a.startsWith('--difficulty='))?.split('=')[1] ?? 'standard';
+if (!['standard','hard'].includes(difficulty)) throw Error('Choose standard or hard.');
 const maxTime = Number(process.argv.find(a => a.startsWith('--seconds='))?.split('=')[1] ?? 540);
 if (!Number.isFinite(maxTime) || maxTime <= 0 || maxTime > 3600) throw Error('Choose 1–3600 seconds.');
 const seeds = process.argv.find(a => a.startsWith('--seeds='))?.split('=')[1].split(',') ??
@@ -31,7 +33,7 @@ function navigate(world, p, bearing) {
 }
 
 function play(seed, style) {
-  const run = createRun(seed), p = run.player, r = rules[style];
+  const run = createRun(seed,{difficulty}), p = run.player, r = rules[style];
   const rng = random(seed + style + ':policy');
   let scan = -.28, audio = [], knownLoot = null, seenEnemies = [], threat = null;
   let orbit = 0, nextDecision = 0, planned = {};
@@ -97,10 +99,11 @@ function play(seed, style) {
     planned = { yaw: planned.yaw, moveX: planned.moveX, moveZ: planned.moveZ, walk: planned.walk };
   }
   return {
-    strategy: style, seed, seconds: Math.round(run.time), kills: p.kills, headshots: p.headshots,
+    strategy: style, difficulty, seed, seconds: Math.round(run.time), kills: p.kills, headshots: p.headshots,
     roundsFound: run.metrics.roundsPicked, ranDry: sawEmpty, swaps: Object.keys(GUNS).reduce((n,k) => n + (run.metrics.pickups[k] || 0), 0),
     upgrades: run.metrics.upgrades, bestCrowd: run.metrics.maxCrowd, pursuing: run.metrics.peakPursuit,
-    diverted: run.metrics.peakDiversion, damage: Object.entries(run.metrics.damage).map(([k,v]) => k + ':' + v).join(','),
+    diverted: run.metrics.peakDiversion, ambushes: run.metrics.ambushes.emerged,
+    damage: Object.entries(run.metrics.damage).map(([k,v]) => k + ':' + v).join(','),
     fatal: run.death?.kind || 'survived',
   };
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, flarePower, GUNS, LOOT, resolvedBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
+import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, LOOT, resolvedBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
@@ -7,6 +7,7 @@ import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
 import { createGunHandling, gunAngle, heldPose, mountedAim, toolLayouts } from './held-tools.js';
+import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -39,7 +40,8 @@ const canvas = renderer.domElement;
 canvas.tabIndex = -1;
 const xr = createXR(renderer, scene, rig);
 
-const art = await loadArt();
+const motionReplay = debugEnabled && qs.get('scenario') === 'motion';
+const art = await loadArt(motionReplay && qs.get('version') === 'before');
 const layouts = toolLayouts(art);
 const presentation = createPresentation(scene, art, layouts);
 const handling = createGunHandling();
@@ -59,6 +61,7 @@ let joystick = { x: 0, y: 0 }, desktopFire = false, touchFire = false, dragDista
 let lastTime, accumulator = 0, manualClock = false, manualRemainder = 0, hudAt = -1, debugAt = -1;
 let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '', useMouseDrag = false;
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
+const perfTimes = [];
 let debugVisible = false;
 let aimHit = null;
 let calibrating = false;
@@ -109,11 +112,12 @@ function pointerLock() {
   } catch { useMouseDrag = true; }
 }
 
-function start(seed = rapidSeed()) {
+function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
-  const encounter = ['roadside', 'night', 'shelter'].includes(scenario);
-  run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48, populate: !encounter });
+  const encounter = ['roadside', 'night', 'shelter', 'motion'].includes(scenario);
+  run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48,
+    populate: !encounter, difficulty });
   yaw = pitch = roomX = roomZ = 0;
   if (scenario === 'roadside') {
     addEnemy(run, 'shambler', -.55, 13.6);
@@ -128,18 +132,31 @@ function start(seed = rapidSeed()) {
     setLoot(run, 'carbine', 2.55, 41).born = -26;
   } else if (scenario === 'shelter') {
     Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: false });
+  } else if (motionReplay) {
+    const area = run.world.chunk(0,0);
+    const tree = { x:1.05, z:14.7, y:run.world.height(1.05,14.7)-.12,
+      r:.72, height:10.5, turn:0, tint:.38, type:1, kind:'bark',
+      normals:Array.from({length:9}, (_, i) => ({x:Math.sin((i+.5)*Math.PI*2/9),z:Math.cos((i+.5)*Math.PI*2/9)})) };
+    area.trees.push(tree);
+    area.colliders.push(tree);
+    const subject = addEnemy(run,'shambler', 1.15, 12.7);
+    subject.approach = { x:0, z:19.17, at:0, until:30 };
+    run.player.protection = 30;
+    if (qs.get('light') === 'moon') run.player.flashlight = false;
   }
   runId = rapidSeed();
   notice = '';
   hudAt = debugAt = -1;
   quality = 3;
   perfElapsed = perfFrames = stableWindows = missed = maxFrame = 0;
+  perfTimes.length = 0;
+  perfSample = null;
   presentation.setQuality(quality);
   audio.reset();
   void audio.unlock();
   setPhase('playing');
   if (!xr.active) pointerLock();
-  setNotice('Follow the road for supplies', 5);
+  setNotice(motionReplay ? (art.legacyShambler ? 'Original shambler' : 'Rebuilt shambler') : 'Follow the road for supplies', 5);
   updateHUD(true);
 }
 
@@ -167,10 +184,11 @@ function showHome() {
 }
 
 function resultScore() {
-  if (run.status !== 'dead') return;
+  if (run.status !== 'dead' || motionReplay) return;
   const outcome = recordRun(run, runId, settings.initials);
   resultNote = outcome.saved ? outcome.place ? 'Local rank ' + outcome.place + ' · Seed ' + run.seed : 'Seed ' + run.seed
     : 'Browser storage is unavailable. Seed ' + run.seed;
+  resultNote = DIFFICULTIES[run.difficulty].name + ' · ' + resultNote;
   text('result-storage', resultNote);
 }
 
@@ -192,8 +210,14 @@ function results() {
 
 function showPanel(id) {
   for (const panel of ['home', 'controls', 'scores', 'settings']) $(panel).hidden = panel !== id;
-  if (id !== 'scores') return;
-  const target = $('score-table'), items = listScores();
+  if (id === 'scores') {
+    $('score-difficulty').value = settings.difficulty;
+    showScores();
+  }
+}
+
+function showScores() {
+  const target = $('score-table'), items = listScores($('score-difficulty').value);
   target.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('p');
@@ -214,6 +238,16 @@ function showPanel(id) {
   }
   target.append(table);
 }
+
+function setDifficulty(level) {
+  settings.difficulty = difficultyKey(level);
+  $('difficulty').value = settings.difficulty;
+  panelKey = '';
+  saveSettings(settings);
+}
+$('difficulty').value = settings.difficulty;
+$('difficulty').addEventListener('change', event => setDifficulty(event.target.value));
+$('score-difficulty').addEventListener('change', showScores);
 
 for (const btn of document.querySelectorAll('[data-panel]')) btn.addEventListener('click', () => showPanel(btn.dataset.panel));
 for (const btn of document.querySelectorAll('[data-back]')) btn.addEventListener('click', () => showPanel('home'));
@@ -262,7 +296,7 @@ $('resume').addEventListener('click', resume);
 $('quit').addEventListener('click', showHome);
 $('result-home').addEventListener('click', showHome);
 $('restart').addEventListener('click', () => start());
-$('rematch').addEventListener('click', () => start(run.seed));
+$('rematch').addEventListener('click', () => start(run.seed, run.difficulty));
 $('vr').addEventListener('click', async () => {
   try {
     const session = xr.enter(state => { if (state !== 'visible') pause('Headset focus was interrupted.'); });
@@ -387,6 +421,13 @@ function desktopView() {
   rig.position.set(p.x, p.y, p.z);
   camera.position.set(0, 1.63, 0);
   camera.rotation.set(pitch, -yaw, 0);
+  if (motionReplay && qs.get('view') === 'side' && phase === 'playing') {
+    const subject = run.enemies[0] || run.corpses[0];
+    if (subject) {
+      camera.position.set(subject.x - p.x - 3.45, subject.y - p.y + 1.26, subject.z - p.z + .1);
+      camera.lookAt(subject.x, subject.y + .94, subject.z);
+    }
+  }
   camera.updateWorldMatrix(true, false);
   const view = { position: camera.getWorldPosition(new THREE.Vector3()), quaternion: camera.getWorldQuaternion(new THREE.Quaternion()) };
   const sign = settings.leftHanded ? -1 : 1;
@@ -470,7 +511,8 @@ function xrUI(sample, trackedView) {
     xr.hidePanel();
     const target = run.offer && 'GRIP  ·  ' + LOOT[run.offer.kind].name;
     const frameReport = showPerformance && perfSample
-      ? perfSample.fps + ' FPS · ' + Math.round(perfSample.missed * 100) + '% missed · ' + perfSample.active + ' active'
+      ? perfSample.fps + ' FPS · P95 ' + perfSample.p95Ms + ' ms · ' + Math.round(perfSample.missed * 100)
+        + '% missed · ' + perfSample.active + '/' + perfSample.limit
       : '';
     xr.drawPrompt(target || (run.time < noticeUntil ? notice : frameReport), trackedView.view);
     return;
@@ -482,8 +524,9 @@ function xrUI(sample, trackedView) {
     const cards = {
       menu: {
         title: 'Enter the forest',
-        lines: ['Weapon trigger fires. Primary button reloads.', 'Light trigger toggles light. Hold light grip to brace.',
-          'Weapon grip equips loot. Left stick moves.', 'Right stick snap turns. Check ammo on your wrist.'],
+        lines: [DIFFICULTIES[settings.difficulty].name + ' difficulty · Light primary toggles mode.',
+          'Weapon trigger fires. Primary button reloads.', 'Light trigger toggles light. Hold light grip to brace.',
+          'Weapon grip equips loot. Left stick moves.'],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
         second: 'WEAPON PRIMARY  ·  GUN ANGLE',
       },
@@ -510,9 +553,13 @@ function measure(wall, stereo) {
   const hz = xr.active?.frameRate || 72, target = 1 / hz;
   if (wall > target * 1.5) missed += Math.max(1, Math.round(wall / target) - 1);
   maxFrame = Math.max(wall, maxFrame);
+  perfTimes.push(wall);
   if (perfElapsed < 5) return;
   const fps = perfFrames / perfElapsed, loss = missed / (missed + perfFrames);
-  perfSample = { fps: Number(fps.toFixed(1)), missed: Number(loss.toFixed(3)), maxMs: Math.round(maxFrame * 1000), active: run.enemies.length, limit: run.crowdLimit };
+  perfTimes.sort((a,b)=>a-b);
+  const p95Ms = Number((perfTimes[Math.ceil(perfTimes.length*.95)-1]*1000).toFixed(1));
+  perfSample = { fps: Number(fps.toFixed(1)), missed: Number(loss.toFixed(3)), p95Ms,
+    maxMs: Math.round(maxFrame * 1000), active: run.enemies.length, limit: run.crowdLimit };
   if (loss > .075 || fps < hz * .91) {
     stableWindows = 0;
     if (quality > 1) presentation.setQuality(--quality);
@@ -524,6 +571,7 @@ function measure(wall, stereo) {
     }
   } else stableWindows = 0;
   perfElapsed = perfFrames = missed = maxFrame = 0;
+  perfTimes.length = 0;
 }
 
 function simulate(t, sample, stereo) {
@@ -538,6 +586,15 @@ function simulate(t, sample, stereo) {
       roomX, roomZ, aim: aimed.aim, lamp: aimed.beam,
       weaponUnavailable: stereo && !aimed.aim, lampUnavailable: stereo && !aimed.beam,
     };
+    if (motionReplay && run.enemies[0] && !stereo) {
+      const shots = run.metrics.shots;
+      if (shots < 2 && run.time >= (shots === 0 ? 8.2 : 10)) {
+        const at = enemyPose(run.enemies[0])[shots === 0 ? 'torso' : 'head'];
+        const origin = { x:run.player.x, y:run.player.y+1.34, z:run.player.z };
+        input.aim = { origin, ray:{x:at.x-origin.x,y:at.y-origin.y,z:at.z-origin.z} };
+        input.fire = true;
+      }
+    }
     roomX = roomZ = 0;
     for (const key of Object.keys(queued)) delete queued[key];
     const weapon = run.player.weapon;
@@ -563,12 +620,13 @@ function frame(now, xrFrame) {
           else if (sample.interact) updateGunSettings(0, 0);
           else if (sample.anglePitch || sample.angleYaw)
             updateGunSettings(settings.gunPitch + sample.anglePitch, settings.gunYaw + sample.angleYaw);
-        } else if (sample.reload) { calibrating = true; panelKey = ''; }
+        } else if (phase === 'menu' && sample.toggleBeam) setDifficulty(settings.difficulty === 'hard' ? 'standard' : 'hard');
+        else if (sample.reload) { calibrating = true; panelKey = ''; }
         else if (phase === 'menu' && sample.fire && sample.tracked) start();
         else if (phase === 'paused' && sample.fire && sample.weaponTracked) resume();
       } else if (phase === 'results' && performance.now() - deathAt > 950) {
         if (sample.fire) start();
-        else if (sample.interact) start(run.seed);
+        else if (sample.interact) start(run.seed, run.difficulty);
       } else if (phase === 'playing') {
         if (sample.pause) pause();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
@@ -589,7 +647,8 @@ function frame(now, xrFrame) {
   aimHit = active && !run.player.reload && settings.laserDot && view.aim ? traceAim(run, view.aim) : null;
   const beam = active && run.player.flashlight ? resolvedBeam(run.world, view.beam, view.view?.position) : null;
   presentation.update(run, dt, settings, view.tracking, {
-    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, aimHit, beam, viewpoint: view.view?.position,
+    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, aimHit, beam,
+    aim: active ? view.aim : null, viewpoint: view.view?.position,
   });
   if (view.view) {
     audio.listener(view.view.position, direction0.clone().applyQuaternion(view.view.quaternion),
@@ -619,7 +678,7 @@ setPhase('menu');
 
 if (debugEnabled) {
   window.render_game_to_text = () => JSON.stringify({
-    phase, seed: run.seed, elapsed: Number(run.time.toFixed(2)), player: run.player,
+    phase, seed: run.seed, difficulty:run.difficulty, elapsed: Number(run.time.toFixed(2)), player: run.player,
     enemies: run.enemies.map(({ id, kind, x, z, reason, route }) => ({ id, kind, x, z, reason, route })),
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.kind === 'ammo' ? 0 : flarePower(run.time - l.born) })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,

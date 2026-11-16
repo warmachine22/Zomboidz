@@ -1,9 +1,11 @@
 import { angleDelta, clamp, createWorld, direction, distance, random, START } from './world.js';
-import { animatedAnchors, HIT_SEGMENTS, hitRadii } from './enemy-motion.js';
-import { OPENING_SECONDS, replenishHorde, seedHorde } from './horde.js';
+import { animatedAnchors, attackContact, attackDirection, enemyMotion, HIT_SEGMENTS, hitRadii, strideLength, updateEnemyFooting } from './enemy-motion.js';
+import { replenishHorde, seedHorde } from './horde.js';
+import { DIFFICULTIES, difficultyKey } from './difficulty.js';
+import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.3';
+export const BUILD = '1.0.4';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -45,10 +47,11 @@ export function flarePower(age) {
   return fade * fade * (3 - 2 * fade);
 }
 
-export function hordeTarget(time) {
-  return Math.min(48, 10 + Math.floor(time < 300
-    ? Math.max(0, time - OPENING_SECONDS) * 22 / (300 - OPENING_SECONDS)
-    : 22 + (time - 300) * 16 / 240));
+export function hordeTarget(time, difficulty = 'standard') {
+  const { opening, middle, maximum } = DIFFICULTIES[difficultyKey(difficulty)];
+  return Math.min(48, 10 + Math.floor(time < middle
+    ? Math.max(0, time - opening) * 22 / (middle - opening)
+    : 22 + (time - middle) * 16 / (maximum - middle)));
 }
 
 export function beamSettings(player) {
@@ -169,7 +172,8 @@ function emit(run, type, data = {}) {
   run.events.push({ type, ...data });
 }
 
-export function createRun(seed, { crowdLimit = 48, populate = true } = {}) {
+export function createRun(seed, { crowdLimit = 48, populate = true, difficulty = 'standard' } = {}) {
+  difficulty = difficultyKey(difficulty);
   const world = createWorld(seed);
   const run = {
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit,
@@ -185,7 +189,14 @@ export function createRun(seed, { crowdLimit = 48, populate = true } = {}) {
       spawns: [0,0,0,0], aheadSpawns: 0 },
   };
   updateLandmarks(run);
-  if (populate) seedHorde(run, Math.min(crowdLimit, hordeTarget(0)), addEnemy);
+  run.difficulty = difficulty;
+  run.rules = DIFFICULTIES[difficulty];
+  // A separate starting offset keeps the layout and ordinary opening spawns seed-stable.
+  const [firstAmbush, lastAmbush] = run.rules.ambush;
+  run.ambushRng = random(seed+':ambush');
+  run.nextAmbush = run.rules.opening+firstAmbush+run.ambushRng()*(lastAmbush-firstAmbush);
+  run.metrics.ambushes = {reserved:0,emerged:0,hits:0};
+  if (populate) seedHorde(run, Math.min(crowdLimit, hordeTarget(0,difficulty)), addEnemy);
   run.events.length = 0;
   return run;
 }
@@ -202,6 +213,7 @@ export function addEnemy(run, kind, x, z) {
     roam: run.rng() * Math.PI * 2, nextRoam: run.time + 3, windup: 0, recover: 0,
     slow: 0, stun: 0, burst: 0, nextBurst: run.time + 1, turnSide: index % 2 ? 1 : -1, stuck: 0, stride: 0,
     stumble: 0, stumbleDuration: 0, nextStumble: run.time + 2 + index % 7,
+    moveSpeed: 0, poseTime: run.time, hitAge: Infinity, startAge: Infinity, turnRate: 0,
   };
   run.enemies.push(enemy);
   return enemy;
@@ -260,7 +272,8 @@ function eliminate(run, e, headshot) {
   e.dead = true;
   p.kills++;
   if (headshot) p.headshots++;
-  run.corpses.push({ ...e, headshot, diedAt: run.time });
+  run.corpses.push({ ...e, headshot, diedAt: run.time, fallAge: 0,
+    fallFrom: enemyMotion(e, ENEMIES[e.kind].windup) });
   if (run.corpses.length > 21) run.corpses.shift();
   emit(run, 'kill', { ...enemyPose(e).torso, kind: e.kind, headshot });
   run.dryKills++;
@@ -321,6 +334,13 @@ export function shoot(run, aim) {
   for (const [enemy, hit] of hits) {
     enemy.hp -= hit.total;
     enemy.stun = hit.total > 1.1 ? .15 : .07;
+    enemy.hitFrom = attackDirection(enemy, center);
+    enemy.hitAge = 0;
+    if (enemy.attackAge !== undefined && enemy.windup > 0 && (hit.head || hit.total > 1.1)) {
+      enemy.attackAge = undefined;
+      enemy.windup = 0;
+      enemy.recover = .40;
+    }
     if (hit.leg) enemy.slow = 1.3;
     emit(run, 'impact', { ...hit.point, surface: 'body' });
     if ((hit.firstHead && enemy.kind !== 'brute') || enemy.hp <= 0) eliminate(run, enemy, hit.head);
@@ -473,9 +493,10 @@ function hurt(run, enemy) {
   emit(run, 'death', { ...run.death });
 }
 
-function enemyVoice(run, enemy, type) {
+function enemyVoice(run, enemy, type, contactPoint) {
   const height = type === 'swing' ? 1.1 : ENEMIES[enemy.kind].height * .84;
-  emit(run, type, { id: enemy.id, x: enemy.x, y: enemy.y + height, z: enemy.z, kind: enemy.kind });
+  const position = contactPoint || { x:enemy.x,y:enemy.y+height,z:enemy.z };
+  emit(run, type, { id:enemy.id, ...position, kind:enemy.kind });
 }
 
 function voiceCadence(run, enemy, gap) {
@@ -500,28 +521,54 @@ function voiceCadence(run, enemy, gap) {
 function attack(run, enemy, gap, dt) {
   const p = run.player, shape = ENEMIES[enemy.kind];
   const toward = Math.atan2(p.x - enemy.x, enemy.z - p.z);
-  const canReach = range => gap < range && run.world.clear(eye(run.world, enemy, 1.02), eye(run.world, p, 1.02));
+  const torso = { x:p.x, y:p.y + Math.min(1.17, p.eyeHeight*.73), z:p.z };
+  const canReach = range => distance(enemy,p) < range && run.world.clear(eye(run.world, enemy, 1.02), torso);
   enemy.recover = Math.max(0, enemy.recover - dt);
-  if (enemy.windup > 0) {
-    enemy.yaw += clamp(angleDelta(toward, enemy.yaw), -dt * 3.3, dt * 3.3);
-    if (enemy.windup <= dt) {
-      enemy.windup = 0;
-      enemy.recover = enemy.kind === 'brute' ? 1.13 : .81;
-      if (canReach(shape.reach) && Math.abs(angleDelta(toward, enemy.yaw)) < .58) hurt(run, enemy);
-      enemyVoice(run, enemy, 'swing');
-    } else {
-      const reach = enemy.kind === 'shrieker' ? 1.62 : enemy.kind === 'brute' ? .72 : 1.0;
-      if (gap > .76 && enemy.windup < shape.windup*.62 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
-        run.world.move(enemy, Math.sin(enemy.yaw)*reach*dt,-Math.cos(enemy.yaw)*reach*dt,shape.width*.83);
+  if (enemy.attackAge !== undefined) {
+    const age = enemy.attackAge, windup = enemy.attackWindup;
+    const contact = attackContact(enemy.kind);
+    if (age < windup) {
+      enemy.yaw += clamp(angleDelta(toward, enemy.yaw), -dt * 2.8, dt * 2.8);
+      const power = enemy.kind === 'shrieker' ? 1.64 : enemy.kind === 'brute' ? .76 : 1.48;
+      if (age > windup*.58 && gap > .74 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
+        run.world.move(enemy, Math.sin(enemy.yaw)*power*dt,-Math.cos(enemy.yaw)*power*dt,shape.width*.83);
         enemy.y = run.world.height(enemy.x,enemy.z);
       }
-      enemy.windup -= dt;
+    }
+    enemy.attackAge = age + dt;
+    enemy.windup = Math.max(0, windup - enemy.attackAge);
+    if (age < windup && enemy.attackAge + 1e-9 >= windup) {
+      enemy.attackAge = windup;
+      enemy.windup = 0;
+      const hands = animatedAnchors(enemy, shape.windup);
+      const right = hands[12], left = hands[6];
+      const reaches = (elbow, hand) => {
+        const x=hand.x-elbow.x, z=hand.z-elbow.z;
+        const t=clamp(((torso.x-elbow.x)*x+(torso.z-elbow.z)*z)/(x*x+z*z || 1),0,1);
+        const arm={x:elbow.x+t*x,z:elbow.z+t*z,y:elbow.y+t*(hand.y-elbow.y)};
+        const body={...torso,y:clamp(arm.y,p.y+.69,torso.y)};
+        return Math.hypot(arm.x-body.x,arm.y-body.y,arm.z-body.z)<.50 && run.world.clear(arm,body);
+      };
+      if (canReach(shape.reach+.48) && (reaches(hands[11],right) || reaches(hands[5],left))) {
+        if (enemy.attackClip === 'Ambush' && run.player.protection <= 0) run.metrics.ambushes.hits++;
+        hurt(run, enemy);
+      }
+      enemyVoice(run, enemy, 'swing', distance(right,p)<distance(left,p)?right:left);
+    }
+    if (enemy.attackAge >= windup / contact) {
+      enemy.attackAge = undefined;
+      enemy.recover = enemy.kind === 'brute' ? .65 : .28;
     }
     return true;
   }
   const triggerReach = shape.reach + (enemy.kind === 'shrieker' ? .54 : .36);
   if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
-    enemy.windup = shape.windup;
+    enemy.attackClip = enemy.ambush?.stage === 'emerging' ? 'Ambush' : 'Attack';
+    enemy.attackWindup = enemy.attackClip === 'Ambush' ? Math.max(.46, shape.windup) : shape.windup;
+    enemy.attackAge = 0;
+    enemy.windup = enemy.attackWindup;
+    enemy.moveSpeed = 0;
+    enemy.footing = enemy.plantLocks = null;
     run.nextAttack = run.time + .33;
     enemyVoice(run, enemy, 'windup');
     enemy.lastVoice = run.time;
@@ -543,15 +590,23 @@ function navigate(run, e, tx, tz, dt) {
     }
   }
   const targetAngle = Math.atan2(vx, -vz), look = e.kind === 'brute' ? 2.7 : 4.5;
-  e.yaw += clamp(angleDelta(targetAngle, e.yaw), -dt * look, dt * look);
-  const isBurst = e.burst > time;
+  const turnDelta = clamp(angleDelta(targetAngle, e.yaw), -dt * look, dt * look);
+  e.yaw += turnDelta;
+  e.turnRate = turnDelta / dt;
+  const isBurst = e.burst > time && time >= e.burstStart;
   const phase = e.gait;
   const stepPace = 1 + (e.kind === 'brute' ? .14 : .11) * Math.sin(2*phase) +
     (e.kind === 'shambler' ? .14 : .06) * Math.sin(phase);
   const progress = e.stumble > 0 ? 1 - e.stumble/e.stumbleDuration : 0;
   const stumblePace = progress > 0 ? 1 - .43 * Math.sin(Math.PI*progress) + .16 * Math.sin(2*Math.PI*progress) : 1;
-  const speed = (isBurst ? 3.48 : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
+  const speedTarget = (isBurst ? 3.48 : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
+  const previous = e.moveSpeed;
+  const targetSpeed = e.burstStart > time ? .18 : e.brakeUntil > time ? speedTarget*.44
+    : e.ambush?.stage === 'emerging' ? Math.max(1.75,speedTarget*1.62)
+    : e.ambush?.stage === 'seeking' ? Math.max(1.25,speedTarget) : speedTarget;
+  const speed = e.moveSpeed += clamp(targetSpeed - e.moveSpeed, -dt * 5.4, dt * (e.kind === 'brute' ? 2.2 : 4.6));
+  if (previous < .13 && speed >= .13) e.startAge = 0;
   const oldX = e.x, oldZ = e.z, radius = cfg.width * .83;
   for (const turn of [0, .59, -.59, 1.15, -1.15, 1.72, -1.72, 2.22]) {
     const vector = direction(e.yaw + turn * e.turnSide);
@@ -570,12 +625,14 @@ function navigate(run, e, tx, tz, dt) {
     e.nextStumble = time + 3.7 + run.rng()*6.5;
   }
   e.stride = moved / dt;
-  e.gait += moved * (e.kind === 'brute' ? 6.05 : e.kind === 'shrieker' ? 8.95 : 7.7);
+  e.gait += moved * Math.PI * 2 / (isBurst ? 1.85 : strideLength(e.kind));
   e.y = world.height(e.x, e.z);
+  updateEnemyFooting(world,e,cfg.windup,distance(run.player,e));
 }
 
 function updateEnemies(run, dt) {
   const { player: p, world, time } = run;
+  reserveAmbush(run);
   if (time >= run.nextSwarmTick) {
     flareAssignments(run);
     run.nextSwarmTick = time + .26;
@@ -594,13 +651,37 @@ function updateEnemies(run, dt) {
     e.stun = Math.max(0, e.stun - dt);
     e.slow = Math.max(0, e.slow - dt);
     e.stumble = Math.max(0, e.stumble - dt);
+    e.poseTime = time;
+    e.startAge += dt;
+    e.hitAge += dt;
+    e.turnRate = 0;
     e.stride = 0;
+    if (e.ambush) {
+      const beam = p.flashlight && run.beam && beamSettings(p);
+      const revealed = beam && inBeam(world,run.beam,eye(world,e,1.28),beam.range,beam.angle);
+      const maneuver = ambushDecision(run,e,gap,revealed);
+      if (maneuver) {
+        e.reason = maneuver.reason;
+        e.route = maneuver.destination && {x:maneuver.destination.x,z:maneuver.destination.z};
+        const exposed = e.ambush.stage==='emerging' && world.clear(eye(world,e,1.24),eye(world,p,1.15));
+        if (exposed && attack(run,e,gap,dt)) {
+          if (run.status==='dead') break;
+          continue;
+        }
+        voiceCadence(run,e,gap);
+        if (maneuver.destination) navigate(run,e,maneuver.destination.x,maneuver.destination.z,dt);
+        else { e.moveSpeed=0; e.footing=e.plantLocks=null; }
+        continue;
+      }
+    }
     if (attack(run, e, gap, dt)) {
       if (run.status === 'dead') break;
       continue;
     }
     if (e.kind === 'shrieker' && e.target?.chase && gap > 3.4 && gap < 13 && time > e.nextBurst && e.stun <= 0) {
-      e.burst = time + .94;
+      e.burstStart = time + .30;
+      e.burst = time + 1.36;
+      e.brakeUntil = e.burst + .46;
       e.nextBurst = time + 4.2 + run.rng() * 1.5;
       enemyVoice(run, e, 'shriek');
       e.lastVoice = time;
@@ -621,7 +702,11 @@ function updateEnemies(run, dt) {
       }
       e.route = { x: tx, z: tz };
       if (approach > (t.chase ? .80 : 1.25)) navigate(run, e, tx, tz, dt);
-      else if (!t.chase) e.yaw += dt * .72 * e.turnSide;
+      else {
+        e.footing=e.plantLocks=null;
+        e.moveSpeed=0;
+        if (!t.chase) e.yaw += dt * .72 * e.turnSide;
+      }
     }
   }
   run.enemies = run.enemies.filter(e => !e.dead);
@@ -730,9 +815,9 @@ export function stepRun(run, input = {}, dt = STEP) {
     run.nextLoot = run.time + 48 + run.rng() * 14;
   }
   if (run.populate && run.time >= run.nextSpawn) {
-    const cap = Math.min(run.crowdLimit, hordeTarget(run.time));
+    const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
     replenishHorde(run, cap, run.beam && { ...run.beam, ...beamSettings(p) }, addEnemy);
-    run.nextSpawn = run.time + (run.time < OPENING_SECONDS ? 2.7 : Math.max(.60, 1.42 - run.time / 580));
+    run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
   }
   updateEnemies(run, dt);
   run.noises = run.noises.filter(n => run.time < n.born + n.span);

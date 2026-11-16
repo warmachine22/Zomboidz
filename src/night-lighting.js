@@ -24,8 +24,8 @@ export function canopyMask(world, cx, cz, pixels) {
   }
   for (let z = cz - 2; z <= cz + 2; z++) for (let x = cx - 2; x <= cx + 2; x++) {
     for (const tree of world.chunk(x, z).trees) {
-      const radius = 2.5 + tree.r * 2;
-      imprint(tree.x, tree.z, radius, radius, 0, .89);
+      const radius = tree.crown ?? 2.5 + tree.r * 2;
+      imprint(tree.x, tree.z, radius, radius, 0, .87 + (tree.thick ?? .2)*.10);
       const projected = tree.height * .47 / moonDirection.y;
       imprint(tree.x - projected * moonDirection.x, tree.z - projected * moonDirection.z,
         radius * 1.21, radius * 1.31, 1, .94);

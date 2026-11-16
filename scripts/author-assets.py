@@ -6,11 +6,13 @@ import sys
 from pathlib import Path
 import bpy
 from mathutils import Vector
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from zombie_motion import apply_pose, clips, CONTACT_FRAME, LEAD
 
 OUT = Path(__file__).resolve().parent.parent / "assets" / "art"
 OUT.mkdir(parents=True, exist_ok=True)
 RNG = random.Random(1308)
-HIT_ANCHORS = {}
+RIG_DATA = {}
 
 
 def reset():
@@ -398,20 +400,64 @@ def zombie(kind):
         pos = (location[0] * width, location[1] * s, location[2] * s)
         scales = (size[0] * width, size[1] * s, size[2] * s)
         obj = organic(name, pos, scales, mat, .08, shape)
-        weights[obj] = joint
+        weights[obj] = [joint]
         return obj
 
-    part("Lower coat", (0,.02,.93), (.226,.15,.18), cloth, "Hips")
-    part("Ribcage", (0,-.029,1.201), (.257,.158,.288), cloth, "Spine")
+    def connected(name, rings, mat, joints):
+        vertices = []
+        sides = 10
+        for (x,y,z,rx,ry,blend) in rings:
+            for i in range(sides):
+                a = math.tau*i/sides
+                vertices.append(((x+rx*math.cos(a))*width,(y+ry*math.sin(a))*s,z*s))
+        faces = [tuple(reversed(range(sides)))]
+        for row in range(len(rings)-1):
+            for i in range(sides):
+                j, k = row*sides+i, row*sides+(i+1)%sides
+                faces.append((j,k,k+sides,j+sides))
+        faces.append(tuple(range(len(vertices)-sides, len(vertices))))
+        if rings[0][2] > rings[-1][2]:
+            faces = [tuple(reversed(face)) for face in faces]
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata(vertices, [], faces)
+        mesh.update()
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+        obj.data.materials.append(mat)
+        for face in mesh.polygons:
+            face.use_smooth = True
+        weights[obj] = list(joints)
+        groups = [obj.vertex_groups.new(name=joint) for joint in joints]
+        for i, ring in enumerate(rings):
+            ids = list(range(i*sides, (i+1)*sides))
+            blend = ring[-1]
+            if blend < 0:
+                groups[0].add(ids, -blend, "REPLACE")
+                groups[1].add(ids, 1+blend, "REPLACE")
+            else:
+                groups[-2].add(ids, 1-blend, "REPLACE")
+                groups[-1].add(ids, blend, "REPLACE")
+        return obj
+
+    connected("Coat body", [(0,.026,.79,.188,.118,0),(0,.032,.89,.224,.15,0),
+               (0,.015,1.00,.193,.132,.19),(0,-.003,1.08,.183,.135,.61),
+               (0,-.025,1.21,.216,.148,1),(0,-.023,1.32,.243,.131,1),
+               (0,-.023,1.395,.154,.097,1),(0,-.045,1.424,.078,.064,1)], cloth, ("Hips","Spine"))
     part("Lapel L", (-.082,-.155,1.248), (.063,.025,.175), inner, "Spine").rotation_euler.y = -.24
     part("Lapel R", (.072,-.168,1.251), (.040,.019,.192), tear, "Spine").rotation_euler.y = .18
-    part("Neck", (0,-.058,1.444), (.082,.084,.121), skin, "Spine")
+    part("Neck", (0,-.058,1.444), (.082,.084,.113), skin, "Neck")
     head_y = -.065 if kind != "shrieker" else -.16
     part("Skull", (0,head_y,1.615), (.113,.110,.143), skin, "Head", True)
-    part("Jaw", (.007,head_y-.032,1.535), (.079,.083,.052), flesh, "Head")
+    part("Jaw", (.007,head_y-.032,1.535), (.079,.083,.052), flesh, "Jaw")
     part("Mouth", (.011,head_y-.105,1.558), (.062,.020,.031 if kind == "shrieker" else .020), socket, "Head")
     part("Teeth", (.012,head_y-.120,1.572), (.040,.008,.008), bone, "Head")
+    part("Lower teeth", (.012,head_y-.119,1.536), (.038,.009,.007), bone, "Jaw")
     part("Nose", (.002,head_y-.113,1.614), (.020,.030,.036), skin, "Head")
+    part("Torn cheek", (.063,head_y-.088,1.583), (.029,.021,.035), flesh, "Head")
+    part("Bruised temple", (-.085,head_y-.030,1.646), (.030,.050,.039), inner, "Head")
+    part("Open collar", (-.043,-.081,1.394), (.077,.060,.055), skin, "Neck")
+    for button in range(3):
+        part("Jacket snaps", (.027,-.168+.008*button,1.300-button*.105), (.012,.012,.012), leather, "Spine")
     for side in [-1,1]:
         part("Ear", (side*.106,head_y-.008,1.622), (.023,.031,.041), flesh if side==1 else skin, "Head")
         part("Brow", (side*.043,head_y-.092,1.665), (.045,.031,.026), skin, "Head")
@@ -419,14 +465,23 @@ def zombie(kind):
         part("Clouded eye", (side*.044,head_y-.119,1.637), (.012,.005,.009), eye, "Head")
         part("Cheekbone", (side*.072,head_y-.083,1.600), (.028,.025,.044), flesh, "Head")
         suffix = ".L" if side < 0 else ".R"
-        part("Coat shoulder", (side*.230,.007,1.321), (.092,.108,.113), cloth, "Arm"+suffix)
-        part("Upper arm", (side*.282,-.045,1.182), (.081,.078,.183), cloth, "Arm"+suffix)
-        part("Elbow rags", (side*.298,-.114,1.030), (.066,.059,.068), tear, "Fore"+suffix)
-        part("Forearm", (side*.313,-.151,.926), (.058,.054,.144), skin if side==1 else cloth, "Fore"+suffix)
-        part("Fingers", (side*.322,-.182,.799), (.051,.055,.076), skin, "Fore"+suffix)
-        part("Thigh", (side*.119,.020,.726), (.111,.112,.255), trousers, "Thigh"+suffix)
-        part("Shin", (side*.133,.033,.308), (.079,.088,.239), trousers, "Shin"+suffix)
-        part("Boot", (side*.136,-.046,.091), (.097,.171,.087), leather, "Shin"+suffix)
+        connected("Bent sleeve", [(side*.222,.0,1.404,.079,.091,-.68),(side*.244,-.01,1.32,.093,.09,-.23),
+                  (side*.273,-.043,1.214,.078,.075,0),(side*.294,-.091,1.091,.065,.064,.22),
+                  (side*.302,-.112,1.036,.063,.056,.52),(side*.306,-.132,.982,.055,.051,.86),
+                  (side*.313,-.154,.91 if side<0 else .956,.048,.046,1)],cloth,("Spine","Arm"+suffix,"Fore"+suffix))
+        part("Forearm", (side*.315,-.151,.907), (.044,.052,.103), skin if side==1 else cloth, "Fore"+suffix)
+        part("Palm", (side*.323,-.182,.797), (.039,.035,.048), skin, "Hand"+suffix)
+        for i in range(4):
+            x = side*.323 + (i-1.5)*.018
+            part("Bent finger", (x,-.205,.747-abs(i-1)*.007), (.011,.015,.041-abs(i-1)*.004), skin, "Hand"+suffix)
+            part("Finger joint", (x,-.220,.726-abs(i-1)*.007), (.011,.020,.015), flesh, "Hand"+suffix)
+        part("Thumb", (side*.287,-.200,.783), (.015,.024,.035), flesh, "Hand"+suffix)
+        connected("Trouser leg", [(side*.115,.02,.924,.111,.114,-.64),(side*.118,.026,.77,.116,.109,-.08),
+                  (side*.130,.022,.605,.091,.09,.08),(side*.134,.031,.521,.082,.081,.32),
+                  (side*.134,.025,.468,.083,.079,.67),(side*.138,.024,.375,.079,.081,1),
+                  (side*.137,.026,.205,.064,.065,1),(side*.136,.020,.147,.058,.056,1)],trousers,("Hips","Thigh"+suffix,"Shin"+suffix))
+        part("Boot", (side*.136,-.053,.083), (.079,.145,.078), leather, "Foot"+suffix)
+        part("Worn sole", (side*.136,-.058,.026), (.081,.144,.021), inner, "Foot"+suffix)
     if kind == "brute":
         part("Chest harness", (0,-.158,1.223), (.185,.049,.197), leather, "Spine")
         for sign in [-1, 1]:
@@ -458,28 +513,34 @@ def zombie(kind):
 
     bone_at("Hips", (0,0,.91), (0,0,1.065))
     bone_at("Spine", (0,0,1.065), (0,-.028,1.48), "Hips")
-    bone_at("Head", (0,-.044,1.495), (0,-.044,1.75), "Spine")
+    bone_at("Neck", (0,-.044,1.413), (0,-.054,1.496), "Spine")
+    bone_at("Head", (0,-.054,1.496), (0,-.054,1.75), "Neck")
+    bone_at("Jaw", (0,head_y+.014,1.565), (0,head_y-.105,1.536), "Head")
     for side in [-1,1]:
         suff = ".L" if side < 0 else ".R"
         bone_at("Arm"+suff,(side*.23,0,1.34),(side*.302,-.114,1.04),"Spine")
         bone_at("Fore"+suff,(side*.302,-.114,1.04),(side*.322,-.176,.81),"Arm"+suff)
+        bone_at("Hand"+suff,(side*.322,-.176,.81),(side*.323,-.20,.735),"Fore"+suff)
         bone_at("Thigh"+suff,(side*.116,.01,.91),(side*.132,.03,.49),"Hips")
         bone_at("Shin"+suff,(side*.132,.03,.49),(side*.137,.026,.105),"Thigh"+suff)
+        bone_at("Foot"+suff,(side*.137,.026,.105),(side*.137,-.164,.080),"Shin"+suff)
     bpy.ops.object.mode_set(mode="OBJECT")
 
     bpy.ops.object.select_all(action="DESELECT")
-    for obj, joint in weights.items():
+    for obj, joints in weights.items():
         rgb = obj.active_material.diffuse_color
         palette = obj.data.color_attributes.new(name="Tint", type="FLOAT_COLOR", domain="POINT")
         for i, v in enumerate(palette.data):
             co = obj.data.vertices[i].co
-            ridges = math.sin(co.z * 109 + math.cos(co.y * 35) * 2) * .10
-            shade = .73 + RNG.random() * .31 + ridges
+            folds = math.sin(co.z * 38 + math.sin(co.x*47)*1.8) * .11
+            grime = math.sin(co.z*17+co.x*28)*math.cos(co.y*23-co.z*8)
+            shade = .72 + RNG.random() * .16 + folds - max(0,grime)*.24
             v.color = (rgb[0]*shade, rgb[1]*shade, rgb[2]*shade, 1)
         obj.data.materials.clear()
         obj.data.materials.append(color)
-        group = obj.vertex_groups.new(name=joint)
-        group.add(list(range(len(obj.data.vertices))), 1, "REPLACE")
+        if len(joints)==1:
+            group = obj.vertex_groups.new(name=joints[0])
+            group.add(list(range(len(obj.data.vertices))), 1, "REPLACE")
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
     bpy.ops.object.join()
@@ -502,117 +563,81 @@ def zombie(kind):
         anchors.extend([
             ("Arm"+suffix, (side*.236,.002,1.331)),
             ("Fore"+suffix, (side*.301,-.117,1.037)),
-            ("Fore"+suffix, (side*.321,-.181,.796)),
+            ("Hand"+suffix, (side*.322,-.207,.737)),
             ("Thigh"+suffix, (side*.115,.020,.881)),
             ("Shin"+suffix, (side*.134,.033,.497)),
-            ("Shin"+suffix, (side*.136,-.025,.109)),
+            ("Foot"+suffix, (side*.136,-.047,.071)),
         ])
-        radii.extend([.082*width,.057*width,.108*width,.077*width])
-    samples = {}
-    rest_points = [(joint, arm_data.bones[joint].matrix_local.inverted() @
-                    Vector((p[0]*width,p[1]*s,p[2]*s))) for joint,p in anchors]
-    boot_soles = []
-    for side, suffix in [(-1, ".L"), (1, ".R")]:
-        joint = "Shin"+suffix
-        inverse = arm_data.bones[joint].matrix_local.inverted()
-        for heel_or_toe in [-.145,.063]:
-            boot_soles.append((joint, inverse @ Vector((side*.136*width, heel_or_toe*s, .026*s))))
+        radii.extend([.082*width,.061*width,.108*width,.077*width])
 
     def action(name, frames, motion):
         anim = bpy.data.actions.new(name)
         rig.animation_data_create()
         rig.animation_data.action = anim
-        for frame in range(frames + 1):
-            pose = motion(frame/frames)
-            for b in rig.pose.bones:
-                b.rotation_euler = pose.get(b.name, (0,0,0))
-                b.keyframe_insert(data_path="rotation_euler", frame=frame, group=b.name)
-            hips = rig.pose.bones["Hips"]
-            hips.location = (0,pose.get("lift",0)*s,0)
-            if name in ("Walk", "Stumble"):
-                bpy.context.view_layer.update()
-                foot = min((rig.pose.bones[joint].matrix @ point).z for joint,point in boot_soles)
-                hips.location.y += max(-.070, min(.090, .016*s-foot))
-            hips.keyframe_insert(data_path="location", frame=frame, group="Hips")
-        output = []
+        if name in ("Attack", "Ambush"):
+            anim.pose_markers.new("Contact").frame = CONTACT_FRAME[kind]
+        if name in ("Walk", "Sprint"):
+            anim.pose_markers.new("Left Plant").frame = 0
+            anim.pose_markers.new("Right Plant").frame = round(frames*(.57 if kind=="shambler" and name=="Walk" else .5))
         for frame in range(frames + 1):
             bpy.context.scene.frame_set(frame)
-            coords = []
-            for joint, point in rest_points:
-                x, y, z = rig.pose.bones[joint].matrix @ point
-                coords.extend(round(v, 4) for v in (x, z, -y))  # glTF coordinates
-            output.append(coords)
-        samples[name] = output
+            progress = frame/frames
+            apply_pose(rig, motion(progress), s, width, bpy.context.view_layer.update)
+            if name.startswith("Fall") and progress > .32:
+                # Keep a hand or knee from disappearing below the floor as the body settles.
+                clearance = min((rig.pose.bones[j].head.z-r*s for j,r in
+                    [("Head",.077),("Hips",.13),("Shin.L",.064),("Shin.R",.064),
+                     ("Foot.L",.065),("Foot.R",.065),("Hand.L",.040),("Hand.R",.040)]))
+                if clearance < .008:
+                    hips = rig.pose.bones["Hips"]
+                    hips.location += hips.bone.matrix_local.to_quaternion().inverted() @ Vector((0,0,.008-clearance))
+            for b in rig.pose.bones:
+                b.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=b.name)
+                b.keyframe_insert(data_path="location", frame=frame, group=b.name)
         rig.animation_data.action = None
         track = rig.animation_data.nla_tracks.new()
         track.name = name
         track.strips.new(name, 0, anim)
         track.mute = True
 
-    def walking(t, stumble=False):
-        angle = 2*math.pi*t
-        a = angle + .28*math.sin(angle) - .13*math.sin(angle*2)
-        stride = {"shambler":.46,"shrieker":.63,"brute":.39}[kind]
-        lean = {"shambler":.19,"shrieker":.34,"brute":.12}[kind]
-        reach = {"shambler":.70,"shrieker":.91,"brute":.56}[kind]
-        sag = math.sin(math.pi*t)**2 if stumble else 0
-        roll = .10*math.sin(a) + sag*.13
-        set_pose = {
-            "Hips": (0,.045*math.sin(a),-.07*math.sin(a)),
-            "Spine": (lean + .12*math.sin(a*2+.4) + sag*.28,.13*math.sin(a+.6),roll),
-            "Head": (-lean*.48-.08*math.sin(a*2)+sag*.08,.12*math.cos(a),-.15*math.sin(a-.35)-sag*.24),
-            "lift": .016*math.cos(2*a)-.075*sag,
-        }
-        for index, suffix in enumerate([".L",".R"]):
-            phase = a + (0 if index == 0 else math.pi + .31)
-            foot = math.sin(phase)
-            bias = 1 if index == 0 else (.59 if kind == "shambler" else .83)
-            drag = sag * (.47 if index == 1 else -.15)
-            set_pose["Thigh"+suffix] = (stride*foot*bias + drag,0,.055*foot)
-            set_pose["Shin"+suffix] = (-max(0,-foot)*(.68 if index==0 else .41)-.24*sag,0,0)
-            reach_wave = math.sin(phase-.42) * (.28 if index==0 else .40)
-            set_pose["Arm"+suffix] = (-reach - reach_wave - sag*(.30 if index==0 else .65),.13*foot,
-                                      (-.16 if index==0 else .14) + sag*(-.13 if index==0 else .24))
-            set_pose["Fore"+suffix] = (-.24+.22*math.cos(phase)-.32*sag,0,.10*foot)
-        return set_pose
-
-    def lunge(t):
-        reach = math.sin(math.pi * t) ** 1.48
-        load = math.sin(min(1,t*2.2) * math.pi) if t < .455 else 0
-        return {"Spine": (-.22+.39*reach-.28*load,.11*reach,0), "Head": (.12*load-.15*reach,0,0),
-                "Arm.L": (-1.18*reach+.40*load,0,-.22*(1-reach)),
-                "Arm.R": (-1.34*reach+.42*load,0,.20*(1-reach)),
-                "Fore.L": (-.50*load-.17*reach,0,0), "Fore.R": (-.52*load-.13*reach,0,0)}
-
-    def flinch(t):
-        wave = math.sin(math.pi*t)
-        return {"Spine": (-.33*wave,.19*wave,-.08*wave), "Head": (-.30*wave,0,.10*wave),
-                "Arm.R": (-.36*wave,0,0), "Arm.L": (-.26*wave,0,0)}
-
-    action("Walk", 25 if kind == "shrieker" else 36 if kind == "brute" else 32, walking)
-    action("Stumble", 22, lambda t: walking(t, True))
-    action("Attack", 24, lunge)
-    action("Hit", 12, flinch)
-    HIT_ANCHORS[kind] = {"radii": [round(r,4) for r in radii], "clips": samples}
+    actions = clips(kind)
+    for name, frames, motion in actions:
+        action(name, frames, motion)
+    RIG_DATA[kind] = {
+        "radii": radii,
+        "anchors": [[joint.replace(".", ""), [x*width,z*s,-y*s]] for joint,(x,y,z) in anchors],
+        "stride": LEAD[kind]*s,
+        "contact": CONTACT_FRAME[kind]/next(frames for name,frames,_ in actions if name=="Attack"),
+        "frames": {name:frames for name,frames,_ in actions},
+    }
+    bpy.context.scene.frame_set(0)
+    apply_pose(rig, actions[0][2](0), s, width, bpy.context.view_layer.update)
+    bpy.context.scene.frame_end = 49
+    source = OUT.parent.parent / "art-source"
+    source.mkdir(exist_ok=True)
+    bpy.context.preferences.filepaths.save_version = 0
     export(kind, True)
+    bpy.ops.wm.save_as_mainfile(filepath=str(source / (kind + ".blend")), compress=True)
 
 
 weapons = ["pistol", "shotgun", "smg", "carbine", "flashlight"]
-if "--" in sys.argv:
-    for weapon in sys.argv[sys.argv.index("--") + 1:]:
-        if weapon not in weapons:
-            raise ValueError(f"Unknown hardware: {weapon}")
-        hardware(weapon)
-    sys.exit()
+zombies = ["shambler", "shrieker", "brute"]
+requested = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [*weapons,"glove","wreck",*zombies]
+for name in requested:
+    RNG.seed(1308)
+    if name in weapons:
+        hardware(name)
+    elif name in zombies:
+        zombie(name)
+    elif name == "glove":
+        glove()
+    elif name == "wreck":
+        wreck()
+    else:
+        raise ValueError(f"Unknown asset: {name}")
 
-for weapon in weapons:
-    hardware(weapon)
-glove()
-wreck()
-for zombie_type in ["shambler","shrieker","brute"]:
-    zombie(zombie_type)
-(OUT.parent.parent / "src" / "hit-anchors.js").write_text(
-    "// Generated from the Blender rig by scripts/author-assets.py.\nexport const HIT_ANCHORS = "
-    + json.dumps(HIT_ANCHORS, separators=(",", ":")) + ";\n",
-    encoding="utf-8"
-)
+if RIG_DATA:
+    rig_file = OUT.parent.parent / "art-source" / "enemy-rig.json"
+    existing = json.loads(rig_file.read_text(encoding="utf-8")) if rig_file.exists() else {}
+    existing.update(RIG_DATA)
+    rig_file.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")

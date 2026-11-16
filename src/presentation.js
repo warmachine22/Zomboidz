@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
 import { beamSettings, ENEMIES, flarePower, GUNS, LOOT } from './simulation.js';
-import { enemyMotion } from './enemy-motion.js';
+import { legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
 
 const textures = new THREE.TextureLoader();
@@ -45,16 +45,19 @@ const surfaces = {
   boards: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x687277, roughness: .98 }),
   mortar: new THREE.MeshStandardMaterial({ map: image('stone'), color: 0x66645b, roughness: .98 }),
   trim: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x3c4038, roughness: .97 }),
+  canvas: new THREE.MeshStandardMaterial({ color:0x555744, roughness:.98, side:THREE.DoubleSide }),
   reflectors: new THREE.MeshStandardMaterial({ color: 0xaaa589, emissive: 0x221e13, emissiveIntensity: .35, roughness: .85 }),
 };
 surfaces.stone.map.repeat.set(1.55, 1.55);
 surfaces.boards.map.repeat.set(2.2, .6);
 
 const modelNames = [...Object.keys(GUNS), 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
-export async function loadArt() {
+export async function loadArt(legacyMotion = false) {
   const source = await Promise.all(modelNames.map(name =>
     models.loadAsync(new URL('./assets/art/' + name + '.glb', import.meta.url).href)));
-  return Object.fromEntries(modelNames.map((name, i) => [name, source[i]]));
+  const art = Object.fromEntries(modelNames.map((name, i) => [name, source[i]]));
+  if (legacyMotion) art.legacyShambler = await models.loadAsync(new URL('./assets/dev/shambler-before.glb', import.meta.url).href);
+  return art;
 }
 
 function plantGeometry(pine) {
@@ -94,6 +97,34 @@ function plantGeometry(pine) {
 
 const pineGeometry = plantGeometry(true);
 const fernGeometry = plantGeometry(false);
+const crownGeometry = new THREE.BufferGeometry();
+{
+  const positions = [], colors = [], indices = [], randomCrown = random('crown outline');
+  const levels = [[-.96,.17],[-.56,.82],[-.04,1],[.50,.79],[.91,.22]];
+  for (const [level,[y,radius]] of levels.entries()) for (let i=0; i<8; i++) {
+    const angle = (i+level*.46)*Math.PI/4;
+    const reach = radius*(.86+randomCrown()*.24);
+    positions.push(Math.cos(angle)*reach,y+(randomCrown()-.5)*.16,Math.sin(angle)*reach);
+    const shade = .65+.25*randomCrown();
+    colors.push(shade,shade*1.06,shade*.96);
+    if (level < levels.length-1) {
+      const a=level*8+i, b=level*8+(i+1)%8;
+      indices.push(a,a+8,b,b,a+8,b+8);
+    }
+  }
+  for (let i=1;i<7;i++) indices.push(0,i,i+1,32,33+i,32+i);
+  crownGeometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  crownGeometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  crownGeometry.setIndex(indices);
+  crownGeometry.computeVertexNormals();
+}
+const tentGeometry = new THREE.BufferGeometry();
+tentGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+  -.95,0,-1.24, .97,0,-1.21, .08,1.18,-1.05,
+  -.80,0,1.06, .84,0,1.05, -.19,.51,.96,
+],3));
+tentGeometry.setIndex([0,3,5,0,5,2,1,2,5,1,5,4,3,4,5]);
+tentGeometry.computeVertexNormals();
 
 function place(mesh, index, x, y, z, sx, sy, sz, angle, color) {
   temp.position.set(x, y, z);
@@ -165,21 +196,32 @@ function makeChunk(world, area, art) {
   const trunks = instance(group, trunkGeometry, surfaces.bark, treeCount, true);
   const branches = instance(group, branchGeometry, surfaces.bark, treeCount * 4);
   const canopy = instance(group, pineGeometry, surfaces.leaves, treeCount * 4);
+  const crowns = instance(group, crownGeometry, surfaces.leaves, treeCount * 5);
   const brush = instance(group, fernGeometry, surfaces.fern, area.plants.length);
   const rng = random(area.key + ':art');
   for (const [i, t] of area.trees.entries()) {
     const shade = new THREE.Color().setRGB(.68 + t.tint * .22, .72 + t.tint * .21, .68 + t.tint * .22);
+    const spread = t.crown ?? 2.6;
     place(trunks, i, t.x, t.y + t.height * .5, t.z, t.r * 2, t.height, t.r * 2, t.turn, shade);
     for (let j = 0; j < 4; j++) {
       const tier = .43 + j * .14, height = t.y + t.height * tier;
       const a = t.turn + 2.399 * j;
-      const reach = (1.71 + t.r * 2.1 + rng() * .5) * (1 - j * .14);
+      const reach = spread * (.87 + rng() * .18) * (1 - j * .16);
       const origin = v3(t.x, height, t.z);
       const end = v3(t.x + Math.cos(a) * reach, height + (t.type === 1 ? .14 : .46), t.z + Math.sin(a) * reach);
       beamBetween(branches, i * 4 + j, origin, end, t.r * .59, shade);
       const tint = new THREE.Color().setRGB(.22 + t.tint * .28, .32 + t.tint * .29, .27 + t.tint * .22);
       place(canopy, i * 4 + j, origin.x * .63 + end.x * .37, height + .22, origin.z * .63 + end.z * .37,
         reach * (t.type === 1 ? .72 : 1.15), 1.54, reach, a, tint);
+    }
+    for (let j=0; j<5; j++) {
+      const theta=t.turn+j*2.399;
+      const spreadFraction=(t.type===1?.47:.57)*(1-j*.13);
+      const width=spread*(.53-j*.035);
+      const center=t.height*(.57+j*.083);
+      const shade=.23+.25*t.tint+rng()*.09;
+      place(crowns,i*5+j,t.x+Math.cos(theta)*spread*spreadFraction,t.y+center,t.z+Math.sin(theta)*spread*spreadFraction,
+        width*(t.type===1?1.14:.88),t.height*(t.type===1?.119:.158),width,theta,new THREE.Color(shade*.74,shade,shade*.78));
     }
   }
   for (const [i, f] of area.plants.entries()) {
@@ -219,6 +261,51 @@ function makeChunk(world, area, art) {
         const x = o.x + (index - 3.5) * .8;
         broken.push([x, o.y + 2.68 + rng() * .15, o.z - .72 + rng() * .37, .102, .141, 2.4 + rng() * 2.6, 0]);
       }
+    } else if (o.kind === 'shedWall') {
+      const alongZ = o.rz > o.rx;
+      for (let i=0; i<Math.ceil((alongZ?o.rz:o.rx)*10); i++) {
+        const ground=o.y-o.ry;
+        const strip=i*.20-(alongZ?o.rz:o.rx)+.095;
+        boards.push([o.x+(alongZ?0:strip),ground+o.ry,o.z+(alongZ?strip:0),
+          alongZ?o.rx*2:.195,o.ry*2,alongZ?.195:o.rz*2,(rng()-.5)*.035]);
+      }
+    } else if (o.kind === 'shedRoof') {
+      const roof=new THREE.Mesh(baseBox,surfaces.trim);
+      roof.position.set(o.x,o.y,o.z);
+      roof.scale.set(o.rx*2,o.ry*2,o.rz*2);
+      roof.castShadow=roof.receiveShadow=true;
+      group.add(roof);
+      broken.push([o.x,o.y-.08,o.z-1.9,3.91,.16,.17,0]);
+    } else if (o.kind === 'campTent') {
+      const tent=new THREE.Mesh(tentGeometry,surfaces.canvas);
+      tent.position.set(o.x,o.y,o.z);
+      tent.rotation.y=o.turn;
+      tent.castShadow=tent.receiveShadow=true;
+      group.add(tent);
+      broken.push([o.x+.05,o.y+.55,o.z-1.28,.053,1.13,.057,0]);
+    } else if (o.kind === 'tentBody') {
+      const bed=new THREE.Mesh(baseBox,surfaces.canvas);
+      bed.position.set(o.x,o.y,o.z);
+      bed.scale.set(o.rx*2,o.ry*2,o.rz*2);
+      bed.castShadow=bed.receiveShadow=true;
+      group.add(bed);
+    } else if (o.kind === 'campCrates') {
+      const panels=Math.round(o.ry*4);
+      for (let i=0; i<panels; i++) {
+        const th=o.ry*2/panels;
+        boards.push([o.x,o.y-o.ry+(i+.5)*th,o.z,o.rx*2,th*.95,o.rz*2,0]);
+      }
+      for (const side of [-1,1])
+        broken.push([o.x+side*o.rx*.72,o.y,o.z+o.rz+.013,.092,o.ry*2,.044,0]);
+    } else if (o.kind === 'firepit') {
+      for (let i=0; i<8; i++) {
+        const angle=i*Math.PI/4, stone=new THREE.Mesh(rockGeometry,surfaces.stone);
+        stone.position.set(o.x+Math.sin(angle)*.46,o.y+.048,o.z+Math.cos(angle)*.46);
+        stone.scale.set(.28,.19,.24);
+        group.add(stone);
+      }
+      for (let i=0; i<3; i++)
+        broken.push([o.x+(i-1)*.14,o.y+.026,o.z,.07,.07,.64,i*.78]);
     }
   }
   for (const [parts, mat] of [[boards, surfaces.boards], [masonry, surfaces.mortar], [broken, surfaces.trim]]) {
@@ -502,23 +589,26 @@ export function createPresentation(scene, art, layouts) {
     if (reused) {
       reused.root.visible = true; reused.deadAt = -1; reused.age = 0; return reused;
     }
-    const root = new THREE.Group(), character = clone(art[kind].scene);
+    const source = kind === 'shambler' && art.legacyShambler ? art.legacyShambler : art[kind];
+    const root = new THREE.Group(), character = clone(source.scene);
     root.add(character);
     character.rotation.y = Math.PI;
     character.traverse(m => {
       if (!m.isMesh) return;
-      if (m.isSkinnedMesh) m.boundingSphere = new THREE.Sphere(v3(0, .94, 0), 1.46);
+      if (m.isSkinnedMesh) m.boundingSphere = new THREE.Sphere(v3(0, .94, 0), 1.76);
       m.receiveShadow = true;
     });
     canopyLighting.shade(character);
     scene.add(root);
-    const mixer = new THREE.AnimationMixer(character);
+    const currentPose = source === art[kind] ? solvedEnemyPose({kind, gait:0}, ENEMIES[kind].windup) : null;
+    const bones = currentPose?.rig.bones.map(name => character.getObjectByName(name));
+    const mixer = bones ? null : new THREE.AnimationMixer(character);
     const actions = {};
-    for (const clip of art[kind].animations) {
+    if (mixer) for (const clip of source.animations) {
       actions[clip.name] = mixer.clipAction(clip).play();
       actions[clip.name].setEffectiveWeight(clip.name === 'Walk' ? 1 : 0);
     }
-    return { root, character, mixer, kind, actions, deadAt: -1, age: 0 };
+    return { root, character, bones, mixer, kind, actions, deadAt: -1, age: 0 };
   }
 
   function releaseEnemy(v) {
@@ -528,7 +618,7 @@ export function createPresentation(scene, art, layouts) {
     pool[v.kind].push(v);
   }
 
-  function updateEnemies(run, dt, aimedId) {
+  function updateEnemies(run, dt, aimedId, aim) {
     tick++;
     const desired = new Set();
     const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
@@ -540,7 +630,7 @@ export function createPresentation(scene, art, layouts) {
       const d = distance(e, run.player), dead = e.diedAt !== undefined;
       v.root.position.set(e.x, e.y, e.z);
       v.root.rotation.y = -e.yaw;
-      if (dead) {
+      if (dead && !v.bones) {
         const time = run.time - e.diedAt, rate = e.kind === 'brute' ? 1.2 : e.kind === 'shrieker' ? 2.05 : 1.48;
         const slump = 1 - (1 - Math.min(1, time * rate)) ** 2;
         if (v.deadAt < 0) { v.deadAt = time; v.mixer.update(0); }
@@ -550,16 +640,34 @@ export function createPresentation(scene, art, layouts) {
         continue;
       }
       v.age += dt;
-      const skip = d < 12 ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
-      if ((tick + e.id) % skip && e.id !== aimedId) continue;
-      for (const [name, phase, weight] of enemyMotion(e, ENEMIES[e.kind].windup)) {
+      const skip = d < 13 || e.attackAge !== undefined || dead ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
+      if ((tick + e.id) % skip && e.id !== aimedId && v.age !== dt) {
+        const gun = GUNS[run.player.weapon];
+        if (!aim || d>gun.range ||
+          (e.x-aim.origin.x)*aim.ray.x+(e.z-aim.origin.z)*aim.ray.z<0 ||
+          Math.abs((e.x-aim.origin.x)*aim.ray.z-(e.z-aim.origin.z)*aim.ray.x)>1+d*gun.spread) continue;
+      }
+      if (v.bones) {
+        if (dead) {
+          e.fallAge = Math.min(1.5, run.time - e.diedAt);
+          v.character.position.y = -clamp((run.time - e.diedAt - 8) * .3, 0, .34);
+        }
+        const { joints, signature } = solvedEnemyPose(e, ENEMIES[e.kind].windup);
+        if (v.poseSignature !== signature) {
+          v.poseSignature = signature;
+          for (const [i, bone] of v.bones.entries()) {
+            bone.position.copy(joints[i].position);
+            bone.quaternion.copy(joints[i].rotation);
+          }
+        }
+      } else for (const [name, phase, weight] of legacyEnemyMotion(e, ENEMIES[e.kind].windup)) {
         const action = v.actions[name];
         if (!action) continue;
         action.setEffectiveWeight(weight);
         action.paused = true;
         action.time = phase * action.getClip().duration;
       }
-      v.mixer.update(v.age);
+      v.mixer?.update(v.age);
       v.age = 0;
     }
     for (const [id, v] of enemyMeshes) if (!desired.has(id)) { releaseEnemy(v); enemyMeshes.delete(id); }
@@ -797,13 +905,13 @@ export function createPresentation(scene, art, layouts) {
     shot.elapsed += dt;
   }
 
-  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, beam, viewpoint }) {
+  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, aim, beam, viewpoint }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
-    updateEnemies(run, dt, aimHit?.e?.id);
+    updateEnemies(run, dt, aimHit?.e?.id, aim);
     updateLoot(run, fixtures, active, beam);
     updateTools(run, dt, settings, tracking, active, stereo, calibration, beam);
     dot.visible = Boolean(aimHit && viewpoint);
