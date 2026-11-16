@@ -6,7 +6,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.9';
+export const BUILD = '1.0.10';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -64,6 +64,10 @@ export function hordeTarget(time, difficulty = 'standard') {
 export function beamSettings(player) {
   const focus = player.beam === 'focus';
   return { range: (focus ? 23 : 15) + player.upgrades.lens * 3, angle: focus ? .235 : .49 };
+}
+
+export function activeBeams(run) {
+  return run.player.flashlight ? [run.beam, run.offhandBeam].filter(Boolean) : [];
 }
 
 export function resolvedBeam(world, lamp, head) {
@@ -459,7 +463,7 @@ function flareAssignments(run) {
   run.guards = next;
 }
 
-function perception(run, e, gap) {
+function perception(run, e, gap, lamps, beam) {
   const { world, player: p, time } = run, origin = eye(world, e, ENEMIES[e.kind].height * .87);
   const player = eye(world, p, p.eyeHeight * .8);
   const get = (x, z, score, reason, id, chase) => ({ x, z, score, reason, id, chase });
@@ -467,15 +471,15 @@ function perception(run, e, gap) {
   const offer = candidate => { if (!best || candidate.score > best.score) best = candidate; };
   if (gap < 5.1 && world.clear(origin, player))
     offer(get(p.x, p.z, gap < 3.1 ? 4 : 1.15, 'saw player', 'player', true));
-  const beam = beamSettings(p);
-  if (p.flashlight && gap < beam.range + 5 && run.beam) {
-    const { origin: lamp, ray } = run.beam;
-    const lampEnd = { x: lamp.x + ray.x * .4, y: lamp.y + ray.y * .4, z: lamp.z + ray.z * .4 };
+  if (gap < beam.range + 5) {
     const litGround = { ...origin, y: e.y + .28 };
-    if (inBeam(world, run.beam, origin, beam.range, beam.angle) ||
-      inBeam(world, run.beam, litGround, beam.range, beam.angle) ||
-      (gap < 7 && world.clear(origin, lampEnd))) {
-      offer(get(lamp.x, lamp.z, 1.08 - gap / (beam.range + 10) * .57, 'flashlight', 'lamp', true));
+    for (const light of lamps) {
+      const { origin: lamp, ray } = light;
+      if (inBeam(world, light, origin, beam.range, beam.angle) ||
+        inBeam(world, light, litGround, beam.range, beam.angle) ||
+        (gap < 7 && world.clear(origin, rayPoint(lamp, ray, .4)))) {
+        offer(get(lamp.x, lamp.z, 1.08 - gap / (beam.range + 10) * .57, 'flashlight', 'lamp', true));
+      }
     }
   }
   for (let i = run.noises.length - 1; i >= 0; i--) {
@@ -668,8 +672,9 @@ function navigate(run, e, tx, tz, dt) {
   updateEnemyFooting(world,e,cfg.windup,distance(run.player,e));
 }
 
-function updateEnemies(run, dt) {
+function updateEnemies(run, dt, lamps) {
   const { player: p, world, time } = run;
+  const beam = beamSettings(p);
   reserveAmbush(run);
   if (time >= run.nextSwarmTick) {
     flareAssignments(run);
@@ -681,7 +686,7 @@ function updateEnemies(run, dt) {
     const gap = distance(e, p);
     if (gap > 68) { e.dead = true; continue; }
     if (time >= e.nextThink) {
-      perception(run, e, gap);
+      perception(run, e, gap, lamps, beam);
       e.nextThink = time + (gap < 24 ? .20 : .48) + run.rng() * .08;
     }
     if (e.target?.chase) pursuing++;
@@ -695,8 +700,8 @@ function updateEnemies(run, dt) {
     e.hitAge += dt;
     e.turnRate = 0;
     if (e.ambush) {
-      const beam = p.flashlight && run.beam && beamSettings(p);
-      const revealed = beam && inBeam(world,run.beam,eye(world,e,1.28),beam.range,beam.angle);
+      const at = eye(world,e,1.28);
+      const revealed = lamps.some(lamp => inBeam(world,lamp,at,beam.range,beam.angle));
       const maneuver = ambushDecision(run,e,gap,revealed);
       if (maneuver) {
         e.reason = maneuver.reason;
@@ -764,10 +769,11 @@ export function defaultAim(run, pitch = 0, offhand = false) {
 export function visibleTargets(run, soundMemory = false) {
   const p = run.player, origin = eye(run.world, p, p.eyeHeight);
   const beam = beamSettings(p);
+  const lamps = activeBeams(run);
   const visible = [];
   for (const e of run.enemies) {
     const d = distance(p, e), head = enemyPose(e).head;
-    if (d < 3.8 || (p.flashlight && run.beam && inBeam(run.world, run.beam, head, beam.range, beam.angle))
+    if (d < 3.8 || lamps.some(lamp => inBeam(run.world, lamp, head, beam.range, beam.angle))
       || (soundMemory && p.noisePeak > run.time && d < 11)) {
       if (run.world.clear(origin, head)) visible.push(e);
     }
@@ -827,6 +833,10 @@ export function stepRun(run, input = {}, dt = STEP) {
   aim.viewOrigin ||= head;
   const lamp = input.lampUnavailable ? null : shiftPose(input.lamp) || { origin: { ...head, y: head.y - .16 }, ray: aim.ray };
   run.beam = resolvedBeam(world, lamp, aim.viewOrigin);
+  const offhandLamp = p.offhand && !input.offhandUnavailable
+    ? shiftPose(input.offhandLamp) || defaultAim(run, input.pitch, true) : null;
+  run.offhandBeam = resolvedBeam(world, offhandLamp, aim.viewOrigin);
+  const lamps = activeBeams(run);
   p.stepDistance += Math.hypot(shift.x, shift.z);
   if (p.stepDistance > (input.walk ? .70 : .79)) {
     p.stepDistance = 0;
@@ -861,10 +871,11 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (run.populate && run.time >= run.nextSpawn) {
     const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
-    replenishHorde(run, cap, run.beam && { ...run.beam, ...beamSettings(p) }, addEnemy);
+    const cone = beamSettings(p);
+    replenishHorde(run, cap, lamps.map(lamp => ({ ...lamp, ...cone })), addEnemy);
     run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
   }
-  updateEnemies(run, dt);
+  updateEnemies(run, dt, lamps);
   run.noises = run.noises.filter(n => run.time < n.born + n.span);
   run.metrics.maxCrowd = Math.max(run.metrics.maxCrowd, run.enemies.length);
   return run.events;

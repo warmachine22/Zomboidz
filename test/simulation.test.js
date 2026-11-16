@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addEnemy, createRun, enemyPose, flarePower, GUNS, hordeTarget, magazineCapacity,
-  setLoot, shoot, stepRun, STEP, traceAim } from '../src/simulation.js';
+  setLoot, shoot, stepRun, STEP, traceAim, visibleTargets } from '../src/simulation.js';
 import { animatedAnchors } from '../src/enemy-motion.js';
 import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
 import { createWorld, distance, START } from '../src/world.js';
@@ -33,6 +33,35 @@ test('Legendary starts with two 50-round magazines and the mounted light keeps i
   assert.deepEqual([standard.ammo, standard.offhand, magazineCapacity(standard)], [6, null, 6]);
 });
 
+test('Legendary lamps resolve independently, reveal targets and respect cover and tracking', () => {
+  const run = room({ legendary: true }), p = run.player;
+  const left = addEnemy(run, 'shambler', p.x - 9, p.z);
+  const right = addEnemy(run, 'shambler', p.x + 9, p.z);
+  left.nextThink = right.nextThink = 0;
+  const light = side => ({ origin: { x:p.x + side * .25, y:1.4, z:p.z }, ray: { x:side, y:0, z:0 } });
+  const input = { lamp: light(1), offhandLamp: light(-1) };
+  stepRun(run, input);
+  assert.deepEqual(run.beam.ray, input.lamp.ray);
+  assert.deepEqual(run.offhandBeam.ray, input.offhandLamp.ray);
+  assert.ok(visibleTargets(run).includes(left) && visibleTargets(run).includes(right));
+  assert.equal(left.reason, 'flashlight');
+  assert.equal(right.reason, 'flashlight');
+  run.world.clear = (from, to) => !(from.x < 0 && to.x < p.x - 5);
+  assert.deepEqual(visibleTargets(run).map(enemy => enemy.id), [right.id]);
+
+  stepRun(run, { ...input, offhandUnavailable: true });
+  assert.equal(run.offhandBeam, null);
+  assert.ok(run.beam);
+  run.world.clear = () => true;
+  stepRun(run, { ...input, lampUnavailable: true });
+  assert.equal(run.beam, null);
+  assert.deepEqual(visibleTargets(run).map(enemy => enemy.id), [left.id]);
+
+  const normal = room();
+  stepRun(normal, input);
+  assert.equal(normal.offhandBeam, null);
+});
+
 test('the Legendary pistols aim and fire independently, with their own cooldowns', () => {
   const run = room({ legendary: true }), p = run.player;
   const left = addEnemy(run, 'shambler', p.x - 2, p.z - 6);
@@ -43,6 +72,8 @@ test('the Legendary pistols aim and fire independently, with their own cooldowns
     return { origin, ray: { x:head.x - origin.x, y:head.y - origin.y, z:head.z - origin.z } };
   }
   const offhandAim = aim(left, p.x - .23), mainAim = aim(right, p.x + .23);
+  assert.equal(traceAim(run, offhandAim).e, left);
+  assert.equal(traceAim(run, mainAim).e, right);
   const offhand = stepRun(run, { offhandFire: true, offhandAim }).find(event => event.type === 'shot');
   assert.ok(offhand.offhand && left.dead && !right.dead);
   const main = stepRun(run, { fire: true, aim: mainAim }).find(event => event.type === 'shot');

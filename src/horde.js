@@ -18,21 +18,21 @@ export function hordeSectors(run, range = 42) {
   return counts;
 }
 
-function hidden(world, head, p, spot, beamSettings) {
+function hidden(world, head, spot, beams) {
   const body = eye(world, spot, 1.18), top = eye(world, spot, 1.78);
   if (world.clear(head, body) || world.clear(head, top)) return false;
-  if (!p.flashlight || !beamSettings) return true;
-  const { origin, ray, range, angle } = beamSettings;
-  for (const target of [body, top]) {
-    const x = target.x - origin.x, y = target.y - origin.y, z = target.z - origin.z;
-    const d = Math.hypot(x, y, z);
-    if (d <= range && x*ray.x + y*ray.y + z*ray.z > Math.cos(angle) * d && world.clear(origin, target))
-      return false;
+  for (const { origin, ray, range, angle } of beams) {
+    for (const target of [body, top]) {
+      const x = target.x - origin.x, y = target.y - origin.y, z = target.z - origin.z;
+      const d = Math.hypot(x, y, z);
+      if (d <= range && x*ray.x + y*ray.y + z*ray.z > Math.cos(angle) * d && world.clear(origin, target))
+        return false;
+    }
   }
   return true;
 }
 
-function entrance(run, bearing, opening, beamSettings, sector, sectorOf) {
+function entrance(run, bearing, opening, beams, sector, sectorOf) {
   const { player, world, rng } = run;
   const head = eye(world, player, player.eyeHeight);
   const min = opening ? 25 : 13;
@@ -42,7 +42,7 @@ function entrance(run, bearing, opening, beamSettings, sector, sectorOf) {
     return d >= min && d <= max && sectorOf(player, pos) === sector &&
       !world.blocks(pos.x, pos.z, .49) &&
       run.enemies.every(e => e.dead || distance(e, pos) > 2.05) &&
-      hidden(world, head, player, pos, beamSettings);
+      hidden(world, head, pos, beams);
   };
   for (let i = 0; i < 30; i++) {
     const ray = direction(bearing + (rng() - .5) * (sectorOf === octant ? .84 : 1.32));
@@ -73,8 +73,8 @@ function waypoint(run, spot, intercept) {
   return center;
 }
 
-function spawn(run, sector, bearing, opening, beam, addEnemy, replace = null, sectorOf = quadrant) {
-  const point = entrance(run, bearing, opening, beam, sector, sectorOf);
+function spawn(run, sector, bearing, opening, beams, addEnemy, replace = null, sectorOf = quadrant) {
+  const point = entrance(run, bearing, opening, beams, sector, sectorOf);
   if (!point) return false;
   const roll = run.rng();
   const elapsed = run.time * DIFFICULTIES.standard.middle / run.rules.middle;
@@ -104,11 +104,11 @@ export function seedHorde(run, cap, addEnemy) {
   for (let i = 0; i < cap; i++) {
     const sectors = hordeSectors(run);
     const order = [0, 1, 2, 3].sort((a,b) => sectors[a] - sectors[b]);
-    if (!order.some(n => spawn(run, n, n * QUADRANT, true, null, addEnemy))) break;
+    if (!order.some(n => spawn(run, n, n * QUADRANT, true, [], addEnemy))) break;
   }
 }
 
-export function replenishHorde(run, cap, beam, addEnemy) {
+export function replenishHorde(run, cap, beams, addEnemy) {
   const { player, world, time } = run;
   const moving = Math.hypot(player.travelX, player.travelZ) >= .82;
   const opening = time < run.rules.opening;
@@ -120,7 +120,7 @@ export function replenishHorde(run, cap, beam, addEnemy) {
     if (live >= cap) return;
     const sectors = hordeSectors(run, 32);
     const order = [0,1,2,3].sort((a,b)=>sectors[a]-sectors[b] || (a+shift)%4-(b+shift)%4);
-    order.some(sector=>spawn(run,sector,sector*QUADRANT,true,beam,addEnemy));
+    order.some(sector=>spawn(run,sector,sector*QUADRANT,true,beams,addEnemy));
     return;
   }
   const atCap = live >= cap;
@@ -150,7 +150,7 @@ export function replenishHorde(run, cap, beam, addEnemy) {
     if (enemy.dead || enemy.ambush || enemy.attackAge!==undefined) return false;
     const gap = distance(enemy,player);
     return gap > 25 && (gap > border || fullness[octant(player,enemy)] >= 2) &&
-      hidden(world,head,player,enemy,beam);
+      hidden(world,head,enemy,beams);
   }).sort((a,b)=>distance(b,player)-distance(a,player)) : [];
   if (atCap && !recycle.length) return;
   for (const sector of order.slice(0,4)) {
@@ -159,6 +159,6 @@ export function replenishHorde(run, cap, beam, addEnemy) {
     if (atCap && !replacement) continue;
     const ahead = moving && Math.abs(angleDelta(sector*OCTANT,run.travelBearing)) < OCTANT*.5;
     const bearing = ahead ? run.travelBearing : sector*OCTANT;
-    if (spawn(run,sector,bearing,false,beam,addEnemy,replacement,octant)) return;
+    if (spawn(run,sector,bearing,false,beams,addEnemy,replacement,octant)) return;
   }
 }

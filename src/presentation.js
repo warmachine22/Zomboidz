@@ -394,9 +394,9 @@ function labelCanvas(w, h) {
   return { canvas, texture, ctx: canvas.getContext('2d') };
 }
 
-function makeLamp() {
+function makeLamp(map = beamTexture()) {
   const lamp = new THREE.SpotLight(0xffedd2, 0, 17, .49, .78, 2);
-  lamp.map = beamTexture();
+  lamp.map = map;
   lamp.castShadow = true;
   lamp.shadow.mapSize.set(512, 512);
   lamp.shadow.camera.near = .06; lamp.shadow.camera.far = 34;
@@ -458,6 +458,10 @@ export function createPresentation(scene, art, layouts) {
   const canopyLighting = createCanopyLighting();
   const sky = fogSky(scene);
   const lamp = makeLamp();
+  const offhandLamp = makeLamp(lamp.map);
+  offhandLamp.visible = false;
+  offhandLamp.shadow.autoUpdate = false;
+  offhandLamp.shadow.mapSize.set(256, 256);
   const muzzle = new THREE.SpotLight(0xffb77e, 0, 12, .72, .72, 1.65);
   muzzle.castShadow = true;
   muzzle.shadow.autoUpdate = false;
@@ -478,11 +482,14 @@ export function createPresentation(scene, art, layouts) {
     light.shadow.normalBias = .038;
     return light;
   });
-  scene.add(lamp, lamp.target, muzzle, muzzle.target, offhandMuzzle, offhandMuzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
+  scene.add(lamp, lamp.target, offhandLamp, offhandLamp.target,
+    muzzle, muzzle.target, offhandMuzzle, offhandMuzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
   const dot = new THREE.Mesh(new THREE.SphereGeometry(.012, 9, 6),
     new THREE.MeshBasicMaterial({ color:0xf54a36, toneMapped:false, fog:false }));
   dot.visible = false;
-  scene.add(dot);
+  const offhandDot = dot.clone();
+  offhandDot.material = dot.material.clone();
+  scene.add(dot, offhandDot);
   const glow = radialTexture(), burst = radialTexture(true);
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -507,8 +514,9 @@ export function createPresentation(scene, art, layouts) {
   const flashlight = tool('flashlight', lampMount);
   const pistolLamp = tool('pistolLamp', weaponMount, 'flashlight');
   const offhandPistol = tool('pistol', offhandMount);
+  const offhandPistolLamp = tool('pistolLamp', offhandMount, 'flashlight');
   const firstPersonMats = new Map();
-  for (const model of [gloveR, gloveL, flashlight, pistolLamp, offhandPistol, ...Object.values(guns)]) {
+  for (const model of [gloveR, gloveL, flashlight, pistolLamp, offhandPistol, offhandPistolLamp, ...Object.values(guns)]) {
     model.traverse(node => {
       if (!node.isMesh) return;
       if (!firstPersonMats.has(node.material)) {
@@ -632,7 +640,7 @@ export function createPresentation(scene, art, layouts) {
     pool[v.model].push(v);
   }
 
-  function updateEnemies(run, dt, aimedId, aim, alpha) {
+  function updateEnemies(run, dt, aimedIds, aims, alpha) {
     tick++;
     const desired = new Set();
     const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
@@ -657,10 +665,10 @@ export function createPresentation(scene, art, layouts) {
         ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
       const gun = GUNS[run.player.weapon];
       const initial = v.bones ? !v.poseSignature : v.age === dt;
-      const aimLane = aim && d <= gun.range &&
-        (e.x-aim.origin.x)*aim.ray.x+(e.z-aim.origin.z)*aim.ray.z >= 0 &&
-        Math.abs((e.x-aim.origin.x)*aim.ray.z-(e.z-aim.origin.z)*aim.ray.x) <= 1+d*gun.spread;
-      const sample = initial || (tick + e.id) % skip === 0 || e.id === aimedId || aimLane;
+      const sample = initial || (tick + e.id) % skip === 0 || aimedIds.includes(e.id) ||
+        (d <= gun.range && aims.some(({ origin, ray }) =>
+          (e.x-origin.x)*ray.x+(e.z-origin.z)*ray.z >= 0 &&
+          Math.abs((e.x-origin.x)*ray.z-(e.z-origin.z)*ray.x) <= 1+d*gun.spread));
       if (v.bones) {
         if (dead) {
           e.fallAge = Math.min(1.5, run.time - e.diedAt);
@@ -740,9 +748,10 @@ export function createPresentation(scene, art, layouts) {
     return world.clear(from,target);
   }
 
-  function updateLoot(run, fixtures, active, beam) {
+  function updateLoot(run, fixtures, beams) {
     const desired = new Set();
     const p = run.player;
+    const { range, angle } = beamSettings(p);
     const nearest = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && distance(item,p) < 34)
       .map(item => ({item, d:distance(item,p), power:flarePower(run.time-item.born)}))
       .filter(item => item.power > .005)
@@ -766,9 +775,8 @@ export function createPresentation(scene, art, layouts) {
         view = { group, icon, halo }; pickups.set(item.id, view);
       }
       const power = item.kind === 'ammo' ? 0 : flarePower(run.time - item.born);
-      const range = beamSettings(p);
       const spot = v3(item.x, item.y + .45, item.z);
-      const lit = (active && p.flashlight && beam && coneReaches(run.world, beam.origin, beam.ray, spot, range.range, range.angle)) ||
+      const lit = beams.some(beam => coneReaches(run.world, beam.origin, beam.ray, spot, range, angle)) ||
         fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
         nearest.slice(0,quality).some(({item:other,power}) => other.id !== item.id &&
           distance(item,other) < 2.3+power*3.1 && run.world.clear({ ...other,y:other.y+.33 },spot));
@@ -848,7 +856,7 @@ export function createPresentation(scene, art, layouts) {
     watch.texture.needsUpdate = true;
   }
 
-  function updateTools(run, dt, settings, tracking, active, stereo, calibration, beam) {
+  function updateTools(run, dt, settings, tracking, active, stereo, calibration, beam, offhandBeam) {
     const p = run.player, gun = guns[p.weapon];
     watchGroup.visible = stereo;
     for (const [k, m] of Object.entries(guns)) m.visible = k === p.weapon;
@@ -856,6 +864,8 @@ export function createPresentation(scene, art, layouts) {
     lampAnchor.visible = active && !p.offhand && !!tracking.lamp;
     pistolLamp.visible = active && Boolean(p.offhand);
     offhandPistol.visible = Boolean(p.offhand);
+    offhandPistolLamp.visible = offhandPistol.visible;
+    offhandLamp.visible = offhandPistol.visible;
     offhandMuzzle.visible = Boolean(p.offhand);
     const hand = p.offhand ? tracking.offhand : tracking.support || tracking.lamp;
     supportAnchor.visible = active && !!hand;
@@ -900,20 +910,27 @@ export function createPresentation(scene, art, layouts) {
     }
     for (const flash of flashes) updateFlash(flash, run.world, dt, settings, active);
     const { range, angle } = beamSettings(p);
-    if (beam) {
-      lamp.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
-      lamp.target.position.copy(lamp.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
-    }
-    lamp.angle = angle;
-    lamp.distance = range;
     const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
-    lamp.intensity = beam ? (p.beam === 'focus' ? 520 : 340) * power : 0;
-    const litByLamp = lamp.intensity > 0 || calibration;
+    const intensity = (p.beam === 'focus' ? 520 : 340) * power;
+    updateLamp(lamp, beam, range, angle, intensity);
+    updateLamp(offhandLamp, offhandBeam, range, angle, intensity);
+    const litByLamp = lamp.intensity > 0 || offhandLamp.intensity > 0 || calibration;
     if (artworkLit !== litByLamp) {
       artworkLit = litByLamp;
       for (const mat of firstPersonMats.values()) mat.emissiveIntensity = litByLamp ? .85 : 0;
     }
     updateWatch(run);
+  }
+
+  function updateLamp(light, beam, range, angle, intensity) {
+    if (beam) {
+      light.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
+      light.target.position.copy(light.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
+      if (!light.shadow.autoUpdate) light.shadow.needsUpdate = true;
+    }
+    light.angle = angle;
+    light.distance = range;
+    light.intensity = beam ? intensity : 0;
   }
 
   function updateFlash(flash, world, dt, settings, active) {
@@ -944,25 +961,29 @@ export function createPresentation(scene, art, layouts) {
     shot.elapsed += dt;
   }
 
-  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, aim, beam, viewpoint, enemyAlpha }) {
+  function updateAimDot(marker, hit, viewpoint) {
+    marker.visible = Boolean(hit && viewpoint);
+    if (!marker.visible) return;
+    marker.position.set(hit.point.x,hit.point.y,hit.point.z);
+    const away = v3(viewpoint.x,viewpoint.y,viewpoint.z).sub(marker.position);
+    const scale = clamp(away.length() / 9,.65,2.8);
+    marker.position.addScaledVector(away.normalize(), .025+.009*scale);
+    marker.scale.setScalar(scale);
+    marker.material.color.setHex(laserColors[hit.zone] ?? 0xf35347);
+  }
+
+  function update(run, dt, settings, tracking,
+      { active, stereo, calibration, menu, aimHit, aim, offhandAimHit, offhandAim, beam, offhandBeam, viewpoint, enemyAlpha }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
-    updateEnemies(run, dt, aimHit?.e?.id, aim, enemyAlpha);
-    updateLoot(run, fixtures, active, beam);
-    updateTools(run, dt, settings, tracking, active, stereo, calibration, beam);
-    dot.visible = Boolean(aimHit && viewpoint);
-    if (dot.visible) {
-      dot.position.set(aimHit.point.x,aimHit.point.y,aimHit.point.z);
-      const away = v3(viewpoint.x,viewpoint.y,viewpoint.z).sub(dot.position);
-      const distance = away.length();
-      const scale = clamp(distance / 9,.65,2.8);
-      dot.position.addScaledVector(away.normalize(), .025+.009*scale);
-      dot.scale.setScalar(scale);
-      dot.material.color.setHex(laserColors[aimHit.zone] ?? 0xf35347);
-    }
+    updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha);
+    updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean));
+    updateTools(run, dt, settings, tracking, active, stereo, calibration, beam, offhandBeam);
+    updateAimDot(dot, aimHit, viewpoint);
+    updateAimDot(offhandDot, offhandAimHit, viewpoint);
     const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'forest';
     if (tone !== ambiance) {
       tone = ambiance;
@@ -984,10 +1005,11 @@ export function createPresentation(scene, art, layouts) {
   return { update, events, reset, setQuality(value) {
     quality = value;
     const resolution = value > 1 ? 512 : 256;
-    if (lamp.shadow.mapSize.x !== resolution) {
-      lamp.shadow.map?.dispose();
-      lamp.shadow.map = null;
-      lamp.shadow.mapSize.set(resolution,resolution);
+    for (const [light, size] of [[lamp, resolution], [offhandLamp, resolution / 2]]) {
+      if (light.shadow.mapSize.x === size) continue;
+      light.shadow.map?.dispose();
+      light.shadow.map = null;
+      light.shadow.mapSize.set(size,size);
     }
   } };
 }

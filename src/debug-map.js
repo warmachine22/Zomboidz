@@ -1,4 +1,4 @@
-import { beamSettings, flarePower, hordeTarget } from './simulation.js';
+import { activeBeams, beamSettings, flarePower, hordeTarget } from './simulation.js';
 import { direction, distance } from './world.js';
 
 export function drawDebug(canvas, text, run) {
@@ -17,9 +17,8 @@ export function drawDebug(canvas, text, run) {
   }
   g.fillStyle = '#101a19'; g.fillRect(0, 0, w, h);
   const beam = beamSettings(p);
-  if (p.flashlight && run.beam) {
-    const origin = run.beam.origin;
-    const yaw = Math.atan2(run.beam.ray.x, -run.beam.ray.z);
+  for (const { origin, ray } of activeBeams(run)) {
+    const yaw = Math.atan2(ray.x, -ray.z);
     g.beginPath(); g.moveTo(atX(origin.x), atZ(origin.z));
     for (let i = 0; i <= 25; i++) {
       const v = direction(yaw + beam.angle * (i / 12.5 - 1));

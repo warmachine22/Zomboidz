@@ -64,7 +64,7 @@ let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '',
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
 const perfTimes = [];
 let debugVisible = false;
-let aimHit = null;
+let aimHit = null, offhandAimHit = null;
 let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
@@ -470,6 +470,7 @@ function trackedView(stereo, update = false, sample = null, dt = 0, lead = 0) {
     view.tracking.offhandKick = second.gunKick;
     view.offhandAim = mountedAim(second.weapon, layout, view.view);
     view.beam = pistolLampAim(view.tracking.weapon, layouts.pistolLamp, view.view, p.reload, settings.leftHanded);
+    view.offhandBeam = pistolLampAim(second.weapon, layouts.pistolLamp, view.view, p.offhand.reload, !settings.leftHanded);
   } else view.beam = mountedAim(view.tracking.lamp, layouts.flashlight, view.view);
   return view;
 }
@@ -552,7 +553,7 @@ function xrUI(sample, trackedView) {
         lines: settings.legendary ? [
           'Legendary Mode · two 50-round pistols.',
           'Each trigger fires its pistol. A reloads. Y pauses.',
-          'Permanent mounted light. X changes the beam.',
+          'A permanent light on each pistol. X changes both beams.',
           'Weapon grip picks up armor. Ammo collects automatically.',
         ] : [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
           'A reloads. B cycles weapons. Y pauses.',
@@ -622,6 +623,7 @@ function simulate(t, sample, stereo) {
       input.offhandFire = stereo ? queued.offhandFire : queued.fire;
       input.offhandAim = aimed.offhandAim;
       input.offhandUnavailable = stereo && !aimed.offhandAim;
+      input.offhandLamp = aimed.offhandBeam;
     }
     if (motionReplay && run.enemies[0] && !stereo) {
       const shots = run.metrics.shots;
@@ -680,12 +682,17 @@ function frame(now, xrFrame) {
   if (phase === 'playing' && !manualClock && (!stereo || xr.active.visibilityState === 'visible'))
     simulate(previous === phase && (!stereo || sample) ? dt : 0, sample, stereo);
   const view = trackedView(stereo, false, null, 0, accumulator);
-  const active = phase === 'playing';
-  aimHit = active && !run.player.reload && settings.laserDot && view.aim ? traceAim(run, view.aim) : null;
-  const beam = active && run.player.flashlight ? resolvedBeam(run.world, view.beam, view.view?.position) : null;
+  const active = phase === 'playing', p = run.player;
+  const laser = active && settings.laserDot;
+  aimHit = laser && !p.reload && view.aim ? traceAim(run, view.aim) : null;
+  offhandAimHit = laser && p.offhand && !p.offhand.reload && view.offhandAim ? traceAim(run, view.offhandAim) : null;
+  const light = active && p.flashlight;
+  const beam = light && view.beam ? resolvedBeam(run.world, view.beam, view.view?.position) : null;
+  const offhandBeam = light && view.offhandBeam ? resolvedBeam(run.world, view.offhandBeam, view.view?.position) : null;
   presentation.update(run, dt, settings, view.tracking, {
-    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, aimHit, beam,
-    aim: active ? view.aim : null, viewpoint: view.view?.position,
+    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, beam, offhandBeam,
+    aim: active ? view.aim : null, aimHit, offhandAim: active ? view.offhandAim : null, offhandAimHit,
+    viewpoint: view.view?.position,
     enemyAlpha: active && !manualClock ? clamp(accumulator / STEP, 0, 1) : 1,
   });
   if (view.view) {
@@ -721,6 +728,8 @@ if (debugEnabled) {
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.kind === 'ammo' ? 0 : flarePower(run.time - l.born) })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,
     laser: aimHit ? { zone:aimHit.zone, point:aimHit.point } : null,
+    offhandLaser: offhandAimHit ? { zone:offhandAimHit.zone, point:offhandAimHit.point } : null,
+    flashlight: run.beam, offhandFlashlight: run.offhandBeam,
   });
   window.advanceTime = milliseconds => {
     manualClock = true;
