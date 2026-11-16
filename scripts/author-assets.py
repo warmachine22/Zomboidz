@@ -371,7 +371,7 @@ def organic(name, where, scale, mat, jitter=.07, jaw=False):
     return decorate(obj, name, mat)
 
 
-def zombie(kind):
+def zombie(kind, alternate=False):
     reset()
     height, width = {"shambler": (1.77, 1), "shrieker": (1.66, .82), "brute": (2.0, 1.32)}[kind]
     s = height / 1.77
@@ -380,6 +380,12 @@ def zombie(kind):
         "shrieker": ((.18,.142,.112), (.091,.037,.023), (.031,.030,.024)),
         "brute": ((.153,.167,.115), (.089,.107,.051), (.027,.032,.018)),
     }[kind]
+    if alternate:
+        pal = {
+            "shambler": ((.159,.129,.099), (.30,.144,.037), (.045,.064,.073)),
+            "shrieker": ((.133,.172,.142), (.077,.087,.103), (.057,.036,.048)),
+            "brute": ((.168,.125,.102), (.097,.051,.037), (.055,.046,.038)),
+        }[kind]
     skin = material("Discoloured skin", pal[0])
     cloth = material("Weathered coat", pal[1])
     trousers = material("Trousers", pal[2])
@@ -439,15 +445,28 @@ def zombie(kind):
                 groups[-1].add(ids, blend, "REPLACE")
         return obj
 
-    connected("Coat body", [(0,.026,.79,.188,.118,0),(0,.032,.89,.224,.15,0),
+    coat = [(0,.026,.79,.188,.118,0),(0,.032,.89,.224,.15,0),
                (0,.015,1.00,.193,.132,.19),(0,-.003,1.08,.183,.135,.61),
                (0,-.025,1.21,.216,.148,1),(0,-.023,1.32,.243,.131,1),
-               (0,-.023,1.395,.154,.097,1),(0,-.045,1.424,.078,.064,1)], cloth, ("Hips","Spine"))
-    part("Lapel L", (-.082,-.155,1.248), (.063,.025,.175), inner, "Spine").rotation_euler.y = -.24
-    part("Lapel R", (.072,-.168,1.251), (.040,.019,.192), tear, "Spine").rotation_euler.y = .18
+               (0,-.023,1.395,.154,.097,1),(0,-.045,1.424,.078,.064,1)]
+    if kind == "shrieker":
+        coat = [(x,y,z,rx*.88,ry*.81,blend) for x,y,z,rx,ry,blend in coat]
+        coat[0] = (.045,.03,.88,.15,.088,0)
+        coat[5] = (0,-.011,1.325,.235,.107,1)
+    elif kind == "brute":
+        coat = [(x,y,z,rx*(.96 if z<1.08 else 1.15),ry*1.13,blend) for x,y,z,rx,ry,blend in coat]
+    elif not alternate:
+        coat[0] = (-.042,.027,.72,.222,.115,0)
+    connected("Clothing", coat, cloth, ("Hips","Spine"))
+    if kind == "shambler" and not alternate:
+        part("Lapel L", (-.082,-.155,1.248), (.063,.025,.175), inner, "Spine").rotation_euler.y = -.24
+        part("Lapel R", (.072,-.168,1.251), (.040,.019,.192), tear, "Spine").rotation_euler.y = .18
     part("Neck", (0,-.058,1.444), (.082,.084,.113), skin, "Neck")
     head_y = -.065 if kind != "shrieker" else -.16
-    part("Skull", (0,head_y,1.615), (.113,.110,.143), skin, "Head", True)
+    skull = {"shambler": (.113,.110,.143), "shrieker": (.098,.115,.148), "brute": (.122,.110,.135)}[kind]
+    if alternate:
+        skull = (skull[0]*1.06, skull[1], skull[2]*.96)
+    part("Skull", (0,head_y,1.615), skull, skin, "Head", True)
     part("Jaw", (.007,head_y-.032,1.535), (.079,.083,.052), flesh, "Jaw")
     part("Mouth", (.011,head_y-.105,1.558), (.062,.020,.031 if kind == "shrieker" else .020), socket, "Head")
     part("Teeth", (.012,head_y-.120,1.572), (.040,.008,.008), bone, "Head")
@@ -456,8 +475,9 @@ def zombie(kind):
     part("Torn cheek", (.063,head_y-.088,1.583), (.029,.021,.035), flesh, "Head")
     part("Bruised temple", (-.085,head_y-.030,1.646), (.030,.050,.039), inner, "Head")
     part("Open collar", (-.043,-.081,1.394), (.077,.060,.055), skin, "Neck")
-    for button in range(3):
-        part("Jacket snaps", (.027,-.168+.008*button,1.300-button*.105), (.012,.012,.012), leather, "Spine")
+    if kind == "shambler" and not alternate:
+        for button in range(3):
+            part("Jacket snaps", (.027,-.168+.008*button,1.300-button*.105), (.012,.012,.012), leather, "Spine")
     for side in [-1,1]:
         part("Ear", (side*.106,head_y-.008,1.622), (.023,.031,.041), flesh if side==1 else skin, "Head")
         part("Brow", (side*.043,head_y-.092,1.665), (.045,.031,.026), skin, "Head")
@@ -465,12 +485,15 @@ def zombie(kind):
         part("Clouded eye", (side*.044,head_y-.119,1.637), (.012,.005,.009), eye, "Head")
         part("Cheekbone", (side*.072,head_y-.083,1.600), (.028,.025,.044), flesh, "Head")
         suffix = ".L" if side < 0 else ".R"
-        connected("Bent sleeve", [(side*.222,.0,1.404,.079,.091,-.68),(side*.244,-.01,1.32,.093,.09,-.23),
+        arm = [(side*.222,.0,1.404,.079,.091,-.68),(side*.244,-.01,1.32,.093,.09,-.23),
                   (side*.273,-.043,1.214,.078,.075,0),(side*.294,-.091,1.091,.065,.064,.22),
                   (side*.302,-.112,1.036,.063,.056,.52),(side*.306,-.132,.982,.055,.051,.86),
-                  (side*.313,-.154,.91 if side<0 else .956,.048,.046,1)],cloth,("Spine","Arm"+suffix,"Fore"+suffix))
-        part("Forearm", (side*.315,-.151,.907), (.044,.052,.103), skin if side==1 else cloth, "Fore"+suffix)
-        part("Palm", (side*.323,-.182,.797), (.039,.035,.048), skin, "Hand"+suffix)
+                  (side*.313,-.154,.904,.048,.045,1),(side*.321,-.176,.812,.039,.038,1)]
+        bare = kind == "shrieker" and (alternate or side > 0)
+        if bare:
+            arm = [(x,y,z,rx*.83,ry*.86,blend) for x,y,z,rx,ry,blend in arm]
+        connected("Arm and elbow", arm, skin if bare else cloth, ("Spine","Arm"+suffix,"Fore"+suffix))
+        part("Palm", (side*.323,-.182,.797), (.039,.035,.057), skin, "Hand"+suffix)
         for i in range(4):
             x = side*.323 + (i-1.5)*.018
             part("Bent finger", (x,-.205,.747-abs(i-1)*.007), (.011,.015,.041-abs(i-1)*.004), skin, "Hand"+suffix)
@@ -480,17 +503,36 @@ def zombie(kind):
                   (side*.130,.022,.605,.091,.09,.08),(side*.134,.031,.521,.082,.081,.32),
                   (side*.134,.025,.468,.083,.079,.67),(side*.138,.024,.375,.079,.081,1),
                   (side*.137,.026,.205,.064,.065,1),(side*.136,.020,.147,.058,.056,1)],trousers,("Hips","Thigh"+suffix,"Shin"+suffix))
-        part("Boot", (side*.136,-.053,.083), (.079,.145,.078), leather, "Foot"+suffix)
+        sneaker = kind == "shrieker"
+        part("Boot" if not sneaker else "Scuffed sneaker", (side*.136,-.053,.083),
+             (.079,.145,.057 if sneaker else .078), inner if sneaker else leather, "Foot"+suffix)
         part("Worn sole", (side*.136,-.058,.026), (.081,.144,.021), inner, "Foot"+suffix)
-    if kind == "brute":
+    if kind == "brute" and not alternate:
         part("Chest harness", (0,-.158,1.223), (.185,.049,.197), leather, "Spine")
         for sign in [-1, 1]:
             part("Harness straps", (sign*.103,-.185,1.267), (.029,.018,.157), inner, "Spine")
         part("Protective helmet", (0,head_y+.018,1.705), (.135,.129,.093), trousers, "Head")
         part("Forehead plate", (0,head_y-.098,1.701), (.124,.037,.041), cloth, "Head")
+    elif kind == "brute":
+        part("Padded collar", (0,.046,1.41), (.19,.115,.09), inner, "Spine")
+        part("Shoulder pad", (-.235,-.01,1.35), (.106,.122,.11), tear, "Arm.L")
+        part("Belt buckle", (.035,-.133,.926), (.088,.024,.041), leather, "Hips")
+        part("Respirator", (0,head_y-.102,1.568), (.095,.055,.054), inner, "Head")
+        part("Filter", (-.071,head_y-.143,1.556), (.038,.031,.034), leather, "Head")
+    elif kind == "shrieker" and not alternate:
+        part("Collapsed hood", (0,.065,1.374), (.159,.104,.14), tear, "Spine")
+        part("Hood crown", (0,head_y+.028,1.708), (.118,.111,.081), cloth, "Head")
+        part("Torn shirt hem", (.110,-.041,.87), (.090,.069,.072), tear, "Hips")
     elif kind == "shrieker":
-        part("Back of torn hood", (0,.084,1.331), (.173,.080,.13), tear, "Spine")
-        part("Torn shirt hem", (.110,-.041,.841), (.094,.085,.096), tear, "Hips")
+        part("Shaved scalp", (0,head_y+.02,1.732), (.091,.088,.022), inner, "Head")
+        part("Loose scarf", (.101,-.10,1.355), (.056,.046,.14), flesh, "Spine")
+        part("Torn shoulder seam", (.165,-.058,1.357), (.103,.051,.066), tear, "Spine")
+    elif alternate:
+        strip = material("Weathered high visibility trim", (.24,.22,.134))
+        for side in [-1,1]:
+            part("Visibility stripe", (side*.115,-.147,1.213), (.033,.018,.173), strip, "Spine")
+        part("Reflective belt", (0,-.125,.953), (.151,.034,.030), strip, "Hips")
+        part("Knit cap", (0,head_y+.01,1.71), (.121,.12,.065), tear, "Head")
     else:
         part("Patch of hair", (-.025,head_y+.021,1.730), (.097,.104,.051), leather, "Head")
         part("Workwear pocket", (.129,-.158,1.229), (.062,.018,.071), inner, "Spine")
@@ -601,23 +643,25 @@ def zombie(kind):
         track.mute = True
 
     actions = clips(kind)
-    for name, frames, motion in actions:
-        action(name, frames, motion)
-    RIG_DATA[kind] = {
-        "radii": radii,
-        "anchors": [[joint.replace(".", ""), [x*width,z*s,-y*s]] for joint,(x,y,z) in anchors],
-        "stride": LEAD[kind]*s,
-        "contact": CONTACT_FRAME[kind]/next(frames for name,frames,_ in actions if name=="Attack"),
-        "frames": {name:frames for name,frames,_ in actions},
-    }
+    if not alternate:
+        for name, frames, motion in actions:
+            action(name, frames, motion)
+        RIG_DATA[kind] = {
+            "radii": radii,
+            "anchors": [[joint.replace(".", ""), [x*width,z*s,-y*s]] for joint,(x,y,z) in anchors],
+            "stride": LEAD[kind]*s,
+            "contact": CONTACT_FRAME[kind]/next(frames for name,frames,_ in actions if name=="Attack"),
+            "frames": {name:frames for name,frames,_ in actions},
+        }
     bpy.context.scene.frame_set(0)
     apply_pose(rig, actions[0][2](0), s, width, bpy.context.view_layer.update)
     bpy.context.scene.frame_end = 49
     source = OUT.parent.parent / "art-source"
     source.mkdir(exist_ok=True)
     bpy.context.preferences.filepaths.save_version = 0
-    export(kind, True)
-    bpy.ops.wm.save_as_mainfile(filepath=str(source / (kind + ".blend")), compress=True)
+    name = kind + ("-alt" if alternate else "")
+    export(name, not alternate)
+    bpy.ops.wm.save_as_mainfile(filepath=str(source / (name + ".blend")), compress=True)
 
 
 weapons = ["pistol", "shotgun", "smg", "carbine", "flashlight"]
@@ -629,6 +673,8 @@ for name in requested:
         hardware(name)
     elif name in zombies:
         zombie(name)
+        RNG.seed(1308)
+        zombie(name, alternate=True)
     elif name == "glove":
         glove()
     elif name == "wreck":

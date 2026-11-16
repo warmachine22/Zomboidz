@@ -1,11 +1,12 @@
 import { angleDelta, clamp, createWorld, direction, distance, random, START } from './world.js';
-import { animatedAnchors, attackContact, attackDirection, enemyMotion, HIT_SEGMENTS, hitRadii, strideLength, updateEnemyFooting } from './enemy-motion.js';
+import { animatedAnchors, attackContact, attackDirection, burstPhase, BURST_BRAKE, BURST_LOAD, BURST_RUN,
+  enemyMotion, HIT_SEGMENTS, hitRadii, strideLength, updateEnemyFooting } from './enemy-motion.js';
 import { replenishHorde, seedHorde } from './horde.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.5';
+export const BUILD = '1.0.6';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -215,6 +216,8 @@ export function addEnemy(run, kind, x, z) {
     stumble: 0, stumbleDuration: 0, nextStumble: run.time + 2 + index % 7,
     moveSpeed: 0, poseTime: run.time, hitAge: Infinity, startAge: Infinity, turnRate: 0,
   };
+  enemy.appearance = enemy.voiceVariation < .5 ? kind : kind + '-alt';
+  enemy.previousTransform = { x, y: enemy.y, z, yaw: enemy.yaw };
   run.enemies.push(enemy);
   return enemy;
 }
@@ -559,17 +562,20 @@ function attack(run, enemy, gap, dt) {
     }
     if (enemy.attackAge >= windup / contact) {
       enemy.attackAge = undefined;
+      enemy.attackFrom = null;
       enemy.recover = enemy.kind === 'brute' ? .65 : .28;
     }
     return true;
   }
   const triggerReach = shape.reach + (enemy.kind === 'shrieker' ? .54 : .36);
   if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
+    enemy.attackFrom = enemyMotion(enemy, shape.windup).filter(clip => clip[2] > 0);
+    enemy.burstStart = enemy.burst = enemy.brakeUntil = 0;
     enemy.attackClip = enemy.ambush?.stage === 'emerging' ? 'Ambush' : 'Attack';
     enemy.attackWindup = enemy.attackClip === 'Ambush' ? Math.max(.46, shape.windup) : shape.windup;
     enemy.attackAge = 0;
     enemy.windup = enemy.attackWindup;
-    enemy.moveSpeed = 0;
+    enemy.moveSpeed = enemy.stride = 0;
     enemy.footing = enemy.plantLocks = null;
     run.nextAttack = run.time + .33;
     enemyVoice(run, enemy, 'windup');
@@ -595,7 +601,7 @@ function navigate(run, e, tx, tz, dt) {
   const turnDelta = clamp(angleDelta(targetAngle, e.yaw), -dt * look, dt * look);
   e.yaw += turnDelta;
   e.turnRate = turnDelta / dt;
-  const isBurst = e.burst > time && time >= e.burstStart;
+  const burst = burstPhase(e, time), isBurst = burst === 'Sprint';
   const phase = e.gait;
   const stepPace = 1 + (e.kind === 'brute' ? .14 : .11) * Math.sin(2*phase) +
     (e.kind === 'shambler' ? .14 : .06) * Math.sin(phase);
@@ -604,7 +610,7 @@ function navigate(run, e, tx, tz, dt) {
   const speedTarget = (isBurst ? 3.48 : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
   const previous = e.moveSpeed;
-  const targetSpeed = e.burstStart > time ? .18 : e.brakeUntil > time ? speedTarget*.44
+  const targetSpeed = burst === 'BurstLoad' ? .18 : burst === 'Brake' ? speedTarget*.62
     : e.ambush?.stage === 'emerging' ? Math.max(1.75,speedTarget*1.62)
     : e.ambush?.stage === 'seeking' ? Math.max(1.25,speedTarget) : speedTarget;
   const speed = e.moveSpeed += clamp(targetSpeed - e.moveSpeed, -dt * 5.4, dt * (e.kind === 'brute' ? 2.2 : 4.6));
@@ -621,13 +627,15 @@ function navigate(run, e, tx, tz, dt) {
   const moved = Math.hypot(e.x - oldX, e.z - oldZ);
   e.stuck = moved < .001 ? e.stuck + dt : Math.max(0, e.stuck - dt * 3);
   if (e.stuck > 1.1) { e.turnSide *= -1; e.roam += 1.6; e.stuck = 0; }
-  if (moved > .012 && !isBurst && time > e.nextStumble) {
+  if (moved > .012 && !burst && time > e.nextStumble) {
     e.stumbleDuration = (e.kind === 'brute' ? .92 : e.kind === 'shrieker' ? .49 : .75) * (1.17 - .19*e.pace);
     e.stumble = e.stumbleDuration;
     e.nextStumble = time + 3.7 + run.rng()*6.5;
   }
   e.stride = moved / dt;
-  e.gait += moved * Math.PI * 2 / (isBurst ? 1.85 : strideLength(e.kind));
+  const sprintStride = 1.95 * cfg.height / ENEMIES.shambler.height;
+  const stride = isBurst || burst === 'Brake' ? sprintStride : strideLength(e.kind);
+  e.gait += moved * Math.PI * 2 / stride;
   e.y = world.height(e.x, e.z);
   updateEnemyFooting(world,e,cfg.windup,distance(run.player,e));
 }
@@ -654,10 +662,10 @@ function updateEnemies(run, dt) {
     e.slow = Math.max(0, e.slow - dt);
     e.stumble = Math.max(0, e.stumble - dt);
     e.poseTime = time;
+    Object.assign(e.previousTransform, { x: e.x, y: e.y, z: e.z, yaw: e.yaw });
     e.startAge += dt;
     e.hitAge += dt;
     e.turnRate = 0;
-    e.stride = 0;
     if (e.ambush) {
       const beam = p.flashlight && run.beam && beamSettings(p);
       const revealed = beam && inBeam(world,run.beam,eye(world,e,1.28),beam.range,beam.angle);
@@ -672,7 +680,7 @@ function updateEnemies(run, dt) {
         }
         voiceCadence(run,e,gap);
         if (maneuver.destination) navigate(run,e,maneuver.destination.x,maneuver.destination.z,dt);
-        else { e.moveSpeed=0; e.footing=e.plantLocks=null; }
+        else { e.moveSpeed=e.stride=0; e.footing=e.plantLocks=null; }
         continue;
       }
     }
@@ -681,9 +689,9 @@ function updateEnemies(run, dt) {
       continue;
     }
     if (e.kind === 'shrieker' && e.target?.chase && gap > 3.4 && gap < 13 && time > e.nextBurst && e.stun <= 0) {
-      e.burstStart = time + .30;
-      e.burst = time + 1.36;
-      e.brakeUntil = e.burst + .46;
+      e.burstStart = time + BURST_LOAD;
+      e.burst = e.burstStart + BURST_RUN;
+      e.brakeUntil = e.burst + BURST_BRAKE;
       e.nextBurst = time + 4.2 + run.rng() * 1.5;
       enemyVoice(run, e, 'shriek');
       e.lastVoice = time;
@@ -706,7 +714,7 @@ function updateEnemies(run, dt) {
       if (approach > (t.chase ? .80 : 1.25)) navigate(run, e, tx, tz, dt);
       else {
         e.footing=e.plantLocks=null;
-        e.moveSpeed=0;
+        e.moveSpeed=e.stride=0;
         if (!t.chase) e.yaw += dt * .72 * e.turnSide;
       }
     }

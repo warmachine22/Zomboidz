@@ -61,6 +61,42 @@ def cycle(kind, t, sprint=False):
         "foot.R": stance(right_t, .70 if shambler else .60 if not sprint else .37,
                          length, .037 if shambler else .12 if not sprint else .28, .137),
     }
+    if sprint:
+        surge = math.cos(2*a-.3)
+        pose["root"] = (.028*step, -.076-.027*surge, -.185-.032*surge)
+        pose["Hips"] = (.22, .14*math.sin(a), -.09*step)
+        pose["Spine"] = (.57, .23*math.sin(a-.4), .13*math.cos(a-.4))
+        pose["Arm.L"] = (-.48+.78*math.sin(a-.28), .09, -.21)
+        pose["Arm.R"] = (-.38-.73*math.sin(a-.28), -.09, .19)
+        pose["Fore.L"] = (-.73-.25*math.sin(a-.28),0,0)
+        pose["Fore.R"] = (-.75+.27*math.sin(a-.28),0,0)
+    elif shambler:
+        # The left leg catches the body, then the injured right leg trails low.
+        drop = value(t, [(0,.45),(.17,1),(.50,0),(.80,.1),(1,.45)])
+        reach = value(t, [(0,.5),(.34,1),(.66,0),(1,.5)])
+        pose["root"] = (.084*step, -.023*drop, -.055-.076*drop)
+        pose["Hips"] = (.08+.12*drop,.17*math.sin(a),-.20*step)
+        pose["Spine"] = (.29+.10*drop,.20*math.sin(a-.5),.19*math.cos(a-.5))
+        pose["Head"] = (-.14+.10*math.cos(a-.92),.12*math.sin(a-.82),-.095*step)
+        pose["Arm.R"] = (-.59-.63*reach,-.12,.16)
+        pose["Fore.R"] = (-.32+.28*reach,0,-.09)
+        pose["foot.R"] = stance(right_t,.70,length,.021,.145)
+    elif slow:
+        # A wide base carries a stiff upper body. The chest follows the planted step.
+        load = math.cos(2*a-.33)
+        pose["root"] = (.061*step, .026*load, -.089-.036*load)
+        pose["Hips"] = (.10,.13*math.sin(a),-.13*step)
+        pose["Spine"] = (.14-.085*load,.17*math.sin(a-.65),.11*math.cos(a-.48))
+        pose["Arm.L"] = (-.15+.34*math.sin(a-.51),.12,-.25)
+        pose["Arm.R"] = (-.30-.29*math.sin(a-.51),-.11,.29)
+        pose["foot.L"] = stance(left_t,.60,length,.092,-.166)
+        pose["foot.R"] = stance(right_t,.60,length,.082,.168)
+    else:
+        pose["root"] = (.034*step,-.053,-.111-.028*math.cos(2*a))
+        pose["Spine"] = (.47,.14*math.sin(a-.33),.12*math.cos(a-.4))
+        pose["Neck"] = (-.23,.16*math.sin(a-.60),-.04*step)
+        pose["Arm.L"] = (-.61+.40*math.sin(a-.35),.15,-.19)
+        pose["Arm.R"] = (-.67-.42*math.sin(a-.35),-.15,.19)
     return pose
 
 
@@ -80,7 +116,7 @@ def idle(kind, t, cover=False):
 def shift_pose(kind, t, style):
     if style in ("BurstLoad", "Brake"):
         p = idle(kind, .26, True)
-        pulse = math.sin(math.pi*t)**1.2
+        pulse = ease(t) if style == "BurstLoad" else math.sin(math.pi*t)**1.2
         p["root"] = (-.047*pulse, -.080*pulse if style=="BurstLoad" else -.14*pulse, -.10-.15*pulse)
         p["Spine"] = (.28+(.43 if style=="BurstLoad" else -.51)*pulse,.18*pulse,-.13*pulse)
         p["Jaw"] = (-.69*pulse-.09,0,0)
@@ -129,6 +165,10 @@ def strike(kind, t, ambush=False):
         "foot.L": (-.15,-.105-.33*reach,.109+.055*math.sin(math.pi*reach)),
         "foot.R": (.18,.16,.109),
     })
+    if brute:
+        p["root"] = (.138*load-.14*reach,.12*load-.21*reach,-.079-.16*load-.13*reach)
+        p["Spine"] = (.16-.37*load+.36*reach,.81*load-.56*reach,-.40*load+.22*reach)
+        p["foot.R"] = (.202,.17,.109)
     return p
 
 

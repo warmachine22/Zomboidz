@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { Quaternion, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { ambushDecision, reserveAmbush } from '../src/ambush.js';
-import { animatedAnchors, attackContact, solvedEnemyPose, strideLength, updateEnemyFooting } from '../src/enemy-motion.js';
+import { animatedAnchors, attackContact, burstPhase, enemyMotion, interpolateEnemyTransform,
+  solvedEnemyPose, strideLength, updateEnemyFooting } from '../src/enemy-motion.js';
 import { addEnemy, createRun, ENEMIES, hordeTarget, STEP, stepRun } from '../src/simulation.js';
 import { listScores, recordRun } from '../src/records.js';
 import { createWorld } from '../src/world.js';
@@ -62,6 +63,53 @@ function room(difficulty='standard') {
     move(p,x,z){p.x+=x;p.z+=z;}});
   return run;
 }
+
+test('shrieker loads, accelerates through an animated sprint and only then brakes', () => {
+  const run = room(), p = run.player;
+  p.protection = 8;
+  const enemy = addEnemy(run, 'shrieker', p.x, p.z - 11);
+  enemy.target = { x: p.x, z: p.z, chase: true };
+  enemy.nextThink = Infinity;
+  enemy.nextBurst = 0;
+  const phases = new Set(), sprintCycles = new Set();
+  let peak = 0, brakeExit = Infinity;
+  for (let i = 0; i < 64; i++) {
+    stepRun(run);
+    const phase = burstPhase(enemy);
+    if (!phase) continue;
+    phases.add(phase);
+    const clips = enemyMotion(enemy, ENEMIES.shrieker.windup);
+    assert.ok(Math.abs(clips.reduce((sum, clip) => sum + clip[2], 0) - 1) < 1e-8);
+    if (phase === 'Sprint') {
+      const sprint = clips.find(([name]) => name === 'Sprint');
+      if (sprint[2] > .95) sprintCycles.add(sprint[1]);
+      assert.ok(clips.every(([name]) => name !== 'Brake'));
+      peak = Math.max(peak, enemy.stride);
+    }
+    if (phase === 'Brake') brakeExit = enemy.stride;
+  }
+  assert.deepEqual([...phases], ['BurstLoad','Sprint','Brake']);
+  assert.ok(sprintCycles.size > 15 && peak > 3);
+  assert.ok(brakeExit < peak * .6);
+});
+
+test('render transforms interpolate the last movement tick and take the short turn across pi', () => {
+  const run = room(), p = run.player;
+  const enemy = addEnemy(run, 'shambler', p.x, p.z - 5);
+  enemy.roam = Math.PI;
+  assert.equal(interpolateEnemyTransform(enemy,.5,new Vector3()),enemy.yaw);
+  for (let i=0; i<8; i++) {
+    const before = enemy.z;
+    stepRun(run);
+    assert.equal(enemy.previousTransform.z,before);
+    const position = new Vector3();
+    interpolateEnemyTransform(enemy,.5,position);
+    assert.equal(position.z,before + (enemy.z-before)/2);
+  }
+  enemy.previousTransform.yaw = Math.PI - .04;
+  enemy.yaw = -Math.PI + .04;
+  assert.ok(Math.abs(interpolateEnemyTransform(enemy,.5,new Vector3())-Math.PI) < 1e-8);
+});
 
 test('an existing zombie waits behind cover and follows a close footstep after an audible cue', () => {
   const run=room('hard'), p=run.player;
@@ -150,10 +198,10 @@ test('a planted shambler foot stays put and close slope correction brings its an
 });
 
 test('the shipped skin and simulation use the same blended joint transforms for head and hands', async () => {
-  for (const kind of ['shambler','shrieker','brute']) {
-    const bytes=await readFile(new URL('../assets/art/'+kind+'.glb',import.meta.url));
+  for (const kind of ['shambler','shrieker','brute']) for (const suffix of ['', '-alt']) {
+    const bytes=await readFile(new URL('../assets/art/'+kind+suffix+'.glb',import.meta.url));
     const {scene,animations}=await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.length),'');
-    assert.ok(animations.some(clip=>clip.name==='FallLeft'));
+    assert.ok(suffix ? animations.length === 0 : animations.some(clip=>clip.name==='FallLeft'));
     const entity={kind,id:1,gait:1.43,stride:.71,turnRate:2.3,hitAge:.12,hitFrom:'Right',x:2,y:.2,z:3,yaw:.7};
     const solved=solvedEnemyPose(entity,.6);
     scene.rotation.y=Math.PI-entity.yaw;

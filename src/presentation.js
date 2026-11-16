@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
-import { beamSettings, ENEMIES, flarePower, GUNS, LOOT } from './simulation.js';
-import { legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
+import { beamSettings, ENEMIES, flarePower, GUNS, LOOT, STEP } from './simulation.js';
+import { burstPhase, interpolateEnemyTransform, legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
 
 const textures = new THREE.TextureLoader();
@@ -51,7 +51,8 @@ const surfaces = {
 surfaces.stone.map.repeat.set(1.55, 1.55);
 surfaces.boards.map.repeat.set(2.2, .6);
 
-const modelNames = [...Object.keys(GUNS), 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
+const enemyModels = Object.keys(ENEMIES).flatMap(kind => [kind, kind + '-alt']);
+const modelNames = [...Object.keys(GUNS), 'flashlight', 'glove', 'wreck', ...enemyModels];
 export async function loadArt(legacyMotion = false) {
   const source = await Promise.all(modelNames.map(name =>
     models.loadAsync(new URL('./assets/art/' + name + '.glb', import.meta.url).href)));
@@ -523,7 +524,7 @@ export function createPresentation(scene, art, layouts) {
   const flares = Array.from({ length: 3 }, () => new THREE.PointLight(0xffa661, 0, 5.9, 1.65));
   scene.add(...flares);
   const chunks = new Map(), enemyMeshes = new Map(), pickups = new Map();
-  const pool = Object.fromEntries(Object.keys(ENEMIES).map(k => [k, []]));
+  const pool = Object.fromEntries(enemyModels.map(name => [name, []]));
   const effects = [];
   const effectGeometry = new THREE.TetrahedronGeometry(.038);
   const effectMaterials = {
@@ -584,12 +585,15 @@ export function createPresentation(scene, art, layouts) {
     return changed;
   }
 
-  function borrowEnemy(kind) {
-    const reused = pool[kind].pop();
+  function borrowEnemy(kind, appearance) {
+    const model = kind === 'shambler' && art.legacyShambler ? kind : appearance;
+    const reused = pool[model].pop();
     if (reused) {
-      reused.root.visible = true; reused.deadAt = -1; reused.age = 0; return reused;
+      reused.root.visible = true; reused.deadAt = -1; reused.age = 0;
+      reused.poseSignature = null;
+      return reused;
     }
-    const source = kind === 'shambler' && art.legacyShambler ? art.legacyShambler : art[kind];
+    const source = kind === 'shambler' && art.legacyShambler ? art.legacyShambler : art[model];
     const root = new THREE.Group(), character = clone(source.scene);
     root.add(character);
     character.rotation.y = Math.PI;
@@ -600,25 +604,26 @@ export function createPresentation(scene, art, layouts) {
     });
     canopyLighting.shade(character);
     scene.add(root);
-    const currentPose = source === art[kind] ? solvedEnemyPose({kind, gait:0}, ENEMIES[kind].windup) : null;
+    const currentPose = source === art[model] ? solvedEnemyPose({kind, gait:0}, ENEMIES[kind].windup) : null;
     const bones = currentPose?.rig.bones.map(name => character.getObjectByName(name));
+    const targets = bones?.map(() => ({ position: new THREE.Vector3(), rotation: new THREE.Quaternion() }));
     const mixer = bones ? null : new THREE.AnimationMixer(character);
     const actions = {};
     if (mixer) for (const clip of source.animations) {
       actions[clip.name] = mixer.clipAction(clip).play();
       actions[clip.name].setEffectiveWeight(clip.name === 'Walk' ? 1 : 0);
     }
-    return { root, character, bones, mixer, kind, actions, deadAt: -1, age: 0 };
+    return { root, character, bones, targets, mixer, model, actions, deadAt: -1, age: 0 };
   }
 
   function releaseEnemy(v) {
     v.root.visible = false;
     v.character.rotation.set(0, Math.PI, 0);
     v.character.position.set(0, 0, 0);
-    pool[v.kind].push(v);
+    pool[v.model].push(v);
   }
 
-  function updateEnemies(run, dt, aimedId, aim) {
+  function updateEnemies(run, dt, aimedId, aim, alpha) {
     tick++;
     const desired = new Set();
     const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
@@ -626,10 +631,9 @@ export function createPresentation(scene, art, layouts) {
       if (distance(e, run.player) > 50) continue;
       desired.add(e.id);
       let v = enemyMeshes.get(e.id);
-      if (!v) { v = borrowEnemy(e.kind); enemyMeshes.set(e.id, v); }
+      if (!v) { v = borrowEnemy(e.kind, e.appearance ?? e.kind); enemyMeshes.set(e.id, v); }
       const d = distance(e, run.player), dead = e.diedAt !== undefined;
-      v.root.position.set(e.x, e.y, e.z);
-      v.root.rotation.y = -e.yaw;
+      v.root.rotation.y = -interpolateEnemyTransform(e, alpha, v.root.position);
       if (dead && !v.bones) {
         const time = run.time - e.diedAt, rate = e.kind === 'brute' ? 1.2 : e.kind === 'shrieker' ? 2.05 : 1.48;
         const slump = 1 - (1 - Math.min(1, time * rate)) ** 2;
@@ -639,28 +643,39 @@ export function createPresentation(scene, art, layouts) {
         v.character.position.y = Math.min(.15, slump * .19) - clamp((time - 8) * .30, 0, .34);
         continue;
       }
-      v.age += dt;
-      const skip = d < 13 || e.attackAge !== undefined || dead ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
-      if ((tick + e.id) % skip && e.id !== aimedId && v.age !== dt) {
-        const gun = GUNS[run.player.weapon];
-        if (!aim || d>gun.range ||
-          (e.x-aim.origin.x)*aim.ray.x+(e.z-aim.origin.z)*aim.ray.z<0 ||
-          Math.abs((e.x-aim.origin.x)*aim.ray.z-(e.z-aim.origin.z)*aim.ray.x)>1+d*gun.spread) continue;
-      }
+      if (!v.bones) v.age += dt;
+      const skip = d < 13 || (d < 26 && burstPhase(e)) || e.attackAge !== undefined || dead
+        ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
+      const gun = GUNS[run.player.weapon];
+      const initial = v.bones ? !v.poseSignature : v.age === dt;
+      const aimLane = aim && d <= gun.range &&
+        (e.x-aim.origin.x)*aim.ray.x+(e.z-aim.origin.z)*aim.ray.z >= 0 &&
+        Math.abs((e.x-aim.origin.x)*aim.ray.z-(e.z-aim.origin.z)*aim.ray.x) <= 1+d*gun.spread;
+      const sample = initial || (tick + e.id) % skip === 0 || e.id === aimedId || aimLane;
       if (v.bones) {
         if (dead) {
           e.fallAge = Math.min(1.5, run.time - e.diedAt);
           v.character.position.y = -clamp((run.time - e.diedAt - 8) * .3, 0, .34);
         }
-        const { joints, signature } = solvedEnemyPose(e, ENEMIES[e.kind].windup);
-        if (v.poseSignature !== signature) {
-          v.poseSignature = signature;
-          for (const [i, bone] of v.bones.entries()) {
-            bone.position.copy(joints[i].position);
-            bone.quaternion.copy(joints[i].rotation);
+        if (sample) {
+          const { joints, signature } = solvedEnemyPose(e, ENEMIES[e.kind].windup);
+          if (v.poseSignature !== signature) {
+            v.poseSignature = signature;
+            for (const [i, target] of v.targets.entries()) {
+              target.position.copy(joints[i].position);
+              target.rotation.copy(joints[i].rotation);
+            }
           }
         }
-      } else for (const [name, phase, weight] of legacyEnemyMotion(e, ENEMIES[e.kind].windup)) {
+        const blend = initial ? 1 : 1 - Math.exp(-dt / (STEP * (skip > 1 ? 1.45 : .66)));
+        for (const [i, bone] of v.bones.entries()) {
+          bone.position.lerp(v.targets[i].position, blend);
+          bone.quaternion.slerp(v.targets[i].rotation, blend);
+        }
+        continue;
+      }
+      if (!sample) continue;
+      for (const [name, phase, weight] of legacyEnemyMotion(e, ENEMIES[e.kind].windup)) {
         const action = v.actions[name];
         if (!action) continue;
         action.setEffectiveWeight(weight);
@@ -905,13 +920,13 @@ export function createPresentation(scene, art, layouts) {
     shot.elapsed += dt;
   }
 
-  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, aim, beam, viewpoint }) {
+  function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, aim, beam, viewpoint, enemyAlpha }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
-    updateEnemies(run, dt, aimHit?.e?.id, aim);
+    updateEnemies(run, dt, aimHit?.e?.id, aim, enemyAlpha);
     updateLoot(run, fixtures, active, beam);
     updateTools(run, dt, settings, tracking, active, stereo, calibration, beam);
     dot.visible = Boolean(aimHit && viewpoint);

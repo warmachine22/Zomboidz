@@ -1,4 +1,4 @@
-import { clamp } from './world.js';
+import { angleDelta, clamp } from './world.js';
 import { ENEMY_RIGS } from './enemy-rigs.js';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
@@ -30,6 +30,28 @@ const cache = new WeakMap(), decoded = new WeakMap();
 export const strideLength = kind => ENEMY_RIGS[kind].stride;
 export const attackContact = kind => ENEMY_RIGS[kind].contact;
 export const hitRadii = kind => ENEMY_RIGS[kind].radii;
+export const BURST_LOAD = .30;
+export const BURST_RUN = 1.06;
+export const BURST_BRAKE = .46;
+const ease = progress => {
+  const t = clamp(progress, 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+export function burstPhase(enemy, time = enemy.poseTime) {
+  if (enemy.kind !== 'shrieker') return null;
+  if (time < enemy.burstStart) return 'BurstLoad';
+  if (time < enemy.burst) return 'Sprint';
+  if (time < enemy.brakeUntil) return 'Brake';
+  return null;
+}
+
+export function interpolateEnemyTransform(enemy, alpha, position) {
+  const from = enemy.previousTransform || enemy;
+  position.set(from.x + (enemy.x - from.x) * alpha, from.y + (enemy.y - from.y) * alpha,
+    from.z + (enemy.z - from.z) * alpha);
+  return from.yaw + angleDelta(enemy.yaw, from.yaw) * alpha;
+}
 
 export function attackDirection(enemy, ray) {
   const front = -Math.sin(enemy.yaw)*ray.x + Math.cos(enemy.yaw)*ray.z;
@@ -47,28 +69,40 @@ export function enemyMotion(enemy, windup) {
         enemy.fallFrom ? weight : 1]];
   }
   const idle = [enemy.ambush?.stage === 'holding' ? 'Cover' : 'Idle', (t * .49 + (enemy.id ?? 0)*.37) % 1, 1];
-  let base = idle;
   if (enemy.attackAge !== undefined) {
     const phase = enemy.attackAge * attackContact(kind) / (enemy.attackWindup ?? windup);
-    const weight = clamp(Math.min(phase * 13, (1 - phase) * 6), 0, 1);
-    return [[...idle.slice(0, 2), 1 - weight],
+    const weight = ease(Math.min(phase * 13, (1 - phase) * 6));
+    const entry = enemy.attackFrom ? 1 - ease(enemy.attackAge / .18) : 0;
+    const incoming = enemy.attackFrom || [];
+    return [[idle[0], idle[1], (1 - weight) * (1 - entry)],
+      ...incoming.map(([name, at, blend]) => [name, at, blend * entry * (1 - weight)]),
       [enemy.attackClip || 'Attack', clamp(phase, 0, 1), weight]];
   }
   const speed = enemy.stride ?? 0;
-  if (kind === 'shrieker' && enemy.burstStart > t) {
-    base = ['BurstLoad', clamp(1 - (enemy.burstStart - t) / .30, 0, 1), 1];
-  } else if (enemy.brakeUntil > t) {
-    base = ['Brake', clamp(1 - (enemy.brakeUntil - t) / .46, 0, 1), 1];
-  } else if (speed > .035) {
-    base = [kind === 'shrieker' && enemy.burst > t ? 'Sprint' : 'Walk', cycle, clamp(speed * 2.9, 0, 1)];
+  const walk = ease(speed / .45);
+  let base = [[idle[0], idle[1], 1 - walk], ['Walk', cycle, walk]];
+  const phase = burstPhase(enemy, t);
+  if (phase === 'BurstLoad') {
+    const progress = 1 - (enemy.burstStart - t) / BURST_LOAD;
+    const weight = ease(progress / .42);
+    base = [...base.map(([name, at, blend]) => [name, at, blend * (1 - weight)]), [phase, progress, weight]];
+  } else if (phase === 'Sprint') {
+    const weight = ease((t - enemy.burstStart) / .15);
+    base = [['BurstLoad', 1, 1 - weight], [phase, cycle, weight]];
+  } else if (phase === 'Brake') {
+    const progress = 1 - (enemy.brakeUntil - t) / BURST_BRAKE;
+    const weight = ease(progress / .42);
+    const release = ease((progress - .50) / .5);
+    base = [['Sprint', cycle, 1 - weight], [phase, progress, weight * (1 - release)],
+      ...base.map(([name, at, blend]) => [name, at, blend * weight * release])];
   }
   const additions = [];
-  if (enemy.stumble > 0) {
+  if (!phase && enemy.stumble > 0) {
     const phase = clamp(1 - enemy.stumble / enemy.stumbleDuration, 0, 1);
     additions.push(['Stumble', phase, Math.sin(phase * Math.PI) ** .56]);
-  } else if (speed > .12 && Math.abs(enemy.turnRate ?? 0) > 1.5) {
+  } else if (!phase && speed > .12 && Math.abs(enemy.turnRate ?? 0) > 1.5) {
     additions.push([enemy.turnRate > 0 ? 'TurnR' : 'TurnL', cycle, clamp((Math.abs(enemy.turnRate)-1.5)*.14, 0, .40)]);
-  } else if (enemy.startAge < .19) {
+  } else if (!phase && enemy.startAge < .19) {
     const phase = enemy.startAge / .19;
     additions.push(['Start', phase, .36 * Math.sin(Math.PI * phase)]);
   }
@@ -77,8 +111,7 @@ export function enemyMotion(enemy, windup) {
   const scale = additions.reduce((total, clip) => total * (1 - clip[2]), 1);
   const totalWeight = additions.reduce((total, clip) => total + clip[2], 0);
   for (const clip of additions) clip[2] *= (1 - scale) / (totalWeight || 1);
-  if (base === idle) return [[idle[0], idle[1], scale], ...additions];
-  return [[idle[0], idle[1], (1-base[2])*scale], [base[0], base[1], base[2]*scale], ...additions];
+  return [...base.map(([name, at, weight]) => [name, at, weight * scale]), ...additions];
 }
 
 function samples(clip) {
@@ -170,7 +203,7 @@ function fitLeg({rig,joints}, side, offset) {
 
 export function updateEnemyFooting(world, enemy, windup, gap) {
   if (gap>12 || enemy.stride<.14 || enemy.attackAge!==undefined || enemy.stumble>0 || enemy.hitAge<.29 ||
-      enemy.burst>enemy.poseTime || enemy.brakeUntil>enemy.poseTime) {
+      burstPhase(enemy)) {
     enemy.footing=null;
     enemy.plantLocks=null;
     return;

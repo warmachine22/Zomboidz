@@ -649,6 +649,7 @@ function frame(now, xrFrame) {
   presentation.update(run, dt, settings, view.tracking, {
     active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, aimHit, beam,
     aim: active ? view.aim : null, viewpoint: view.view?.position,
+    enemyAlpha: active && !manualClock ? clamp(accumulator / STEP, 0, 1) : 1,
   });
   if (view.view) {
     audio.listener(view.view.position, direction0.clone().applyQuaternion(view.view.quaternion),
@@ -679,7 +680,7 @@ setPhase('menu');
 if (debugEnabled) {
   window.render_game_to_text = () => JSON.stringify({
     phase, seed: run.seed, difficulty:run.difficulty, elapsed: Number(run.time.toFixed(2)), player: run.player,
-    enemies: run.enemies.map(({ id, kind, x, z, reason, route }) => ({ id, kind, x, z, reason, route })),
+    enemies: run.enemies.map(({ id, kind, appearance, x, z, reason, route }) => ({ id, kind, appearance, x, z, reason, route })),
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.kind === 'ammo' ? 0 : flarePower(run.time - l.born) })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,
     laser: aimHit ? { zone:aimHit.zone, point:aimHit.point } : null,
