@@ -490,6 +490,18 @@ export function createPresentation(scene, art, layouts) {
   const offhandDot = dot.clone();
   offhandDot.material = dot.material.clone();
   scene.add(dot, offhandDot);
+  const attackerLabel = labelCanvas(256, 64);
+  const label = attackerLabel.ctx;
+  label.fillStyle = '#20251bed'; label.fillRect(0, 0, 256, 64);
+  label.strokeStyle = '#d0ab73'; label.lineWidth = 4; label.strokeRect(2, 2, 252, 60);
+  label.fillStyle = '#f5e0af'; label.font = 'bold 25px monospace'; label.textAlign = 'center';
+  label.fillText('FATAL ATTACKER', 128, 41);
+  attackerLabel.texture.needsUpdate = true;
+  const attackerMarker = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: attackerLabel.texture, toneMapped: false, transparent: true, depthWrite: false,
+  }));
+  attackerMarker.visible = false;
+  scene.add(attackerMarker);
   const glow = radialTexture(), burst = radialTexture(true);
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -640,7 +652,7 @@ export function createPresentation(scene, art, layouts) {
     pool[v.model].push(v);
   }
 
-  function updateEnemies(run, dt, aimedIds, aims, alpha) {
+  function updateEnemies(run, dt, aimedIds, aims, alpha, frozen) {
     tick++;
     const desired = new Set();
     const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
@@ -665,7 +677,7 @@ export function createPresentation(scene, art, layouts) {
         ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
       const gun = GUNS[run.player.weapon];
       const initial = v.bones ? !v.poseSignature : v.age === dt;
-      const sample = initial || (tick + e.id) % skip === 0 || aimedIds.includes(e.id) ||
+      const sample = frozen || initial || (tick + e.id) % skip === 0 || aimedIds.includes(e.id) ||
         (d <= gun.range && aims.some(({ origin, ray }) =>
           (e.x-origin.x)*ray.x+(e.z-origin.z)*ray.z >= 0 &&
           Math.abs((e.x-origin.x)*ray.z-(e.z-origin.z)*ray.x) <= 1+d*gun.spread));
@@ -684,7 +696,7 @@ export function createPresentation(scene, art, layouts) {
             }
           }
         }
-        const blend = initial ? 1 : 1 - Math.exp(-dt / (STEP * (skip > 1 ? 1.45 : .66)));
+        const blend = frozen || initial ? 1 : 1 - Math.exp(-dt / (STEP * (skip > 1 ? 1.45 : .66)));
         for (const [i, bone] of v.bones.entries()) {
           bone.position.lerp(v.targets[i].position, blend);
           bone.quaternion.slerp(v.targets[i].rotation, blend);
@@ -858,19 +870,20 @@ export function createPresentation(scene, art, layouts) {
     watch.texture.needsUpdate = true;
   }
 
-  function updateTools(run, dt, settings, tracking, active, stereo, calibration, beam, offhandBeam) {
+  function updateTools(run, dt, settings, tracking, active, inspecting, stereo, calibration, beam, offhandBeam) {
     const p = run.player, gun = guns[p.weapon];
+    const showHands = active || inspecting;
     watchGroup.visible = stereo;
     for (const [k, m] of Object.entries(guns)) m.visible = k === p.weapon;
-    weaponAnchor.visible = (active || calibration) && !!tracking.weapon;
-    lampAnchor.visible = active && !p.offhand && !!tracking.lamp;
-    pistolLamp.visible = active && Boolean(p.offhand);
+    weaponAnchor.visible = (showHands || calibration) && !!tracking.weapon;
+    lampAnchor.visible = showHands && !p.offhand && !!tracking.lamp;
+    pistolLamp.visible = showHands && Boolean(p.offhand);
     offhandPistol.visible = Boolean(p.offhand);
     offhandPistolLamp.visible = offhandPistol.visible;
     offhandLamp.visible = offhandPistol.visible;
     offhandMuzzle.visible = Boolean(p.offhand);
     const hand = p.offhand ? tracking.offhand : tracking.support || tracking.lamp;
-    supportAnchor.visible = active && !!hand;
+    supportAnchor.visible = showHands && !!hand;
     if (tracking.weapon) {
       weaponAnchor.position.copy(tracking.weapon.position);
       weaponAnchor.quaternion.copy(tracking.weapon.quaternion);
@@ -972,17 +985,25 @@ export function createPresentation(scene, art, layouts) {
   }
 
   function update(run, dt, settings, tracking,
-      { active, stereo, calibration, menu, aimHit, aim, offhandAimHit, offhandAim, beam, offhandBeam, viewpoint, enemyAlpha }) {
+      { active, inspecting, stereo, calibration, menu, aimHit, aim, offhandAimHit, offhandAim, beam, offhandBeam, viewpoint, enemyAlpha }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
+    const frozen = run.status === 'dead';
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
-    updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha);
+    updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha, frozen);
     updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean));
-    updateTools(run, dt, settings, tracking, active, stereo, calibration, beam, offhandBeam);
+    updateTools(run, dt, settings, tracking, active, inspecting, stereo, calibration, beam, offhandBeam);
     updateAimDot(dot, aimHit, viewpoint);
     updateAimDot(offhandDot, offhandAimHit, viewpoint);
+    const attacker = inspecting ? run.death?.attacker : null;
+    attackerMarker.visible = Boolean(attacker && viewpoint);
+    if (attackerMarker.visible) {
+      attackerMarker.position.set(attacker.x, attacker.y + .08, attacker.z);
+      const width = clamp(attackerMarker.position.distanceTo(viewpoint) * .31, .12, .48);
+      attackerMarker.scale.set(width, width / 4, 1);
+    }
     const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'forest';
     if (tone !== ambiance) {
       tone = ambiance;
@@ -990,7 +1011,7 @@ export function createPresentation(scene, art, layouts) {
       ambient.intensity = !menu && settings.visibility ? .83 : .63;
       scene.fog.color.set(!menu && settings.visibility ? 0x23323b : 0x1c2731);
     }
-    for (let i = effects.length - 1; i >= 0; i--) {
+    for (let i = effects.length - 1; !frozen && i >= 0; i--) {
       const effect = effects[i];
       effect.age -= dt; effect.velocity.y -= dt * 5.8;
       effect.mesh.position.addScaledVector(effect.velocity, dt);

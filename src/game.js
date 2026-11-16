@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, LOOT, resolvePlayerBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
+import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, LOOT,
+  resolvePlayerBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
@@ -58,7 +59,7 @@ void xr.supported().then(ok => {
 let phase = 'menu', run = createRun('Blackwater', { populate: false }), runId = '';
 let resultNote = '', deathMessage = '', pauseReason = '';
 let yaw = .20, pitch = -.026, roomX = 0, roomZ = 0;
-let joystick = { x: 0, y: 0 }, desktopFire = false, touchFire = false, dragDistance = 0;
+let joystick = { x: 0, y: 0 }, desktopFire = false, touchFire = false, inspectDrag = false, dragDistance = 0;
 let lastTime, accumulator = 0, manualClock = false, manualRemainder = 0, hudAt = -1, debugAt = -1;
 let notice = '', noticeUntil = 0, headTrackedAt = 0, deathAt = 0, panelKey = '', useMouseDrag = false;
 let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0, maxFrame = 0, perfSample = null;
@@ -73,7 +74,7 @@ const text = (id, value) => { $(id).textContent = value; };
 function clearInput() {
   held.clear();
   for (const action of Object.keys(queued)) delete queued[action];
-  desktopFire = touchFire = false;
+  desktopFire = touchFire = inspectDrag = false;
   joystick = { x: 0, y: 0 };
   roomX = roomZ = accumulator = 0;
   $('stick').firstElementChild.style.transform = '';
@@ -85,11 +86,13 @@ function setPhase(next) {
   handling.reset(run.player.weapon);
   offhandHandling.reset('pistol');
   panelKey = '';
-  const running = phase === 'playing', isXR = !!xr.active;
+  const running = phase === 'playing', inspecting = phase === 'inspect', isXR = !!xr.active;
   document.body.classList.toggle('running', running);
+  document.body.classList.toggle('inspecting', inspecting);
   $('shell').hidden = phase !== 'menu';
   $('hud').hidden = !running || isXR;
-  $('touch').hidden = !running || !touch || isXR;
+  $('touch').hidden = !(running || inspecting) || !touch || isXR;
+  $('death-view').hidden = !inspecting || isXR;
   $('pause').hidden = phase !== 'paused';
   $('results').hidden = phase !== 'results';
   $('debug').hidden = !running || !debugVisible || isXR;
@@ -203,7 +206,7 @@ function resultScore() {
   text('result-storage', resultNote);
 }
 
-function results() {
+function inspectDeath() {
   if (phase !== 'playing') return;
   deathAt = performance.now();
   const { kind, yaw: angle } = run.death;
@@ -215,8 +218,24 @@ function results() {
   text('result-heads', run.player.headshots);
   $('result-initials').value = settings.initials;
   resultScore();
-  setPhase('results');
+  const p = run.player;
+  p.battery = 1;
+  if (p.offhand && !p.flashlight) p.beam = 'wide';
+  p.flashlight = true;
+  text('death-view-reason', deathMessage);
+  text('death-view-controls', touch ? 'Drag to look · Aim with the light controls' : 'Drag to look · F / Q for light · Esc for results');
+  lookAround();
   if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+
+function lookAround() {
+  setPhase('inspect');
+  if (!xr.active) $('show-results').focus();
+}
+
+function openResults() {
+  setPhase('results');
+  if (!xr.active) $('restart').focus();
 }
 
 function showPanel(id) {
@@ -307,6 +326,8 @@ $('start').addEventListener('click', () => start(debugEnabled && qs.get('seed') 
 $('resume').addEventListener('click', resume);
 $('quit').addEventListener('click', showHome);
 $('result-home').addEventListener('click', showHome);
+$('show-results').addEventListener('click', openResults);
+$('look-around').addEventListener('click', lookAround);
 $('restart').addEventListener('click', () => start());
 $('rematch').addEventListener('click', () => start(run.seed, run.difficulty));
 $('vr').addEventListener('click', async () => {
@@ -343,6 +364,13 @@ document.addEventListener('keydown', event => {
       debugVisible = !debugVisible;
       $('debug').hidden = !debugVisible;
     }
+  } else if (phase === 'inspect' && !event.repeat) {
+    if (event.code === 'Escape' || event.code === 'Enter') {
+      event.preventDefault();
+      openResults();
+    } else if (event.code === 'KeyF' || event.code === 'KeyQ') {
+      inspectFlashlights(run, { [keyboard[event.code]]: true });
+    }
   } else if (phase === 'paused' && event.code === 'Escape') resume();
   else if (phase === 'results' && event.code === 'Enter' && event.target.tagName !== 'BUTTON') start();
 });
@@ -365,7 +393,9 @@ function look(dx, dy, sensitivity = .00215) {
 }
 
 canvas.addEventListener('pointerdown', e => {
-  if (phase !== 'playing' || xr.active || touch || e.button !== 0) return;
+  if (xr.active || touch || e.button !== 0) return;
+  if (phase === 'inspect') { inspectDrag = true; return; }
+  if (phase !== 'playing') return;
   if (!useMouseDrag && document.pointerLockElement !== canvas) {
     pointerLock();
     if (!debugEnabled) return;
@@ -376,14 +406,15 @@ canvas.addEventListener('pointerdown', e => {
 });
 document.addEventListener('pointerup', e => {
   if (e.button !== 0) return;
-  if (useMouseDrag && desktopFire && dragDistance < 7) queued.fire = true;
+  if (phase === 'playing' && useMouseDrag && desktopFire && dragDistance < 7) queued.fire = true;
   desktopFire = false;
+  inspectDrag = false;
 });
 document.addEventListener('mousemove', e => {
   if (phase === 'playing' && (document.pointerLockElement === canvas || (useMouseDrag && desktopFire))) {
     dragDistance += Math.hypot(e.movementX, e.movementY);
     look(e.movementX, e.movementY);
-  }
+  } else if (phase === 'inspect' && inspectDrag) look(e.movementX, e.movementY);
 });
 
 let stickPointer = null, lookPointer = null, lastTouch = null;
@@ -417,7 +448,9 @@ for (const btn of document.querySelectorAll('[data-touch]')) {
   btn.addEventListener('pointerdown', e => {
     e.preventDefault();
     const action = btn.dataset.touch;
-    if (action === 'pause') pause(); else queued[action] = true;
+    if (phase === 'inspect') inspectFlashlights(run, { [action]: true });
+    else if (action === 'pause') pause();
+    else queued[action] = true;
   });
 }
 $('touch-fire').addEventListener('pointerdown', e => {
@@ -501,7 +534,7 @@ function handleEvent(batch) {
       xr.haptic('armor', settings);
       setNotice(event.armor ? 'Armor took the hit' : 'Armor broke');
     }
-    else if (event.type === 'death') results();
+    else if (event.type === 'death') inspectDeath();
   }
 }
 
@@ -536,6 +569,12 @@ function updateHUD(force = false) {
 function xrUI(sample, trackedView) {
   if (!xr.active || !sample || !trackedView.view) {
     xr.drawAimPreview(null);
+    return;
+  }
+  if (phase === 'inspect') {
+    xr.hidePanel();
+    xr.drawAimPreview(null);
+    xr.drawPrompt('A · RESULTS', trackedView.view);
     return;
   }
   if (phase === 'playing') {
@@ -575,7 +614,8 @@ function xrUI(sample, trackedView) {
         'Pitch ' + settings.gunPitch + '°    /    Yaw ' + settings.gunYaw + '°',
       ], hint: 'TRIGGER  ·  DONE', second: 'WEAPON GRIP  ·  RESET TO DEFAULT' },
       results: { title: 'The light went out.', lines: [deathMessage, formatTime(run.time) + ' survived   /   ' + run.player.kills + ' kills',
-        run.player.headshots + ' headshots   /   ' + resultNote], hint: 'TRIGGER  ·  NEW FOREST', second: 'WEAPON GRIP  ·  SAME SEED' },
+        run.player.headshots + ' headshots   /   ' + resultNote], hint: 'TRIGGER  ·  NEW FOREST',
+        second: 'GRIP  ·  SAME SEED      A  ·  LOOK AROUND' },
     };
     const page = calibrating ? 'angle' : phase;
     xr.drawPanel(page, trackedView.view, cards[page]);
@@ -668,9 +708,15 @@ function frame(now, xrFrame) {
         else if (sample.reload) { calibrating = true; panelKey = ''; }
         else if (phase === 'menu' && sample.fire && sample.tracked) start();
         else if (phase === 'paused' && sample.fire && sample.weaponTracked) resume();
-      } else if (phase === 'results' && performance.now() - deathAt > 950) {
-        if (sample.fire) start();
-        else if (sample.interact) start(run.seed, run.difficulty);
+      } else if (phase === 'inspect') {
+        if (sample.reload) openResults();
+        else inspectFlashlights(run, sample);
+      } else if (phase === 'results') {
+        if (sample.reload) lookAround();
+        else if (performance.now() - deathAt > 950) {
+          if (sample.fire) start();
+          else if (sample.interact) start(run.seed, run.difficulty);
+        }
       } else if (phase === 'playing') {
         if (sample.pause) pause();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
@@ -688,15 +734,15 @@ function frame(now, xrFrame) {
   if (phase === 'playing' && !manualClock && (!stereo || xr.active.visibilityState === 'visible'))
     simulate(previous === phase && (!stereo || sample) ? dt : 0, sample, stereo);
   const view = trackedView(stereo, false, null, 0, accumulator);
-  const active = phase === 'playing', p = run.player;
+  const active = phase === 'playing', inspecting = phase === 'inspect', p = run.player;
   const laser = active && settings.laserDot;
   aimHit = laser && !p.reload && view.aim ? traceAim(run, view.aim) : null;
   offhandAimHit = laser && p.offhand && !p.offhand.reload && view.offhandAim ? traceAim(run, view.offhandAim) : null;
-  const lightsActive = active && p.flashlight;
+  const lightsActive = (active || inspecting) && p.flashlight;
   const beam = lightsActive ? resolvePlayerBeam(run, view.beam, view.view?.position) : null;
   const offhandBeam = lightsActive ? resolvePlayerBeam(run, view.offhandBeam, view.view?.position, true) : null;
   presentation.update(run, dt, settings, view.tracking, {
-    active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, beam, offhandBeam,
+    active, inspecting, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, beam, offhandBeam,
     aim: active ? view.aim : null, aimHit, offhandAim: active ? view.offhandAim : null, offhandAimHit,
     viewpoint: view.view?.position,
     enemyAlpha: active && !manualClock ? clamp(accumulator / STEP, 0, 1) : 1,

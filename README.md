@@ -25,6 +25,8 @@ Enable **Legendary Mode** in Settings before starting a practice run. You start 
 
 The Laser dot setting enables both aiming dots. Armor and ammo are the only pickups. On Quest, each trigger fires its pistol and right A tops up both from the shared reserve. Desktop and touch fire both pistols together. Legendary runs are kept out of the local scoreboards.
 
+After a fatal hit, the scene freezes and labels the zombie that struck you. On Quest, turn your head or snap turn and aim your flashlight as usual. Press right A to switch between the scene and results. On desktop or touch, drag to look and select **Results** when you’re ready.
+
 ## Development and QA
 
 ```sh

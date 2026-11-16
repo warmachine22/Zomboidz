@@ -6,7 +6,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.11';
+export const BUILD = '1.0.12';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -535,7 +535,11 @@ function hurt(run, enemy) {
   p.reload = null;
   if (p.offhand) p.offhand.reload = null;
   run.status = 'dead';
-  run.death = { kind: enemy.kind, yaw: angleDelta(Math.atan2(enemy.x - p.x, p.z - enemy.z), p.yaw) };
+  run.death = {
+    kind: enemy.kind,
+    yaw: angleDelta(Math.atan2(enemy.x - p.x, p.z - enemy.z), p.yaw),
+    attacker: { id: enemy.id, x: enemy.x, y: enemy.y + ENEMIES[enemy.kind].height, z: enemy.z },
+  };
   emit(run, 'death', { ...run.death });
 }
 
@@ -877,6 +881,10 @@ export function stepRun(run, input = {}, dt = STEP) {
   return run.events;
 }
 
+export function inspectFlashlights(run, input = {}) {
+  if (run.status === 'dead') updateFlashlights(run, input, 0);
+}
+
 function updateFlashlights(run, input, dt) {
   const p = run.player;
   if (p.offhand) {
@@ -887,14 +895,14 @@ function updateFlashlights(run, input, dt) {
   }
   if (input.toggleLight && (p.flashlight || p.battery > .04)) {
     p.flashlight = !p.flashlight;
-    emit(run, 'light', { on: p.flashlight });
+    if (run.status === 'playing') emit(run, 'light', { on: p.flashlight });
   }
   if (input.toggleBeam) p.beam = p.beam === 'focus' ? 'wide' : 'focus';
   const runtime = 30 + p.upgrades.battery * 8;
   p.battery = clamp(p.battery + (p.flashlight ? (input.lampUnavailable ? 0 : -dt / runtime) : dt / 5), 0, 1);
   if (p.flashlight && p.battery <= 1e-8) {
     p.flashlight = false;
-    emit(run, 'light', { on: false, empty: true });
+    if (run.status === 'playing') emit(run, 'light', { on: false, empty: true });
   }
 }
 

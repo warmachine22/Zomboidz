@@ -120,7 +120,8 @@ export function createXR(renderer, scene, rig) {
     for (const key of Object.keys(gp)) pressed[key] = gp[key] && !edges[key];
     edges = gp;
     const rx = axis(right, 0);
-    if (phase === 'playing' && Math.abs(rx) > .68 && !turnHeld) offsetYaw += Math.sign(rx) * Math.PI / 6;
+    if ((phase === 'playing' || phase === 'inspect') && Math.abs(rx) > .68 && !turnHeld)
+      offsetYaw += Math.sign(rx) * Math.PI / 6;
     turnHeld = Math.abs(rx) > .42;
     const turn = new THREE.Quaternion().setFromAxisAngle(up, -offsetYaw);
     const delta = phase === 'playing' && priorView ? rawView.position.clone().sub(priorView).applyQuaternion(turn) : new THREE.Vector3();

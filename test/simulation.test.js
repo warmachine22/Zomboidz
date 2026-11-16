@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addEnemy, createRun, enemyPose, flarePower, GUNS, hordeTarget, magazineCapacity,
+import { addEnemy, createRun, ENEMIES, enemyPose, flarePower, GUNS, hordeTarget, inspectFlashlights, magazineCapacity,
   setLoot, shoot, stepRun, STEP, traceAim, visibleTargets } from '../src/simulation.js';
 import { animatedAnchors } from '../src/enemy-motion.js';
 import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
@@ -435,6 +435,37 @@ test('a clean unarmored hit kills after a windup, and armor absorbs exactly thre
   assert.equal(p.armor, 0);
   assert.equal(run.status, 'dead');
   assert.equal(run.metrics.damage.shambler, 4);
+});
+
+test('the fatal attacker and world stay at the hit while inspection keeps flashlight controls available', () => {
+  for (const legendary of [false, true]) {
+    const run = room({ legendary }), p = run.player;
+    const attacker = addEnemy(run, 'shambler', p.x, p.z + .84);
+    inspectFlashlights(run, { toggleBeam: true });
+    assert.equal(p.beam, 'wide', 'inspection controls only apply once the run is over');
+    advance(run, 1.2);
+    assert.equal(run.status, 'dead');
+    assert.deepEqual(run.death.attacker, {
+      id: attacker.id, x: attacker.x, y: attacker.y + ENEMIES.shambler.height, z: attacker.z,
+    });
+    assert.ok(Math.abs(run.death.yaw) > 2.35);
+
+    const snapshot = [run.time, p.x, p.y, p.z, p.ammo, p.reserve, p.kills, attacker.x, attacker.z, attacker.attackAge];
+    stepRun(run, { fire: true, offhandFire: true, reload: true, moveX: 1, moveZ: 1 });
+    const charge = p.battery;
+    inspectFlashlights(run, { toggleBeam: true });
+    if (legendary) {
+      inspectFlashlights(run, { cycleOffhandBeam: true });
+      assert.equal(p.offhand.beam, 'focus');
+    } else {
+      inspectFlashlights(run, { toggleLight: true });
+      assert.equal(p.flashlight, false);
+    }
+    assert.equal(p.beam, 'focus');
+    assert.equal(p.battery, charge);
+    assert.deepEqual([run.time, p.x, p.y, p.z, p.ammo, p.reserve, p.kills, attacker.x, attacker.z, attacker.attackAge], snapshot);
+    assert.equal(run.metrics.shots, 0);
+  }
 });
 
 test('piercing carries damage to an additional target while cover stops it', () => {

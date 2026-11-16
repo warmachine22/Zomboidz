@@ -117,6 +117,10 @@
     <div id="offer" hidden></div>
     <div id="reload-meter" hidden><small>RELOADING</small><div class="battery-track"><i id="reload-progress"></i></div></div>
   </aside>
+  <aside id="death-view" hidden aria-label="Death scene">
+    <div><strong id="death-view-reason"></strong><small id="death-view-controls"></small></div>
+    <button id="show-results">Results</button>
+  </aside>
   <div id="touch" hidden aria-label="Touch controls">
     <div id="look-pad"></div>
     <div id="stick" aria-label="Move"><i></i></div>
@@ -148,7 +152,8 @@
       <label class="result-initials">Score initials <input id="result-initials" maxlength="3" autocomplete="off" spellcheck="false"></label>
       <p id="result-storage" class="note" role="status"></p>
       <div class="actions">
-        <button class="primary" id="restart">New forest</button><button id="rematch">Same seed</button><button id="result-home">Main menu</button>
+        <button class="primary" id="restart">New forest</button><button id="rematch">Same seed</button>
+        <button id="look-around">Look around</button><button id="result-home">Main menu</button>
       </div>
     </div>
   </section>
