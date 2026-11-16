@@ -6,6 +6,8 @@ node_modules/
 *.log
 coverage/
 dist/
+.cache/
+.vercel/
 assets/npc/
 *.original.glb
 *.zip

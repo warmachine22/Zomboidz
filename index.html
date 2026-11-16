@@ -1,13 +1,135 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#050807"><meta name="description" content="ZOMBIEZ: The Last Light — WebXR zombie survival on Meta Quest."><title>ZOMBIEZ v0.11 — THE LAST LIGHT</title><link rel="stylesheet" href="./style.css"><script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"}}</script></head>
-<body><div id="world"></div><div class="grain"></div>
-<header id="topbar"><div class="brand"><i>Z</i> ZOMBIEZ <small>/ BUILD v0.11</small></div><span class="proto">WEBXR SURVIVAL PROTOTYPE <b>●</b></span></header>
-<div id="hud" class="hidden"><div class="stat"><small>SURVIVAL TIME</small><strong id="time">00:00</strong><em id="wave">WAVE 01</em></div><div class="health"><small>VITAL SIGNS <b id="hp">100</b></small><div class="track"><div id="hpfill"></div></div><label>DON'T LET THEM GET CLOSE</label></div><div class="stat right"><small>SIDEARM / 9MM</small><div><strong id="ammo">06</strong> <em>/ 06</em></div><label id="reload">R — RELOAD</label></div></div>
-<div id="battery" class="hidden"><div class="bhead"><span>◉ &nbsp;FLASHLIGHT CAPACITY</span><b id="batnum">100%</b></div><div class="track"><div id="batfill"></div></div><small id="bathint">AUTOMATIC RECHARGE WHILE OFF · FULL IN 5 SECONDS</small></div><div id="elims" class="hidden">ELIMINATIONS <b id="kills">00</b></div>
-<div id="hurt"></div><div id="reticle" class="hidden"><i></i><i></i><i></i><i></i></div>
-<div id="menu"><main><div class="overline">╾ &nbsp; NO WAY OUT. NO SECOND CHANCES.</div><h1>ZOMBIE<span>Z</span></h1><div class="subtitle">THE LAST LIGHT <i></i> CHAPTER 01</div><div class="build-version" id="build-version" aria-label="Current game version">LIVE VERSION <strong>v0.11</strong> <span>• MUZZLE LIGHT + HARDENED WALKERS + PLAYER BODY</span></div>
-<p>The forest is dead. You're not. Yet.<br>They hear you moving and shooting. Aim for the head: one shot ends a walker. Body shots take several rounds. Your flashlight won't stay charged.</p>
-<div class="features"><div><span>↗</span><strong>360° HORROR</strong><small>Every direction is dangerous</small></div><div><span>⌁</span><strong>SWITCH TO SURVIVE</strong><small>30s on · 5s recharge</small></div><div><span>◎</span><strong>ONE LIFE</strong><small>Last as long as you can</small></div></div>
-<div class="cta"><button id="start"><span id="startlabel">ENTER THE FOREST</span> <span>↗</span></button><small>ON QUEST? TAP <b>ENTER VR</b> IN THE HEADSET BROWSER.</small></div>
-<div class="controls"><div><strong>META QUEST</strong><small>LEFT STICK &nbsp; MOVE<br>LOOK &nbsp; CHOOSE DIRECTION<br>RIGHT TRIGGER &nbsp; SHOOT<br>A / B / RIGHT GRIP &nbsp; RELOAD<br>LEFT TRIGGER &nbsp; FLASHLIGHT ON / OFF<br>X &nbsp; FOCUS BEAM · Y &nbsp; WIDE BEAM</small></div><div><strong>DESKTOP TEST</strong><small>W A S D &nbsp; MOVE · MOUSE &nbsp; LOOK<br>CLICK &nbsp; SHOOT · R &nbsp; RELOAD<br>F &nbsp; FLASHLIGHT ON / OFF<br>Q &nbsp; SWITCH FLASHLIGHT MODE<br>ESC &nbsp; RELEASE MOUSE</small></div><div><strong>IPAD / TOUCH</strong><small>LEFT THUMB &nbsp; MOVE<br>RIGHT DRAG &nbsp; LOOK AROUND<br>FIRE &nbsp; SHOOT · RELOAD &nbsp; RELOAD<br>FOCUS / WIDE &nbsp; SWITCH BEAM<br>LIGHT ON / OFF &nbsp; RECHARGE WHEN OFF</small></div></div>
-</main><footer><span>BUILD 0.11 / SINGLE PLAYER / EXPERIMENTAL</span><span>HEADPHONES RECOMMENDED ◉</span></footer></div>
-<div id="toast"></div><script type="module" src="./game.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111919">
+  <meta name="description" content="The Last Light is a first-person zombie survival game for Quest and desktop. Follow the road. Listen to the woods.">
+  <title>Zomboidz — The Last Light</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./game.js"></script>
+</head>
+<body>
+  <div id="world" aria-hidden="true"></div>
+  <div id="shade" aria-hidden="true"></div>
+  <main id="shell">
+    <header class="masthead">
+      <strong>ZOMBOIDZ</strong>
+      <span id="build">FIELD BUILD</span>
+    </header>
+    <section class="hero" aria-labelledby="title" id="home">
+      <p class="eyebrow">BLACKWATER FOREST</p>
+      <h1 id="title">THE LAST<br><span>LIGHT</span></h1>
+      <p class="lede">The woods hear every shot.<br>Keep your light charged. Stay alive.</p>
+      <div class="actions">
+        <button id="start" class="primary" disabled>Loading the forest…</button>
+        <button id="vr" disabled>Enter VR</button>
+      </div>
+      <p id="status" role="status" class="status">Preparing game assets…</p>
+      <nav class="menu-links" aria-label="Game menu">
+        <button data-panel="controls">Controls</button>
+        <button data-panel="scores">Local scores</button>
+        <button data-panel="settings">Settings</button>
+      </nav>
+    </section>
+    <section class="sheet" id="controls" hidden aria-labelledby="controls-title">
+      <p class="eyebrow">FIELD GUIDE</p>
+      <h2 id="controls-title">Controls</h2>
+      <div class="controls-grid">
+        <div><h3>Desktop</h3><dl>
+          <dt>Move / Look</dt><dd>WASD / mouse</dd>
+          <dt>Move quietly</dt><dd>Hold Shift</dd>
+          <dt>Fire / Reload</dt><dd>Click or Space / R</dd>
+          <dt>Light / Beam</dt><dd>F / Q</dd>
+          <dt>Equip</dt><dd>E near a pickup</dd>
+          <dt>Pause</dt><dd>Esc</dd>
+        </dl></div>
+        <div><h3>Quest</h3><dl>
+          <dt>Move / Turn</dt><dd>Left stick / right stick</dd>
+          <dt>Fire / Reload</dt><dd>Weapon trigger / primary button</dd>
+          <dt>Light / Beam</dt><dd>Light trigger / primary button</dd>
+          <dt>Equip</dt><dd>Weapon grip near a pickup</dd>
+          <dt>Pause</dt><dd>Weapon secondary button</dd>
+        </dl></div>
+        <div><h3>Touch</h3><dl>
+          <dt>Move / Look</dt><dd>Left stick / drag right side</dd>
+          <dt>Fire / Reload / Equip</dt><dd>On-screen buttons</dd>
+          <dt>Light / Beam</dt><dd>Light / Beam buttons</dd>
+        </dl></div>
+      </div>
+      <p class="note">Rare loot gives off light that fades. Sweep the ground to find old drops. Footsteps, light, and gunshots draw attention.</p>
+      <button data-back>Back</button>
+    </section>
+    <section class="sheet" id="scores" hidden aria-labelledby="scores-title">
+      <p class="eyebrow">SURVIVAL RECORDS</p>
+      <h2 id="scores-title">Local scores</h2>
+      <div id="score-table"></div>
+      <button data-back>Back</button>
+    </section>
+    <section class="sheet" id="settings" hidden aria-labelledby="settings-title">
+      <p class="eyebrow">FIELD KIT</p>
+      <h2 id="settings-title">Settings</h2>
+      <div class="preferences">
+        <label><span>Left-handed tools<small>Weapon in the left hand</small></span><input type="checkbox" data-setting="leftHanded"></label>
+        <label><span>Seated VR<small>Calibrate standing eye height from your seated position</small></span><input type="checkbox" data-setting="seated"></label>
+        <label><span>Reduced flashes<small>Dim weapon flashes and impact effects</small></span><input type="checkbox" data-setting="reducedFlashes"></label>
+        <label><span>Brighter night<small>Lift the ambient light for your display</small></span><input type="checkbox" data-setting="visibility"></label>
+        <label><span>Volume</span><input type="range" min="0" max="1" step=".05" data-setting="volume"></label>
+        <label><span>Score initials</span><input id="initials" maxlength="3" autocomplete="off" spellcheck="false" value="YOU"></label>
+      </div>
+      <button data-back>Done</button>
+    </section>
+    <footer class="menu-footer"><span>ENDLESS SURVIVAL</span><span>HEADPHONES RECOMMENDED</span></footer>
+  </main>
+  <aside id="hud" hidden aria-label="Run status">
+    <div class="hud-top">
+      <div><small>SURVIVED</small><strong id="clock">00:00</strong></div>
+      <div class="hud-right"><small id="weapon-name">SERVICE PISTOL</small><strong id="rounds">06 <em>/ 50</em></strong></div>
+    </div>
+    <div class="hud-bottom">
+      <div id="light-meter"><small id="light-text">WIDE · 100%</small><div class="battery-track"><i id="charge"></i></div></div>
+      <div class="hud-right"><small>ARMOR</small><strong class="pips" id="armor" aria-label="No armor">◇◇◇</strong></div>
+    </div>
+    <div id="crosshair" aria-hidden="true"></div>
+    <div id="notice" aria-live="polite"></div>
+    <div id="offer" hidden></div>
+    <div id="reload-meter" hidden><small>RELOADING</small><div class="battery-track"><i id="reload-progress"></i></div></div>
+  </aside>
+  <div id="touch" hidden aria-label="Touch controls">
+    <div id="look-pad"></div>
+    <div id="stick" aria-label="Move"><i></i></div>
+    <div class="touch-utilities">
+      <button data-touch="toggleLight">Light</button><button data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
+    </div>
+    <div class="touch-main">
+      <button data-touch="interact">Equip</button><button data-touch="reload">Reload</button><button id="touch-fire">Fire</button>
+    </div>
+  </div>
+  <section id="pause" class="overlay" hidden aria-labelledby="pause-title">
+    <div class="sheet">
+      <p class="eyebrow">IN THE WOODS</p>
+      <h2 id="pause-title">Paused</h2>
+      <p class="note" id="pause-note">The run is paused.</p>
+      <div class="actions"><button class="primary" id="resume">Resume</button><button id="quit">End run</button></div>
+    </div>
+  </section>
+  <section id="results" class="overlay" hidden aria-labelledby="results-title">
+    <div class="sheet">
+      <p class="eyebrow">AFTER THE ATTACK</p>
+      <h2 id="results-title">The light went out.</h2>
+      <p id="death-reason" class="note"></p>
+      <div class="results-stats">
+        <div><small>SURVIVED</small><strong id="result-time">00:00</strong></div>
+        <div><small>KILLS</small><strong id="result-kills">0</strong></div>
+        <div><small>HEADSHOTS</small><strong id="result-heads">0</strong></div>
+      </div>
+      <label class="result-initials">Score initials <input id="result-initials" maxlength="3" autocomplete="off" spellcheck="false"></label>
+      <p id="result-storage" class="note" role="status"></p>
+      <div class="actions">
+        <button class="primary" id="restart">New forest</button><button id="rematch">Same seed</button><button id="result-home">Main menu</button>
+      </div>
+    </div>
+  </section>
+  <div id="debug" hidden><canvas id="map" width="352" height="352"></canvas><pre id="debug-summary"></pre></div>
+</body>
+</html>

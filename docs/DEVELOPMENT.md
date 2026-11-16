@@ -1,92 +1,26 @@
-# Technical and Development Notes
+# Development and playtesting
 
-## Stack
+The game builds to a static directory. The executable bundles Three.js instead of fetching it at runtime. There is no service, account, or remote score database. The development server watches source and serves the game with optional diagnostics.
 
-- Static HTML/CSS and vanilla JavaScript; no backend or multiplayer.
-- Three.js 0.162 through an import map (jsDelivr CDN).
-- WebGL2 scene rendering, Three.js WebXR / VRButton, Web Audio API with HRTF positional sound.
-- GLTFLoader and MeshoptDecoder load the compressed PSX-style zombie model.
-- Game logic and procedural environment are in `src/game.js`; the root `game.js` loads it as a JavaScript module. Gzip output is optional.
-- The game can deploy on Vercel with no server framework or build step because the compiled files are committed.
+The shared fixed-step simulation owns damage, timers, aim rays, sound and light sensing, spawn choices, loot, and survival results. With a seed and a sequence of inputs it can run without Three.js or browser APIs. RequestAnimationFrame collects keyboard, touch, or WebXR input and renders state with Three.js. The top-down overlay reads the same runtime state and displays reasons for target switches.
 
-## Repository layout
+Terrain chunks are keyed by seed and world coordinates. The renderer streams a 3×3 ring, while simulation maintains a bounded geometry cache and a set of collected landmarks. Shots and perception share terrain and cover queries. Importing the older alpha snapshot is only useful for restoring an older release.
 
-```text
-index.html                   # Entry page and desktop landing overlay
-style.css                    # UI styles
-game.js                      # Browser bootstrap: imports src/game.js
-game.js.gz                   # Optional generated gzip archive (not required)
-src/game.js                  # Editable gameplay source
-assets/npc-part-*.bin        # 15 chunks of a meshopt-compressed game-ready GLB
-assets/audio/*.ogg           # Spatial zombie and recorded weapon audio
-scripts/build.mjs            # Regenerates game.js.gz from src/game.js
-scripts/sync-from-live.mjs   # Optional snapshot refresh from the live site
-docs/GAME_DESIGN.md          # Product vision and success criteria
-docs/DEVELOPMENT.md          # This file
-SPEC.md                      # Current implementation notes
-CREDITS.md                   # Asset source and licensing notes
+## Art and audio
+
+To regenerate the original GLBs, run Blender 4.5 LTS in the background.
+
+```sh
+blender --background --factory-startup --python-exit-code 1 --python scripts/author-assets.py
 ```
 
-## Run
+The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies with separate movement, attack, and hit clips. The render loop controls reload, recoil, pump, death poses, and gear placement. Ground, bark, and rock use optimized WebP textures. See the credits for asset sources.
 
-Start a static server in the repository root:
+## Quest release check
 
-```bash
-python3 -m http.server 8080
-# Open http://localhost:8080 on desktop
-```
+1. Open the HTTPS build on a Quest 3. Start seated and standing runs, test dominant hand and snap turn, and check that tool positions agree with aim.
+2. Try firing and reloading while moving and toggling the flashlight. Locate a close enemy by sound with the light off. Cross a road to an active flare and observe how the horde divides.
+3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
+4. Use `?perf=1` and Meta’s performance tools for a 15-minute stress run. Record active crowd size, frame timing and missed frames for the late run. The 48-enemy design target depends on hardware measurement.
 
-To modify the game, edit `src/game.js` and refresh the page. Optionally create a gzip artifact with Node 20+:
-
-```bash
-node scripts/build.mjs
-```
-
-The runtime imports Three.js from a CDN; an internet connection is required.
-
-For headset testing, host the built static site using HTTPS on Vercel and open it in Quest Browser. Do not assume a normal HTTP LAN URL can enter immersive VR.
-
-## Data and rendering
-
-The world is built from instanced low-poly trees and textured procedural ground. Trees are recycled around a moving player to create an extended forest while keeping a fixed geometry budget. Zombies use skeleton-animation mixers; distant animation updates are throttled to reduce CPU load. Enemy headshots are traced against the animated Head bone world transform rather than a fixed-height target. Limb/torso collisions use lightweight analytic volumes and share the same gun-ray calculations as the laser. Tree shots are resolved against the true tilted, tapered seven-sided trunk meshes using a fast candidate shortlist and exact triangle raycasts. The laser and bullet share one hit test; desktop/iPad shots use the center view ray to remove crosshair–muzzle parallax, while Quest uses the tracked right-hand gun.
-
-Enemy AI follows a small state machine: initial wandering, alert via distance/footsteps/noise, pursuit with varied pace, and contact death. Zombies now steer around the actual ground-level tree bases, holding a chosen tangent side while passing each obstacle; local avoidance is not a full navmesh. The intended endless horde target grows over time, but Quest frame timing can lower the permitted population to prioritize comfort.
-
-Light is a pair of SpotLights attached to the left controller; focused and wide modes adjust angle, intensity and distance. Flashlight battery drains over 30 seconds while switched on and automatically refills in 5 seconds while switched off; Quest left trigger toggles it. Flashlight pickups add 10 seconds of on-time per upgrade, up to 90 seconds. The gameplay state is entirely client-side and a minimal localStorage key retains the best run.
-
-Bark hit marks, small brown voxel splinters and dark-red blood flecks share reusable primitive geometry. Particle lists and persistent tree damage marks have caps and are cleared when trees recycle or a new run begins.
-
-## Touch and desktop testing
-
-- Desktop: WASD + pointer lock mouse aiming, click fire, R reload, F toggle flashlight, Q beam mode.
-- Touch: virtual joystick, right-screen dragging, FIRE, RELOAD, LIGHT ON/OFF, beam toggle.
-- Production smoke tests used a desktop Chromium browser and emulated touch viewport. This is **not** a substitute for a physical Quest test, especially hand tracking, audio positioning, haptics, left-trigger toggle and comfort.
-
-## Build and deployment
-
-`node scripts/build.mjs` optionally gzips the module into `game.js.gz`. The v0.9 browser entry point imports `src/game.js` directly, so a compressed artifact is not needed for ordinary static deployment.
-
-The project can be deployed as a static Vercel project. The original prototype is live at https://zombiez.vercel.app.
-
-`scripts/sync-from-live.mjs` captures a **snapshot** of the current live deployment (used to bootstrap this repository). Ordinary development should go in the opposite direction: edit source in GitHub, build, test, deploy. Avoid repeatedly replacing local work with a live snapshot.
-
-## Third-party assets
-
-The public repository must not include the **original downloadable zip or source GLB archives** from the external character sample. The browser game uses optimized model data distributed as packaged runtime chunks, not raw author source files. See [CREDITS.md](../CREDITS.md) for restrictions and attribution. The original sounds are CC0.
-
-## Known limitations
-
-- Haptics and Meta Quest X/Y controller mappings require physical-headset validation.
-- Animated/physics-inspired corpse fall is not a full joint physics ragdoll.
-- The horde cap (64) is exploratory. A WebGL desktop browser handling 64 does not prove Quest can sustain comfortable 72/90Hz.
-- One zombie model with cosmetic variations, limited animation variety.
-- Model and audio files are required; missing assets prevent or degrade gameplay.
-
-## v0.11 implementation notes
-
-- **Build visibility:** `index.html` renders `#build-version` directly beneath the game subtitle with a visible v0.11 label, and the top bar and browser title also identify the build. The browser bootstrap imports `src/game.js?v=0.11` to help avoid cached code.
-- **Directional muzzle light:** The gun group owns `muzzleRig`, a small additive sprite/cone, a warm `PointLight`, and a `SpotLight` pointing along weapon-local `-Z`. The forward spot follows the active weapon's muzzle, uses a brief 130ms intensity pulse, and illuminates nearby `MeshStandardMaterial` forest/zombie meshes even when the flashlight is off. This is not full post-process bloom.
-- **Zombie emissive eyes:** The template's emissive eye map intensity defaults to zero. Per-instance material copies keep emissive intensity zero for ordinary walkers and 1.15 for rare hardened walkers. Hardened HP is 7.5 and head damage requires two accurate head hits, except shotgun headshots. Hardened probability grows with elapsed time.
-- **Visible avatar:** A simple torso and leg rig is attached to the player rig. Lower arms and gloves are positioned each render frame, taking Quest world-space controller locations or fixed camera-relative desktop touch hand positions.
-- **Weapons and icons:** Each weapon shape is a small Three.js group constructed from primitive geometry; `setWeaponVisual()` changes the visible model and muzzle endpoint. Pickup icon images are generated as compact CanvasTextures and represented by small sprites at ground level; ammo pickups increase magazine capacity.
-- **QA:** Desktop and emulated-iPad Playwright checks validated startup, model switching, normal/hardened headshots, pickup sprites, avatar groups, and no page errors. A rendered darkness/flash comparison measured central luminance rising from ~19 to ~57 under muzzle illumination; flashlight was disabled. Headset-specific visual alignment/performance remains unverified.
+Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.

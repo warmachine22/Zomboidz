@@ -1,0 +1,697 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone } from 'three/addons/utils/SkeletonUtils.js';
+import { CHUNK, clamp, distance, random } from './world.js';
+import { beamSettings, ENEMIES, flarePower, GUNS, LOOT } from './simulation.js';
+
+const textures = new THREE.TextureLoader();
+const models = new GLTFLoader();
+const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const up = v3(0, 1, 0);
+const forward = v3(0, 0, -1);
+const temp = new THREE.Object3D();
+const baseBox = new THREE.BoxGeometry(1, 1, 1);
+const branchGeometry = new THREE.CylinderGeometry(.24, .5, 1, 5);
+const trunkGeometry = new THREE.CylinderGeometry(.25, .5, 1, 9, 1, false);
+const rockGeometry = new THREE.IcosahedronGeometry(1, 1);
+const forest = new THREE.Group();
+const rockPos = rockGeometry.attributes.position;
+for (let i = 0; i < rockPos.count; i++) {
+  const x = rockPos.getX(i), y = rockPos.getY(i), z = rockPos.getZ(i);
+  const offset = .92 + random([x.toFixed(4), y.toFixed(4), z.toFixed(4)].join(','))() * .12;
+  rockPos.setXYZ(i, x * offset, clamp(y * 1.16, -.84, .87) * offset, z * offset);
+}
+rockGeometry.computeVertexNormals();
+
+function image(name) {
+  const tex = textures.load('./assets/art/' + name + '.webp');
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 3;
+  return tex;
+}
+
+const surfaces = {
+  bark: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x9c9690, roughness: .98 }),
+  earth: new THREE.MeshStandardMaterial({ map: image('ground'), roughness: .96, vertexColors: true }),
+  stone: new THREE.MeshStandardMaterial({ map: image('stone'), color: 0x818680, roughness: .92, flatShading: true }),
+  leaves: new THREE.MeshStandardMaterial({ color: 0x555e50, roughness: .98, side: THREE.DoubleSide, vertexColors: true }),
+  fern: new THREE.MeshStandardMaterial({ color: 0x687153, roughness: .99, side: THREE.DoubleSide, vertexColors: true }),
+  boards: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x687277, roughness: .98 }),
+  mortar: new THREE.MeshStandardMaterial({ map: image('stone'), color: 0x66645b, roughness: .98 }),
+  trim: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x3c4038, roughness: .97 }),
+  reflectors: new THREE.MeshStandardMaterial({ color: 0xaaa589, emissive: 0x221e13, emissiveIntensity: .35, roughness: .85 }),
+};
+surfaces.stone.map.repeat.set(1.55, 1.55);
+surfaces.boards.map.repeat.set(2.2, .6);
+
+const modelNames = ['pistol', 'shotgun', 'smg', 'flashlight', 'glove', 'wreck', 'shambler', 'shrieker', 'brute'];
+export async function loadArt() {
+  const source = await Promise.all(modelNames.map(name => models.loadAsync('./assets/art/' + name + '.glb')));
+  return Object.fromEntries(modelNames.map((name, i) => [name, source[i]]));
+}
+
+function plantGeometry(pine) {
+  const pos = [], colors = [];
+  const rng = random(pine ? 'needles' : 'fern');
+  const blades = pine ? 14 : 10;
+  for (let i = 0; i < blades; i++) {
+    const a = i * Math.PI * 2 / blades + rng() * .4;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    const length = (pine ? .64 : .44) + rng() * (pine ? .42 : .62);
+    const start = pine ? (rng() - .4) * .31 : 0;
+    const tilt = (pine ? -.54 : .30) + rng() * .47;
+    const edge = pine ? .13 : .041;
+    const steps = pine ? 5 : 6;
+    const p = t => [dx * length * t, start + tilt * t + .23 * Math.sin(t * Math.PI), dz * length * t];
+    const tri = (a, b, c, tone) => {
+      pos.push(...a, ...b, ...c);
+      for (const shade of [tone * .70, tone, tone * .9]) colors.push(shade, shade * 1.06, shade * .94);
+    };
+    for (let j = 0; j < steps; j++) {
+      const t = (j + .35) / steps;
+      const [x, y, z] = p(t), tip = p(Math.min(1, t + 1.3 / steps));
+      const scale = edge * Math.sin(Math.PI * (.10 + t * .85)) * (.75 + rng() * .5);
+      const tone = .5 + rng() * .36;
+      for (const m of [-1, 1]) {
+        tri([x - dz * scale * .32, y, z + dx * scale * .32],
+          [x - dz * scale * m, y + scale * .25, z + dx * scale * m], tip, tone);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+const pineGeometry = plantGeometry(true);
+const fernGeometry = plantGeometry(false);
+
+function place(mesh, index, x, y, z, sx, sy, sz, angle, color) {
+  temp.position.set(x, y, z);
+  temp.rotation.set(0, angle || 0, 0);
+  temp.scale.set(sx, sy, sz);
+  temp.updateMatrix();
+  mesh.setMatrixAt(index, temp.matrix);
+  if (color) mesh.setColorAt(index, color);
+}
+
+function beamBetween(mesh, index, first, second, width, color) {
+  const delta = second.clone().sub(first);
+  temp.position.copy(first).addScaledVector(delta, .5);
+  temp.quaternion.setFromUnitVectors(up, delta.clone().normalize());
+  temp.scale.set(width, delta.length(), width);
+  temp.updateMatrix();
+  mesh.setMatrixAt(index, temp.matrix);
+  if (color) mesh.setColorAt(index, color);
+}
+
+function instance(group, geo, mat, count, shadow = false) {
+  if (!count) return null;
+  const mesh = new THREE.InstancedMesh(geo, mat, count);
+  mesh.castShadow = shadow;
+  mesh.receiveShadow = shadow;
+  group.add(mesh);
+  return mesh;
+}
+
+function terrain(world, area) {
+  const positions = [], color = [], indices = [], uv = [];
+  const size = CHUNK / 2 + 1, tint = new THREE.Color();
+  for (let z = 0; z < size; z++) {
+    for (let x = 0; x < size; x++) {
+      const px = area.cx * CHUNK + x * 2, pz = area.cz * CHUNK + z * 2;
+      const road = world.roadDistance(px, pz);
+      const shade = .83 + .13 * Math.sin(px * .33 + pz * .61) + .04 * Math.cos(pz);
+      turf(tint, road, shade);
+      positions.push(px, world.sample(px, pz), pz);
+      color.push(tint.r, tint.g, tint.b);
+      uv.push(px * .33, pz * .33);
+      if (x < size - 1 && z < size - 1) {
+        const i = z * size + x;
+        indices.push(i, i + size, i + 1, i + 1, i + size, i + size + 1);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(color, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const floor = new THREE.Mesh(geometry, surfaces.earth);
+  floor.receiveShadow = true;
+  floor.userData.disposeGeometry = true;
+  return floor;
+}
+
+function turf(target, road, shade) {
+  const border = clamp((road - 1.4) / 1.85, 0, 1);
+  target.setRGB(.42 + border * .13, .45 + border * .053, .47 - border * .17).multiplyScalar(shade);
+}
+
+function makeChunk(world, area, art) {
+  const group = new THREE.Group();
+  group.add(terrain(world, area));
+  const treeCount = area.trees.length;
+  const trunks = instance(group, trunkGeometry, surfaces.bark, treeCount, true);
+  const branches = instance(group, branchGeometry, surfaces.bark, treeCount * 4);
+  const canopy = instance(group, pineGeometry, surfaces.leaves, treeCount * 4);
+  const brush = instance(group, fernGeometry, surfaces.fern, area.plants.length);
+  const rng = random(area.key + ':art');
+  for (const [i, t] of area.trees.entries()) {
+    const shade = new THREE.Color().setRGB(.68 + t.tint * .22, .72 + t.tint * .21, .68 + t.tint * .22);
+    place(trunks, i, t.x, t.y + t.height * .5, t.z, t.r * 2, t.height, t.r * 2, t.turn, shade);
+    for (let j = 0; j < 4; j++) {
+      const tier = .43 + j * .14, height = t.y + t.height * tier;
+      const a = t.turn + 2.399 * j;
+      const reach = (1.71 + t.r * 2.1 + rng() * .5) * (1 - j * .14);
+      const origin = v3(t.x, height, t.z);
+      const end = v3(t.x + Math.cos(a) * reach, height + (t.type === 1 ? .14 : .46), t.z + Math.sin(a) * reach);
+      beamBetween(branches, i * 4 + j, origin, end, t.r * .59, shade);
+      const tint = new THREE.Color().setRGB(.22 + t.tint * .28, .32 + t.tint * .29, .27 + t.tint * .22);
+      place(canopy, i * 4 + j, origin.x * .63 + end.x * .37, height + .22, origin.z * .63 + end.z * .37,
+        reach * (t.type === 1 ? .72 : 1.15), 1.54, reach, a, tint);
+    }
+  }
+  for (const [i, f] of area.plants.entries()) {
+    const green = f.brush ? .58 + f.tint * .42 : .35 + f.tint * .42;
+    const tint = new THREE.Color(green * (f.brush ? .55 : 1.12), green, green * .60);
+    place(brush, i, f.x, f.y + .015, f.z, f.size * .94, f.size * (f.brush ? 1.16 : .95), f.size, f.turn, tint);
+  }
+
+  const rocks = area.props.filter(p => p.kind === 'stone');
+  const stone = instance(group, rockGeometry, surfaces.stone, rocks.length, true);
+  for (const [i, o] of rocks.entries()) {
+    const shade = .60 + rng() * .38;
+    place(stone, i, o.x, o.y - o.ry * .13, o.z, o.rx * 1.08, o.ry * 1.22, o.rz * 1.12, 0,
+      new THREE.Color(shade * .90, shade, shade * .97));
+  }
+  const boards = [], masonry = [], broken = [];
+  for (const o of area.props) {
+    if (o.kind === 'wreck') {
+      const car = art.wreck.scene.clone();
+      car.position.set(o.x, o.y - o.ry + .04, o.z);
+      car.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+      group.add(car);
+    } else if (o.kind.startsWith('house')) {
+      const vertical = o.rz > o.rx;
+      const size = vertical ? o.rz : o.rx;
+      const startY = o.y - o.ry;
+      masonry.push([o.x, startY + .143, o.z, o.rx * 2 + .06, .29, o.rz * 2 + .06, 0]);
+      for (let y = startY + .36; y < o.y + o.ry - .05; y += .17) {
+        const width = size * (y > o.y + o.ry - .42 ? .77 + rng() * .23 : 1) * 2;
+        boards.push([o.x, y, o.z, vertical ? o.rx * 2 : width, .162, vertical ? width : o.rz * 2, 0]);
+      }
+      for (const s of [-1, 1])
+        broken.push([o.x + (vertical ? 0 : s * (o.rx - .1)), o.y, o.z + (vertical ? s * (o.rz-.1) : 0),
+          vertical ? o.rx * 2 + .075 : .13, o.ry * 2.05, vertical ? .13 : o.rz * 2 + .075, 0]);
+    } else if (o.kind === 'rafters') {
+      for (let index = 0; index < 8; index++) {
+        const x = o.x + (index - 3.5) * .8;
+        broken.push([x, o.y + 2.68 + rng() * .15, o.z - .72 + rng() * .37, .102, .141, 2.4 + rng() * 2.6, 0]);
+      }
+    }
+  }
+  for (const [parts, mat] of [[boards, surfaces.boards], [masonry, surfaces.mortar], [broken, surfaces.trim]]) {
+    const mesh = instance(group, baseBox, mat, parts.length, true);
+    for (const [i, o] of parts.entries()) {
+      const tint = .74 + rng() * .22;
+      place(mesh, i, ...o, new THREE.Color(tint, tint * .98, tint * .93));
+    }
+  }
+  // A weathered roadside delineator marks the opening route.
+  if (area.cx === 0 && area.cz === 0) {
+    const y = world.height(-2.8, 11);
+    const sign = new THREE.Group();
+    for (const [sx, sy, sz, dy, mat] of [[.13, 1.38, .10, .65, surfaces.trim], [.19,.22,.037,1.18,surfaces.reflectors]]) {
+      const p = new THREE.Mesh(baseBox, mat);
+      p.scale.set(sx, sy, sz); p.position.set(-2.8, y + dy, 11); sign.add(p);
+    }
+    group.add(sign);
+  }
+  return group;
+}
+
+function radialTexture(hard = false) {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d'), ramp = g.createRadialGradient(48, 48, 0, 48, 48, 47);
+  ramp.addColorStop(0, '#ffffff');
+  ramp.addColorStop(hard ? .32 : .13, hard ? '#ffffffe8' : '#ffffff99');
+  ramp.addColorStop(.53, '#ffffff38');
+  ramp.addColorStop(1, '#ffffff00');
+  g.fillStyle = ramp; g.fillRect(0, 0, 96, 96);
+  return new THREE.CanvasTexture(c);
+}
+
+function lootIcon(kind) {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d'), { icon, color } = LOOT[kind];
+  g.translate(48, 48);
+  g.fillStyle = '#111a19e0'; g.strokeStyle = color; g.lineWidth = 3;
+  g.beginPath();
+  g.roundRect(-34, -29, 68, 58, 10);
+  g.fill(); g.stroke();
+  g.fillStyle = color;
+  if (kind in GUNS) {
+    g.fillRect(-23, -7, kind === 'shotgun' ? 50 : 42, 7);
+    g.fillRect(-14, 0, kind === 'pistol' ? 10 : 23, 5);
+    g.beginPath(); g.moveTo(-12, 1); g.lineTo(-2, 2); g.lineTo(-9, 16); g.lineTo(-19, 16); g.fill();
+    if (kind === 'smg') g.fillRect(0, 2, 7, 15);
+    if (kind === 'shotgun') g.fillRect(-30, 0, 12, 9);
+  } else if (kind.startsWith('armor')) {
+    g.beginPath();
+    g.moveTo(-16, -14); g.lineTo(0, -19); g.lineTo(16, -14); g.lineTo(14, 7);
+    g.lineTo(0, 20); g.lineTo(-14, 7); g.closePath(); g.fill();
+    g.fillStyle = '#1a2424';
+    g.font = 'bold 20px sans-serif'; g.textAlign = 'center'; g.fillText(kind.at(-1), 0, 7);
+  } else {
+    g.font = 'bold 38px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(icon, 0, 2);
+  }
+  const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function labelCanvas(w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { canvas, texture, ctx: canvas.getContext('2d') };
+}
+
+function makeLamp() {
+  const lamp = new THREE.SpotLight(0xf6e4c4, 0, 17, .49, .54, 1.55);
+  lamp.castShadow = true;
+  lamp.shadow.mapSize.set(512, 512);
+  lamp.shadow.camera.near = .14; lamp.shadow.camera.far = 34;
+  lamp.shadow.bias = -.00019; lamp.shadow.normalBias = .028;
+  const spill = new THREE.SpotLight(0xdfeddf, 0, 7.4, .84, .82, 1.65);
+  return { lamp, spill };
+}
+
+function fogSky(scene) {
+  const shader = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { zenith: { value: new THREE.Color(0x070d19) }, horizon: { value: new THREE.Color(0x26343b) } },
+    vertexShader: 'varying vec3 sky; void main(){ sky=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+    fragmentShader: `
+      varying vec3 sky; uniform vec3 zenith; uniform vec3 horizon;
+      void main(){
+        vec3 d=normalize(sky); float h=clamp(d.y,0.,1.);
+        float moon=pow(max(0.,dot(d,normalize(vec3(-.49,.24,-.63)))),34.);
+        float cloud=.5+.25*sin(d.x*13.+sin(d.z*8.)+d.y*12.)+.15*sin(d.x*30.-d.z*12.+d.y*17.);
+        vec3 col=mix(horizon,zenith,pow(h,.43)) + (cloud * .075 + moon*.58)*vec3(.07,.105,.13);
+        float disk=smoothstep(.99966,.99979,dot(d,normalize(vec3(-.49,.24,-.63))));
+        gl_FragColor=vec4(col+disk*vec3(.31,.38,.44),1.);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(86, 32, 12), shader);
+  sky.renderOrder = -3;
+  scene.add(sky);
+  return sky;
+}
+
+export function createPresentation(scene, camera, art) {
+  const localForest = forest.clone();
+  scene.add(localForest);
+  scene.fog = new THREE.FogExp2(0x172127, .040);
+  scene.add(new THREE.HemisphereLight(0x9eb7cc, 0x566270, .63));
+  const moon = new THREE.DirectionalLight(0x92b5cd, .34);
+  moon.position.set(-16, 12, -25); scene.add(moon);
+  const sky = fogSky(scene);
+  const { lamp, spill } = makeLamp();
+  const muzzle = new THREE.SpotLight(0xffa660, 0, 13, .61, .66, 1.48);
+  scene.add(lamp, lamp.target, spill, spill.target, muzzle, muzzle.target);
+  const glow = radialTexture(), burst = radialTexture(true);
+  const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  spark.visible = false; scene.add(spark);
+  const weaponMount = new THREE.Group(), lampMount = new THREE.Group();
+  const weaponAnchor = new THREE.Group(), lampAnchor = new THREE.Group();
+  scene.add(weaponAnchor, lampAnchor);
+  weaponAnchor.add(weaponMount); lampAnchor.add(lampMount);
+  const gloveR = art.glove.scene.clone(), gloveL = art.glove.scene.clone();
+  weaponMount.add(gloveR); lampMount.add(gloveL);
+  const guns = Object.fromEntries(Object.keys(GUNS).map(w => [w, art[w].scene.clone()]));
+  for (const g of Object.values(guns)) weaponMount.add(g);
+  const flashlight = art.flashlight.scene.clone();
+  lampMount.add(flashlight);
+  const firstPersonMats = new Map();
+  for (const model of [gloveR, gloveL, flashlight, ...Object.values(guns)]) {
+    model.traverse(node => {
+      if (!node.isMesh) return;
+      if (!firstPersonMats.has(node.material)) {
+        const lit = node.material.clone();
+        lit.emissive.copy(lit.color).multiplyScalar(.14);
+        firstPersonMats.set(node.material, lit);
+      }
+      node.material = firstPersonMats.get(node.material);
+    });
+  }
+  const watch = labelCanvas(256, 156);
+  const watchGroup = new THREE.Group(); lampMount.add(watchGroup);
+  watchGroup.position.set(-.04, .073, .052);
+  watchGroup.rotation.set(-Math.PI / 2 - .32, 0, -.12);
+  const frame = new THREE.Mesh(baseBox, new THREE.MeshStandardMaterial({ color: 0x151a16, roughness: .75 }));
+  frame.scale.set(.154,.101,.026);
+  watchGroup.add(frame);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(.136,.084),
+    new THREE.MeshBasicMaterial({ map: watch.texture, toneMapped: false }));
+  screen.position.z = .014; watchGroup.add(screen);
+  const iconTextures = Object.fromEntries(Object.keys(LOOT).map(kind => [kind, lootIcon(kind)]));
+  const flares = Array.from({ length: 3 }, () => new THREE.PointLight(0xffa661, 0, 5.9, 1.65));
+  scene.add(...flares);
+  const chunks = new Map(), enemyMeshes = new Map(), pickups = new Map();
+  const pool = Object.fromEntries(Object.keys(ENEMIES).map(k => [k, []]));
+  const effects = [];
+  const effectGeometry = new THREE.TetrahedronGeometry(.038);
+  const effectMaterials = {
+    body: new THREE.MeshBasicMaterial({ color: 0x693b36 }),
+    other: new THREE.MeshBasicMaterial({ color: 0xb09b7e }),
+    casing: new THREE.MeshStandardMaterial({ color: 0x988257, roughness: .4, metalness: .5 }),
+  };
+  let shot = null, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
+
+  function reset(run) {
+    currentRun = run;
+    for (const group of chunks.values()) discardChunk(group);
+    chunks.clear();
+    for (const visual of enemyMeshes.values()) releaseEnemy(visual);
+    enemyMeshes.clear();
+    for (const view of pickups.values()) discardLoot(view);
+    pickups.clear();
+    for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
+    shot = null;
+    lastWatch = '';
+  }
+
+  function discardChunk(group) {
+    group.traverse(node => {
+      if (node.userData.disposeGeometry) node.geometry.dispose();
+      if (node.isInstancedMesh) node.dispose();
+    });
+    group.removeFromParent();
+  }
+
+  function updateChunks(world, p) {
+    const cx = Math.floor(p.x / CHUNK), cz = Math.floor(p.z / CHUNK);
+    for (const [key, view] of chunks) {
+      const [x, z] = key.split(',').map(Number);
+      if (Math.max(Math.abs(x - cx), Math.abs(z - cz)) > 1) {
+        discardChunk(view); chunks.delete(key);
+      }
+    }
+    for (let z = cz - 1; z <= cz + 1; z++) for (let x = cx - 1; x <= cx + 1; x++) {
+      const area = world.chunk(x, z);
+      if (chunks.has(area.key)) continue;
+      const view = makeChunk(world, area, art);
+      chunks.set(area.key, view); localForest.add(view);
+    }
+  }
+
+  function borrowEnemy(kind) {
+    const reused = pool[kind].pop();
+    if (reused) {
+      reused.root.visible = true; reused.deadAt = -1; reused.age = 0; return reused;
+    }
+    const root = new THREE.Group(), character = clone(art[kind].scene);
+    root.add(character);
+    character.rotation.y = Math.PI;
+    character.traverse(m => {
+      if (!m.isMesh) return;
+      if (m.isSkinnedMesh) m.boundingSphere = new THREE.Sphere(v3(0, .94, 0), 1.46);
+      m.receiveShadow = true;
+    });
+    scene.add(root);
+    const mixer = new THREE.AnimationMixer(character);
+    const actions = {};
+    for (const clip of art[kind].animations) {
+      actions[clip.name] = mixer.clipAction(clip).play();
+      actions[clip.name].setEffectiveWeight(clip.name === 'Walk' ? 1 : 0);
+    }
+    return { root, character, mixer, kind, actions, deadAt: -1, age: 0 };
+  }
+
+  function releaseEnemy(v) {
+    v.root.visible = false;
+    v.character.rotation.set(0, Math.PI, 0);
+    v.character.position.set(0, 0, 0);
+    pool[v.kind].push(v);
+  }
+
+  function updateEnemies(run, dt) {
+    tick++;
+    const desired = new Set();
+    const corpses = run.corpses.filter(e => run.time - e.diedAt < 9).slice(-8);
+    for (const e of [...run.enemies, ...corpses]) {
+      if (distance(e, run.player) > 50) continue;
+      desired.add(e.id);
+      let v = enemyMeshes.get(e.id);
+      if (!v) { v = borrowEnemy(e.kind); enemyMeshes.set(e.id, v); }
+      const d = distance(e, run.player), dead = e.diedAt !== undefined;
+      v.root.position.set(e.x, e.y, e.z);
+      v.root.rotation.y = -e.yaw;
+      if (dead) {
+        const time = run.time - e.diedAt, rate = e.kind === 'brute' ? 1.2 : e.kind === 'shrieker' ? 2.05 : 1.48;
+        const slump = 1 - (1 - Math.min(1, time * rate)) ** 2;
+        if (v.deadAt < 0) { v.deadAt = time; v.mixer.update(0); }
+        v.character.rotation.set((e.id % 3 ? 1 : -1) * slump * 1.54, Math.PI,
+          Math.sin(slump * 2.6) * (e.kind === 'shrieker' ? .51 : .13));
+        v.character.position.y = Math.min(.15, slump * .19) - clamp((time - 8) * .30, 0, .34);
+        continue;
+      }
+      v.age += dt;
+      const skip = d < 12 ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
+      if ((tick + e.id) % skip) continue;
+      const { Walk, Attack, Hit } = v.actions;
+      const attack = e.windup > 0;
+      const attackProgress = !attack ? 0 : .05 + .50 * (1 - e.windup / ENEMIES[e.kind].windup);
+      const recovering = !attack && e.recover > .34;
+      const attackWeight = attack ? .94 : recovering ? .56 : 0;
+      const hit = e.stun > 0 ? Math.min(.82, e.stun * 5.6) : 0;
+      if (Walk) {
+        Walk.setEffectiveWeight(Math.max(0, 1 - attackWeight - hit));
+        Walk.paused = true;
+        Walk.time = ((e.gait / (2 * Math.PI)) % 1) * Walk.getClip().duration;
+      }
+      if (Attack) {
+        Attack.setEffectiveWeight(attackWeight);
+        Attack.paused = true;
+        Attack.time = (attack ? attackProgress : .58 + (1 - e.recover) * .39) * Attack.getClip().duration;
+      }
+      if (Hit) {
+        Hit.setEffectiveWeight(hit);
+        Hit.paused = true;
+        Hit.time = clamp((.15 - e.stun) * 5.4, 0, .94) * Hit.getClip().duration;
+      }
+      v.mixer.update(v.age);
+      v.age = 0;
+    }
+    for (const [id, v] of enemyMeshes) if (!desired.has(id)) { releaseEnemy(v); enemyMeshes.delete(id); }
+  }
+
+  function discardLoot(view) {
+    view.group.removeFromParent();
+    view.icon.material.dispose(); view.halo.material.dispose();
+  }
+
+  function updateLoot(run) {
+    const desired = new Set(), nearest = [];
+    const p = run.player, beam = run.beam;
+    for (const item of run.loot) {
+      const d = distance(item, p);
+      if (item.lost || d > 34) continue;
+      desired.add(item.id);
+      let view = pickups.get(item.id);
+      if (!view) {
+        const group = new THREE.Group();
+        const icon = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: iconTextures[item.kind], color: 0xffffff, depthWrite: false, transparent: true, toneMapped: false,
+        }));
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: glow, color: LOOT[item.kind].color, depthWrite: false, transparent: true,
+          blending: THREE.AdditiveBlending,
+        }));
+        group.add(halo, icon); scene.add(group);
+        group.position.set(item.x, item.y, item.z);
+        view = { group, icon, halo }; pickups.set(item.id, view);
+      }
+      const power = item.kind === 'ammo' ? 0 : flarePower(run.time - item.born);
+      const range = beamSettings(p);
+      const spot = v3(item.x, item.y + .45, item.z);
+      let lit = false;
+      if (p.flashlight && beam && d < range.range) {
+        const delta = spot.clone().sub(beam.origin);
+        const dot = delta.normalize().dot(beam.ray);
+        lit = dot > Math.cos(range.angle * 1.25) && run.world.clear(beam.origin, spot);
+      }
+      const strength = Math.max(lit ? .90 : 0, power * .95, d < 3 ? .68 : item.kind === 'ammo' ? .20 : .065);
+      view.icon.material.opacity = strength;
+      const scale = (item.kind === 'ammo' ? .24 : .53) * (1 + power * .13);
+      view.icon.scale.set(scale, scale, 1);
+      view.icon.position.y = .30 + (item.kind !== 'ammo' ? .21 : 0);
+      view.halo.visible = power > .005;
+      view.halo.position.y = .37;
+      view.halo.material.opacity = power * .61;
+      view.halo.scale.setScalar(.66 + power * .63);
+      if (power > 0) nearest.push({ item, d, power });
+    }
+    for (const [id, view] of pickups) if (!desired.has(id)) { discardLoot(view); pickups.delete(id); }
+    nearest.sort((a, b) => a.d - b.d);
+    for (const [i, light] of flares.entries()) {
+      const near = nearest[i];
+      light.intensity = near && i < quality ? 13.5 * near.power : 0;
+      if (light.intensity) {
+        const { item } = near;
+        light.position.set(item.x, item.y + .32, item.z);
+        light.color.set(LOOT[item.kind].color);
+        light.distance = 2.3 + near.power * 3.1;
+      }
+    }
+  }
+
+  function debris(event, weapon = '') {
+    const amount = weapon ? 1 : quality > 1 ? 6 : 3;
+    for (let i = 0; i < amount; i++) {
+      if (effects.length > 58) return;
+      const mesh = impactPool.pop() || new THREE.Mesh(effectGeometry);
+      mesh.material = weapon ? effectMaterials.casing : event.surface === 'body' ? effectMaterials.body : effectMaterials.other;
+      mesh.scale.set(weapon ? .46 : 1, weapon ? .74 : 1, weapon ? .46 : 1);
+      mesh.position.set(event.x, event.y, event.z);
+      mesh.visible = true;
+      if (!mesh.parent) scene.add(mesh);
+      const vx = (Math.random() - .5) * 2.4, vz = (Math.random() - .5) * 2.4;
+      effects.push({ mesh, velocity: v3(weapon ? 1.5 : vx, .5 + Math.random() * 1.9, vz),
+        age: weapon ? .85 : .14 + Math.random() * .22 });
+    }
+  }
+
+  function events(batch) {
+    for (const event of batch) {
+      if (event.type === 'shot') {
+        shot = { ...event, life: .12, spark: .058 };
+        if (quality > 1) debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
+      }
+      if (event.type === 'impact') debris(event);
+    }
+  }
+
+  function updateWatch(run) {
+    const p = run.player;
+    const parts = [p.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor, p.flashlight, p.beam, Boolean(p.reload)];
+    const key = parts.join(':');
+    if (key === lastWatch) return;
+    lastWatch = key;
+    const g = watch.ctx;
+    g.fillStyle = '#121918'; g.fillRect(0, 0, 256, 156);
+    g.strokeStyle = '#566c5c'; g.strokeRect(3, 3, 250, 150);
+    g.fillStyle = '#94a898'; g.font = '19px monospace'; g.fillText(p.reload ? 'RELOADING' : 'ROUNDS', 16, 27);
+    g.fillStyle = '#eeead8'; g.font = 'bold 39px monospace'; g.fillText(p.ammo + '/' + p.reserve, 15, 72);
+    g.font = '16px monospace'; g.fillStyle = '#9bb6a6';
+    g.fillText((p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + Math.ceil(p.battery * 100) + '%', 16, 110);
+    g.fillStyle = '#35433a'; g.fillRect(16, 124, 221, 11);
+    g.fillStyle = p.battery > .21 ? '#b1c79e' : '#dfa36f';
+    g.fillRect(16, 124, 221 * p.battery, 11);
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle = i < p.armor ? '#a2c8d2' : '#334445';
+      g.fillRect(185 + i * 18, 57, 13, 17);
+    }
+    watch.texture.needsUpdate = true;
+  }
+
+  function updateTools(run, dt, settings, tracking, active, stereo) {
+    const p = run.player, gun = guns[p.weapon];
+    watchGroup.visible = stereo;
+    for (const [k, m] of Object.entries(guns)) m.visible = k === p.weapon;
+    weaponAnchor.visible = active && !!tracking.weapon;
+    lampAnchor.visible = active && !!tracking.lamp;
+    if (tracking.weapon) {
+      weaponAnchor.position.copy(tracking.weapon.position);
+      weaponAnchor.quaternion.copy(tracking.weapon.quaternion);
+    }
+    if (tracking.lamp) {
+      lampAnchor.position.copy(tracking.lamp.position);
+      lampAnchor.quaternion.copy(tracking.lamp.quaternion);
+    }
+    const left = settings.leftHanded;
+    gloveR.scale.x = left ? -1 : 1;
+    gloveL.scale.x = left ? 1 : -1;
+    watchGroup.position.x = left ? .04 : -.04;
+    const recoil = shot ? Math.max(0, shot.life / .12) ** 1.8 : 0;
+    const showReload = p.reload ? 1 - p.reload.left / p.reload.duration : 0;
+    const dip = p.reload ? Math.sin(Math.PI * showReload) : 0;
+    weaponMount.rotation.set(recoil * (p.weapon === 'shotgun' ? .139 : p.weapon === 'smg' ? .053 : .09) - .47 * dip,
+      0, dip * (left ? -.35 : .35));
+    weaponMount.position.set(0, -.050 * dip, recoil * .033);
+    const slide = gun.getObjectByName('Slide'), mag = gun.getObjectByName('Magazine'), pump = gun.getObjectByName('Pump');
+    if (slide) slide.position.z = recoil * .052 + (showReload > .72 && showReload < .91 ? .019 : 0);
+    if (mag) { mag.position.y = dip * (p.weapon === 'smg' ? -.16 : -.10); mag.visible = p.weapon !== 'shotgun' || dip > .13; }
+    if (pump) pump.position.z = shot ? Math.sin(clamp(1 - shot.life / .12, 0, 1) * Math.PI) * .081 : dip * .046;
+    lampMount.rotation.set(0, 0, 0);
+    if (shot) {
+      shot.life -= dt; shot.spark -= dt;
+      const o = v3(shot.x, shot.y, shot.z), ray = v3(shot.ray.x, shot.ray.y, shot.ray.z);
+      muzzle.position.copy(o); muzzle.target.position.copy(o).add(ray);
+      const scale = shot.weapon === 'shotgun' ? 1.65 : shot.weapon === 'smg' ? .7 : 1;
+      const reduced = settings.reducedFlashes ? .25 : 1;
+      muzzle.intensity = active ? 52 * scale * recoil ** 2 * reduced : 0;
+      spark.position.copy(o).addScaledVector(ray, .105);
+      spark.material.opacity = Math.max(0, shot.spark / .058) * .96 * reduced;
+      spark.material.rotation = shot.life * 11;
+      spark.scale.set(.43 * scale, .32 * scale, 1);
+      spark.visible = active && shot.spark > 0;
+      if (shot.life <= 0) { shot = null; }
+    } else { muzzle.intensity = 0; spark.visible = false; }
+    const { range, angle } = beamSettings(p);
+    const beam = run.beam;
+    if (beam) {
+      lamp.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
+      lamp.target.position.copy(lamp.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
+    } else if (tracking.lamp) {
+      lamp.position.copy(tracking.lamp.position).add(forward.clone().applyQuaternion(tracking.lamp.quaternion).multiplyScalar(.18));
+      lamp.target.position.copy(lamp.position).add(forward.clone().applyQuaternion(tracking.lamp.quaternion));
+    }
+    lamp.angle = angle;
+    lamp.distance = range;
+    const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
+    lamp.intensity = active && p.flashlight ? (p.beam === 'focus' ? 128 : 104) * power : 0;
+    spill.position.copy(lamp.position); spill.target.position.copy(lamp.target.position);
+    spill.intensity = lamp.intensity * .16;
+    updateWatch(run);
+  }
+
+  function update(run, dt, settings, tracking, active, stereo) {
+    if (run !== currentRun) reset(run);
+    const p = run.player;
+    sky.position.set(p.x, p.y, p.z);
+    if (!chunks.size || tick % 12 === 0) updateChunks(run.world, p);
+    updateEnemies(run, dt);
+    updateLoot(run);
+    updateTools(run, dt, settings, tracking, active, stereo);
+    const ambiance = settings.visibility ? 'bright' : 'dark';
+    if (tone !== ambiance) {
+      tone = ambiance;
+      moon.intensity = settings.visibility ? .60 : .34;
+      scene.fog.color.set(settings.visibility ? 0x23333a : 0x172127);
+    }
+    for (let i = effects.length - 1; i >= 0; i--) {
+      const effect = effects[i];
+      effect.age -= dt; effect.velocity.y -= dt * 5.8;
+      effect.mesh.position.addScaledVector(effect.velocity, dt);
+      effect.mesh.rotation.z += dt * 8;
+      if (effect.age <= 0) {
+        effect.mesh.visible = false; impactPool.push(effect.mesh); effects.splice(i, 1);
+      }
+    }
+  }
+
+  return { update, events, reset, setQuality(value) {
+    quality = value;
+    lamp.castShadow = value > 1;
+  } };
+}

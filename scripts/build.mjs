@@ -1,21 +1,42 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
-import { gzipSync } from 'node:zlib';
+import { cp, mkdir } from 'node:fs/promises';
+import { watch } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { build, context } from 'esbuild';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const source = await readFile(path.join(root, 'src', 'game.js'));
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const development = process.argv.includes('--dev');
+const out = path.join(root, development ? '.cache/zomboidz' : 'dist');
 
-// Match the production artifact byte-for-byte on systems with gzip installed.
-// Fall back to Node's zlib on systems without that command; both outputs are valid.
-const command = spawnSync('gzip', ['-n', '-9', '-c'], {
-  input: source,
-  maxBuffer: 16 * 1024 * 1024,
-});
-const packed = !command.error && command.status === 0
-  ? command.stdout
-  : gzipSync(source, { level: 9 });
+await mkdir(out, { recursive: true });
+const publicPaths = ['index.html', 'style.css', 'assets/art', 'assets/audio'];
+const copy = p => cp(path.join(root, p), path.join(out, p), { recursive: true });
+await Promise.all(publicPaths.map(copy));
 
-await writeFile(path.join(root, 'game.js.gz'), packed);
-console.log(`Built game.js.gz (${source.length} → ${packed.length} bytes)`);
+const options = {
+  absWorkingDir: root,
+  entryPoints: ['game.js'],
+  outfile: path.join(out, 'game.js'),
+  target: ['es2022'],
+  format: 'esm',
+  bundle: true,
+  sourcemap: development,
+  minify: !development,
+  legalComments: 'linked',
+  define: { __DEVELOPMENT__: String(development) },
+  logLevel: 'info',
+};
+if (development) {
+  const server = await context(options);
+  await server.watch();
+  for (const p of publicPaths) {
+    let timer;
+    watch(path.join(root, p), () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => copy(p).catch(error => console.warn(error.message)), 120);
+    });
+  }
+  const port = Number(process.env.PORT || 8080);
+  const host = process.env.HOST || '127.0.0.1';
+  await server.serve({ servedir: out, port, host });
+} else await build(options);

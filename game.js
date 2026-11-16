@@ -1,7 +1,5 @@
-import('./src/game.js?v=0.11').catch(e=>{
- console.error('Zomboidz failed to load:',e);
- document.getElementById('startlabel').textContent='GAME LOAD ERROR';
- document.getElementById('start').disabled=true;
- document.getElementById('toast').textContent='Could not load the game. Refresh or update your browser and try again.';
- document.getElementById('toast').classList.add('on');
+import('./src/game.js').catch(error => {
+  console.error('The Last Light failed to load:', error);
+  document.getElementById('status').textContent = 'The forest could not load. Refresh the page or try another browser.';
+  document.getElementById('start').textContent = 'Game unavailable';
 });

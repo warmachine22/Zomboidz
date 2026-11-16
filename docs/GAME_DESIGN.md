@@ -1,5 +1,7 @@
 # Game Design — Zomboidz: The Last Light
 
+Historical v0.11 design notes. Current controls and survival rules are in `README.md`.
+
 ## One-sentence pitch
 
 Survive for as long as possible in a dark, claustrophobic forest where **slow-moving zombies become overwhelming through sheer numbers**. Your only certainty is the patch of forest your flashlight reveals.

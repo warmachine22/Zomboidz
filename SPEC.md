@@ -1,5 +1,7 @@
 # Zomboidz — The Last Light: v0.11
 
+Historical alpha specification. The 1.0 rebuild is documented in `README.md` and `docs/DEVELOPMENT.md`.
+
 ## Game goal
 
 A first-person browser/WebXR endless zombie survival game for Meta Quest, playable on iPad and desktop for testing. Survive as long as possible in a thick, dark low-poly forest with 360-degree spatial audio. Ordinary zombies move slowly but form increasingly dense hordes. Fire a six-shot pistol, reload, collect upgrades continuously, and die instantly when touched. Survival time and kill statistics are the score.
