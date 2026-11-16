@@ -30,6 +30,18 @@ test('tracked pointing controls aim while the grip controls placement and calibr
     .add(adjusted.weapon.position)) < 1e-8);
 });
 
+test('a matching pointing pose aligns both tools independently of each grip orientation', () => {
+  const pointer = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -.11);
+  const pistol = heldPose({ ...weapon, pointer }, true);
+  const otherHand = pose(new Vector3(-.19, 1.26, 19.5));
+  otherHand.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), .31);
+  const flashlight = heldPose({ ...otherHand, pointer }, true);
+  const gunRay = mountedAim(pistol, layout, view);
+  const lightRay = mountedAim(flashlight, lamp, view);
+  assert.ok(gunRay.ray.distanceTo(lightRay.ray) < 1e-8);
+  assert.ok(gunRay.origin.distanceTo(lightRay.origin) > .25);
+});
+
 test('recoil changes the aim ray and recovers consistently across frame rates', () => {
   const recoverAt = fps => {
     const handling = createGunHandling();

@@ -26,7 +26,8 @@ The script creates the authored weapons, flashlight, gloves, utility wreck, and 
 2. Compare paths and nearby silhouettes with the flashlight off and on. Try firing and reloading while moving. Compare normal and reduced flashes near cover. Cross a road to an active flare and observe how the horde divides.
 3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
 4. Use `?perf=1` and Meta’s performance tools for a 15-minute stress run. Record active crowd size, frame timing and missed frames for the late run. The 48-enemy design target depends on hardware measurement.
+5. Stand still with the flashlight off. Have a second person confirm the approach direction of a zombie before calling it out, then turn your head and check that the sound stays with the zombie. Compare an approach in open ground with a zombie behind a wall. Check both the headset speakers and headphones if available.
 
 Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.
 
-For repeatable desktop lighting checks, use `?debug&scenario=night` on the development server. It starts with the flashlight off, a nearby shambler, and a faded carbine drop. Use `?debug&scenario=roadside` to compare the wreck lights and fresh flares.
+For repeatable desktop lighting checks, use `?debug&scenario=night` on the development server. It starts with the flashlight off, a nearby shambler, and a faded carbine drop. Use `?debug&scenario=roadside` for the wreck lights and fresh flares and `?debug&scenario=shelter` for the shelter's lamp and wall shadows.

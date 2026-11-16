@@ -4,6 +4,7 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
 import { beamSettings, ENEMIES, flarePower, GUNS, LOOT } from './simulation.js';
 import { enemyMotion } from './enemy-motion.js';
+import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
 
 const textures = new THREE.TextureLoader();
 const models = new GLTFLoader();
@@ -154,7 +155,7 @@ function terrain(world, area) {
 
 function turf(target, road, shade) {
   const border = clamp((road - 1.4) / 1.85, 0, 1);
-  target.setRGB(.42 + border * .13, .45 + border * .053, .47 - border * .17).multiplyScalar(shade);
+  target.setRGB(.51 + border * .04, .51 - border * .007, .51 - border * .21).multiplyScalar(shade);
 }
 
 function makeChunk(world, area, art) {
@@ -239,12 +240,10 @@ function makeChunk(world, area, art) {
   }
   for (const light of area.lights) {
     if (light.type === 'wreck') {
-      for (const x of [-.64, .64]) {
-        const lens = new THREE.Mesh(baseBox, headlampLens);
-        lens.position.set(light.x+x, light.y-.006, light.z-.054);
-        lens.scale.set(.246,.126,.022);
-        group.add(lens);
-      }
+      const lens = new THREE.Mesh(baseBox, headlampLens);
+      lens.position.set(light.x, light.y, light.z-.054);
+      lens.scale.set(.246,.126,.022);
+      group.add(lens);
     } else {
       const fixture = new THREE.Mesh(baseBox, surfaces.trim);
       fixture.position.set(light.x,light.y+.082,light.z);
@@ -307,10 +306,11 @@ function labelCanvas(w, h) {
 }
 
 function makeLamp() {
-  const lamp = new THREE.SpotLight(0xf6e4c4, 0, 17, .49, .54, 1.55);
+  const lamp = new THREE.SpotLight(0xffedd2, 0, 17, .49, .78, 2);
+  lamp.map = beamTexture();
   lamp.castShadow = true;
   lamp.shadow.mapSize.set(512, 512);
-  lamp.shadow.camera.near = .14; lamp.shadow.camera.far = 34;
+  lamp.shadow.camera.near = .06; lamp.shadow.camera.far = 34;
   lamp.shadow.bias = -.00019; lamp.shadow.normalBias = .028;
   return lamp;
 }
@@ -318,23 +318,41 @@ function makeLamp() {
 function fogSky(scene) {
   const shader = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
-    uniforms: { zenith: { value: new THREE.Color(0x070d19) }, horizon: { value: new THREE.Color(0x26343b) } },
+    uniforms: {
+      zenith: { value: new THREE.Color(0x070d19) },
+      horizon: { value: new THREE.Color(0x202c38) },
+      moonDirection: { value: moonDirection },
+    },
     vertexShader: 'varying vec3 sky; void main(){ sky=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
     fragmentShader: `
-      varying vec3 sky; uniform vec3 zenith; uniform vec3 horizon;
+      varying vec3 sky; uniform vec3 zenith; uniform vec3 horizon; uniform vec3 moonDirection;
+      float cloudCell(vec2 cell) {
+        vec3 h = fract(vec3(cell.xyx) * .1031);
+        h += dot(h, h.yzx + 33.33);
+        return fract((h.x + h.y) * h.z);
+      }
+      float cloudNoise(vec2 p) {
+        vec2 c = floor(p), f = fract(p);
+        f = f*f*(3.-2.*f);
+        return mix(mix(cloudCell(c),cloudCell(c+vec2(1.,0.)),f.x),
+          mix(cloudCell(c+vec2(0.,1.)),cloudCell(c+1.),f.x),f.y);
+      }
       void main(){
         vec3 d=normalize(sky); float h=clamp(d.y,0.,1.);
-        float moon=pow(max(0.,dot(d,normalize(vec3(-.49,.24,-.63)))),34.);
-        float cloud=.5+.25*sin(d.x*13.+sin(d.z*8.)+d.y*12.)+.15*sin(d.x*30.-d.z*12.+d.y*17.);
-        vec3 col=mix(horizon,zenith,pow(h,.43)) + (cloud * .075 + moon*.58)*vec3(.07,.105,.13);
-        float disk=smoothstep(.99966,.99979,dot(d,normalize(vec3(-.49,.24,-.63))));
-        gl_FragColor=vec4(col+disk*vec3(.31,.38,.44),1.);
+        float towardMoon=dot(d,moonDirection);
+        float moon=pow(max(0.,towardMoon),71.);
+        vec2 cloudPlane=d.xz/(.32+h);
+        float cloud=.66*cloudNoise(cloudPlane*2.8)+.34*cloudNoise(cloudPlane*6.2+13.);
+        float veil=smoothstep(.46,.81,cloud)*smoothstep(.07,.34,h);
+        vec3 col=mix(horizon,zenith,pow(h,.37)) + (veil * .09 + moon*.38)*vec3(.08,.11,.15);
+        float disk=smoothstep(.99977,.99985,towardMoon);
+        gl_FragColor=vec4(col+disk*(1.-.66*veil)*vec3(.31,.38,.44),1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(86, 32, 12), shader);
-  sky.renderOrder = -3;
+  sky.renderOrder = 10;
   scene.add(sky);
   return sky;
 }
@@ -343,11 +361,12 @@ export function createPresentation(scene, art, layouts) {
   const localForest = forest.clone();
   scene.add(localForest);
   scene.background = new THREE.Color(0);
-  scene.fog = new THREE.FogExp2(0, .040);
-  const ambient = new THREE.HemisphereLight(0x9eb7cc, 0x566270, 0);
+  scene.fog = new THREE.FogExp2(0x1c2731, .036);
+  const ambient = new THREE.HemisphereLight(0x9eb7cc, 0x566270, .63);
   scene.add(ambient);
-  const moon = new THREE.DirectionalLight(0x92b5cd, 0);
-  moon.position.set(-16, 12, -25); scene.add(moon);
+  const moon = new THREE.DirectionalLight(0xb2c7df, .34);
+  moon.position.copy(moonDirection).multiplyScalar(70); scene.add(moon);
+  const canopyLighting = createCanopyLighting();
   const sky = fogSky(scene);
   const lamp = makeLamp();
   const muzzle = new THREE.SpotLight(0xffb77e, 0, 12, .72, .72, 1.65);
@@ -356,7 +375,18 @@ export function createPresentation(scene, art, layouts) {
   muzzle.shadow.mapSize.set(256, 256);
   muzzle.shadow.camera.near = .07;
   muzzle.shadow.bias = -.002;
-  const fixtureLights = Array.from({ length:2 }, () => new THREE.SpotLight(0xffd9a0, 0, 10, .63, .62, 1.65));
+  const headlightPattern = beamTexture(true);
+  const fixtureLights = Array.from({ length:2 }, () => {
+    const light = new THREE.SpotLight(0xffd9a0, 0, 18, .62, .66, 2);
+    light.map = headlightPattern;
+    light.castShadow = true;
+    light.shadow.autoUpdate = false;
+    light.shadow.mapSize.set(256, 256);
+    light.shadow.camera.near = .07;
+    light.shadow.bias = -.0007;
+    light.shadow.normalBias = .038;
+    return light;
+  });
   scene.add(lamp, lamp.target, muzzle, muzzle.target, ...fixtureLights.flatMap(l => [l,l.target]));
   const dot = new THREE.Mesh(new THREE.SphereGeometry(.012, 9, 6),
     new THREE.MeshBasicMaterial({ color:0xf54a36, toneMapped:false, fog:false }));
@@ -447,19 +477,24 @@ export function createPresentation(scene, art, layouts) {
 
   function updateChunks(world, p) {
     const cx = Math.floor(p.x / CHUNK), cz = Math.floor(p.z / CHUNK);
+    canopyLighting.update(world, cx, cz);
+    let changed = false;
     for (const [key, view] of chunks) {
       const [x, z] = key.split(',').map(Number);
       if (Math.max(Math.abs(x - cx), Math.abs(z - cz)) > 1) {
-        discardChunk(view); chunks.delete(key);
+        discardChunk(view); chunks.delete(key); changed = true;
       }
     }
     for (let z = cz - 1; z <= cz + 1; z++) for (let x = cx - 1; x <= cx + 1; x++) {
       const area = world.chunk(x, z);
       if (chunks.has(area.key)) continue;
       const view = makeChunk(world, area, art);
+      canopyLighting.shade(view);
       view.userData.lights = area.lights;
       chunks.set(area.key, view); localForest.add(view);
+      changed = true;
     }
+    return changed;
   }
 
   function borrowEnemy(kind) {
@@ -475,6 +510,7 @@ export function createPresentation(scene, art, layouts) {
       if (m.isSkinnedMesh) m.boundingSphere = new THREE.Sphere(v3(0, .94, 0), 1.46);
       m.receiveShadow = true;
     });
+    canopyLighting.shade(character);
     scene.add(root);
     const mixer = new THREE.AnimationMixer(character);
     const actions = {};
@@ -534,27 +570,42 @@ export function createPresentation(scene, art, layouts) {
     view.icon.material.dispose(); view.halo.material.dispose();
   }
 
-  function updateFixtures(player) {
+  function updateFixtures(player, terrainChanged) {
     const candidates = [...chunks.values()].flatMap(group => group.userData.lights)
       .filter(light => distance(light, player) < light.radius + 13)
-      .sort((a,b) => distance(a,player) - distance(b,player));
-    for (const [i, light] of fixtureLights.entries()) {
-      const source = candidates[i];
-      light.intensity = !source ? 0 : source.type === 'wreck' ? 70 : 23;
-      if (!source) continue;
+      .sort((a,b) => distance(a,player) - distance(b,player)).slice(0, fixtureLights.length);
+    const unmatched = candidates.filter(source => !fixtureLights.some(light => light.userData.source === source));
+    for (const light of fixtureLights) {
+      const previous = light.userData.source;
+      const source = candidates.includes(previous) ? previous : unmatched.shift();
+      if (!source) { light.intensity = 0; light.userData.source = null; continue; }
+      if (source === light.userData.source && !terrainChanged) continue;
+      const headlight = source.type === 'wreck';
+      light.userData.source = source;
+      light.intensity = headlight ? 370 : 54;
       light.position.set(source.x,source.y,source.z);
       light.target.position.copy(light.position).add(v3(source.ray.x,source.ray.y,source.ray.z));
       light.angle = source.angle;
       light.distance = source.radius;
-      light.color.setHex(source.type === 'wreck' ? 0xffe6be : 0xffb66f);
+      light.map = headlight ? headlightPattern : lamp.map;
+      light.color.setHex(headlight ? 0xffe4b1 : 0xffb465);
+      light.shadow.needsUpdate = true;
     }
-    return candidates.slice(0, fixtureLights.length);
+    return candidates;
   }
 
   function coneReaches(world, from, ray, target, range, angle) {
     const delta = target.clone().sub(from);
-    const d = delta.length();
-    return d <= range && delta.dot(ray) > Math.cos(angle)*d && world.clear(from,target);
+    const d = delta.length(), along = delta.dot(ray);
+    if (d > range || along <= Math.cos(angle)*d) return false;
+    if (from.type === 'wreck') {
+      const axis = v3(ray.x, ray.y, ray.z).normalize();
+      const right = axis.clone().cross(up).normalize();
+      const vertical = right.clone().cross(axis);
+      const radius = Math.hypot(delta.dot(right), delta.dot(vertical) * 2.45);
+      if (radius >= along * Math.tan(angle)) return false;
+    }
+    return world.clear(from,target);
   }
 
   function updateLoot(run, fixtures, active, beam) {
@@ -710,7 +761,7 @@ export function createPresentation(scene, art, layouts) {
     lamp.angle = angle;
     lamp.distance = range;
     const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
-    lamp.intensity = beam ? (p.beam === 'focus' ? 137 : 116) * power : 0;
+    lamp.intensity = beam ? (p.beam === 'focus' ? 520 : 340) * power : 0;
     const litByLamp = lamp.intensity > 0 || calibration;
     if (artworkLit !== litByLamp) {
       artworkLit = litByLamp;
@@ -749,9 +800,9 @@ export function createPresentation(scene, art, layouts) {
   function update(run, dt, settings, tracking, { active, stereo, calibration, menu, aimHit, beam, viewpoint }) {
     if (run !== currentRun) reset(run);
     const p = run.player;
-    sky.position.set(p.x, p.y, p.z);
-    if (!chunks.size || tick % 12 === 0) updateChunks(run.world, p);
-    const fixtures = updateFixtures(p);
+    sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
+    const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
+    const fixtures = updateFixtures(p, terrainChanged);
     updateEnemies(run, dt, aimHit?.e?.id);
     updateLoot(run, fixtures, active, beam);
     updateTools(run, dt, settings, tracking, active, stereo, calibration, beam);
@@ -768,10 +819,9 @@ export function createPresentation(scene, art, layouts) {
     const ambiance = menu ? 'menu' : settings.visibility ? 'bright' : 'forest';
     if (tone !== ambiance) {
       tone = ambiance;
-      sky.visible = menu;
-      moon.intensity = menu ? .34 : settings.visibility ? .17 : .115;
-      ambient.intensity = menu ? .63 : settings.visibility ? .43 : .32;
-      scene.fog.color.set(menu ? 0x172127 : settings.visibility ? 0x0b1013 : 0x070a0d);
+      moon.intensity = !menu && settings.visibility ? .42 : .34;
+      ambient.intensity = !menu && settings.visibility ? .83 : .63;
+      scene.fog.color.set(!menu && settings.visibility ? 0x23323b : 0x1c2731);
     }
     for (let i = effects.length - 1; i >= 0; i--) {
       const effect = effects[i];

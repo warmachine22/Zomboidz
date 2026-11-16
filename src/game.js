@@ -112,7 +112,7 @@ function pointerLock() {
 function start(seed = rapidSeed()) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
-  const encounter = scenario === 'roadside' || scenario === 'night';
+  const encounter = ['roadside', 'night', 'shelter'].includes(scenario);
   run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48, populate: !encounter });
   yaw = pitch = roomX = roomZ = 0;
   if (scenario === 'roadside') {
@@ -126,6 +126,8 @@ function start(seed = rapidSeed()) {
     yaw = Math.PI;
     addEnemy(run, 'shambler', 3, 42);
     setLoot(run, 'carbine', 2.55, 41).born = -26;
+  } else if (scenario === 'shelter') {
+    Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: false });
   }
   runId = rapidSeed();
   notice = '';

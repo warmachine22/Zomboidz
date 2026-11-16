@@ -3,7 +3,7 @@ import { animatedAnchors, HIT_SEGMENTS, hitRadii } from './enemy-motion.js';
 import { OPENING_SECONDS, replenishHorde, seedHorde } from './horde.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.2';
+export const BUILD = '1.0.3';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -57,8 +57,13 @@ export function beamSettings(player) {
 }
 
 export function resolvedBeam(world, lamp, head) {
-  if (!lamp || world.clear(head, lamp.origin, false)) return lamp;
-  return { ...lamp, origin: head };
+  if (!lamp || !head) return lamp;
+  const delta = { x: lamp.origin.x - head.x, y: lamp.origin.y - head.y, z: lamp.origin.z - head.z };
+  const range = Math.hypot(delta.x, delta.y, delta.z);
+  if (range <= .01) return lamp;
+  const ray = norm(delta), hit = world.raycast(head, ray, range, false);
+  if (!hit) return lamp;
+  return hit.t > .12 ? { ...lamp, origin: rayPoint(head, ray, hit.t - .12) } : null;
 }
 
 function norm(v) {
@@ -190,7 +195,8 @@ export function addEnemy(run, kind, x, z) {
   const enemy = { id: index, kind, x, y: run.world.height(x, z), z,
     yaw: Math.atan2(p.x - x, x === p.x && z === p.z ? -1 : z - p.z),
     hp: cfg.hp, pace: .74 + run.rng() * .46, gait: run.rng() * Math.PI * 2,
-    nextThink: run.time + run.rng() * .36, nextVoice: run.time + 1 + run.rng() * 5,
+    nextThink: run.time + run.rng() * .36, voiceVariation: run.rng(), nextVoice: run.time,
+    voiceBand: 2, lastVoice: -Infinity,
     target: null, reason: 'roaming', memory: null, swapAfter: 0,
     flank: index % 5 < 2 ? (index % 2 ? -1 : 1) : 0,
     roam: run.rng() * Math.PI * 2, nextRoam: run.time + 3, windup: 0, recover: 0,
@@ -467,6 +473,30 @@ function hurt(run, enemy) {
   emit(run, 'death', { ...run.death });
 }
 
+function enemyVoice(run, enemy, type) {
+  const height = type === 'swing' ? 1.1 : ENEMIES[enemy.kind].height * .84;
+  emit(run, type, { id: enemy.id, x: enemy.x, y: enemy.y + height, z: enemy.z, kind: enemy.kind });
+}
+
+function voiceCadence(run, enemy, gap) {
+  const { time } = run;
+  const band = gap <= 5 ? 0 : gap <= 12 ? 1 : 2;
+  if (band < enemy.voiceBand) {
+    enemy.nextVoice = Math.min(enemy.nextVoice, Math.max(time, enemy.lastVoice + .48));
+    enemy.voiceBand = band;
+  }
+  // Leave a margin on exit so hovering at the threshold doesn't retrigger.
+  if (gap > 12.65) enemy.voiceBand = 2;
+  else if (gap > 5.65 && enemy.voiceBand === 0) enemy.voiceBand = 1;
+  if (gap > 21 || time < enemy.lastVoice + .48 || time < enemy.nextVoice) return;
+  enemyVoice(run, enemy, 'voice');
+  enemy.lastVoice = time;
+  const variation = (enemy.voiceVariation + time * .53) % 1;
+  enemy.nextVoice = time + (gap <= 5 ? 1.23 + variation * .27
+    : gap <= 12 ? 1.95 + variation * .90
+    : 4.1 + variation * 2.15);
+}
+
 function attack(run, enemy, gap, dt) {
   const p = run.player, shape = ENEMIES[enemy.kind];
   const toward = Math.atan2(p.x - enemy.x, enemy.z - p.z);
@@ -478,7 +508,7 @@ function attack(run, enemy, gap, dt) {
       enemy.windup = 0;
       enemy.recover = enemy.kind === 'brute' ? 1.13 : .81;
       if (canReach(shape.reach) && Math.abs(angleDelta(toward, enemy.yaw)) < .58) hurt(run, enemy);
-      emit(run, 'swing', { x: enemy.x, y: enemy.y + 1.1, z: enemy.z });
+      enemyVoice(run, enemy, 'swing');
     } else {
       const reach = enemy.kind === 'shrieker' ? 1.62 : enemy.kind === 'brute' ? .72 : 1.0;
       if (gap > .76 && enemy.windup < shape.windup*.62 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
@@ -493,7 +523,8 @@ function attack(run, enemy, gap, dt) {
   if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
     enemy.windup = shape.windup;
     run.nextAttack = run.time + .33;
-    emit(run, 'windup', { x: enemy.x, y: enemy.y + 1.28, z: enemy.z, kind: enemy.kind });
+    enemyVoice(run, enemy, 'windup');
+    enemy.lastVoice = run.time;
     return true;
   }
   return false;
@@ -568,15 +599,12 @@ function updateEnemies(run, dt) {
       if (run.status === 'dead') break;
       continue;
     }
-    if (time >= e.nextVoice && gap < 24) {
-      emit(run, 'voice', { id: e.id, x: e.x, y: e.y + ENEMIES[e.kind].height * .84, z: e.z, kind: e.kind, alert: Boolean(e.target) });
-      e.nextVoice = time + (e.target ? 3.8 : 7) + run.rng() * 4;
-    }
     if (e.kind === 'shrieker' && e.target?.chase && gap > 3.4 && gap < 13 && time > e.nextBurst && e.stun <= 0) {
       e.burst = time + .94;
       e.nextBurst = time + 4.2 + run.rng() * 1.5;
-      emit(run, 'shriek', { id: e.id, kind: e.kind, x: e.x, y: e.y + 1.4, z: e.z });
-    }
+      enemyVoice(run, e, 'shriek');
+      e.lastVoice = time;
+    } else voiceCadence(run, e, gap);
     const t = e.target;
     if (!t) {
       if (time > e.nextRoam) { e.roam += (run.rng() - .43) * 2.6; e.nextRoam = time + 2.2 + run.rng() * 4; }

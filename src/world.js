@@ -133,8 +133,10 @@ export function createWorld(seed) {
       } else if (type === 'wreck') {
         const y = height(x, z)-.16;
         box(x, z, 1.86, 1.48, 3.85, y, 'wreck');
-        if (lit) area.lights.push({ type:'wreck', x, y:y+.70, z:z+1.96,
-          ray:{ x:-.17,y:-.21,z:.96 }, radius:12.4, angle:.59 });
+        if (lit) for (const side of [-1, 1]) {
+          area.lights.push({ type:'wreck', x:x+side*.64, y:y+.73, z:z+1.95,
+            ray:{ x:side*.025, y:-.13, z:.9912 }, radius:18, angle:.62 });
+        }
         cache('trunk', x - 1.65, z + .7, 'shotgun', 27);
         cache('road', x - 2.3, z + 4.8, 'ammo', 12);
       } else {

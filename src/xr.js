@@ -152,11 +152,14 @@ export function createXR(renderer, scene, rig) {
       position: rig.localToWorld(local.position.clone()),
       quaternion: rig.quaternion.clone().multiply(local.quaternion),
     });
-    const tracked = (settings.leftHanded ? sources.left : sources.right);
-    const lamp = (settings.leftHanded ? sources.right : sources.left);
-    const weapon = asWorld(tracked?.grip);
-    if (weapon && tracked.aim) weapon.pointer = rig.quaternion.clone().multiply(tracked.aim.quaternion);
-    return { tracking: { weapon, lamp: asWorld(lamp?.grip) }, view: asWorld(rawView) };
+    const toolPose = source => {
+      const pose = asWorld(source?.grip);
+      if (pose && source.aim) pose.pointer = rig.quaternion.clone().multiply(source.aim.quaternion);
+      return pose;
+    };
+    const weapon = toolPose(settings.leftHanded ? sources.left : sources.right);
+    const lamp = toolPose(settings.leftHanded ? sources.right : sources.left);
+    return { tracking: { weapon, lamp }, view: asWorld(rawView) };
   }
 
   function drawPanel(page, view, { title, lines = [], hint, second }) {

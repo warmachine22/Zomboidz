@@ -1,12 +1,32 @@
-import { distance } from './world.js';
+import { ENEMIES } from './simulation.js';
 
 const samples = ['pistol', 'shotgun', 'smg', 'pump', 'reload-short', 'reload-smg-short',
   'growl2', 'z1', 'z5', 'z10', 'z14', 'z20', 'zombienoise3', 'fastzombie1'];
 const voices = {
   shambler: ['growl2', 'z1', 'z5', 'zombienoise3'],
-  shrieker: ['z10', 'fastzombie1', 'z14'],
-  brute: ['z20', 'growl2', 'z5'],
+  shrieker: ['fastzombie1', 'z14'],
+  brute: ['z20', 'rasp'],
 };
+const voiceSamples = new Set(Object.values(voices).flat().concat('z10'));
+const voiceLevel = { voice: .90, windup: 1.04, shriek: 1.18, swing: .64 };
+const voiceWeight = { voice: 1, windup: 1.65, shriek: 1.48, swing: 1.18 };
+const voiceLimit = 8;
+
+export function threatMix(metres, occluded) {
+  const distanceGain = 1 / (1 + (Math.max(0, metres - 1.2) / 4.25) ** 1.75);
+  const fade = Math.min(1, Math.max(0, (22 - metres) / 5));
+  return { gain: distanceGain * fade * (occluded ? .60 : 1), cutoff: occluded ? 1350 : 19000 };
+}
+
+export function voicePriority(type, metres) {
+  return threatMix(metres, false).gain * voiceWeight[type];
+}
+
+function distance3(a, b) { return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
+
+function mouth(zombie) {
+  return { x: zombie.x, y: zombie.y + ENEMIES[zombie.kind].height * .84, z: zombie.z };
+}
 
 function setPosition(node, position) {
   if (node.positionX) {
@@ -17,8 +37,9 @@ function setPosition(node, position) {
 }
 
 export function createAudio() {
-  const buffers = new Map(), active = new Set();
-  let context, master, ambience, threats, weapons, effects, lastCreak = 0, volume = .76, paused = true;
+  const buffers = new Map(), active = new Map();
+  let context, master, ambience, threats, weapons, effects, listenerPosition;
+  let lastCreak = 0, volume = .76, paused = true, ducked = false;
 
   async function unlock() {
     if (!context) {
@@ -31,26 +52,46 @@ export function createAudio() {
       limiter.knee.value = 18;
       limiter.ratio.value = 6;
       limiter.attack.value = .003;
-      limiter.release.value = .20;
+      limiter.release.value = .11;
       master.gain.value = volume;
       master.connect(limiter).connect(context.destination);
       [ambience, threats, weapons, effects] = Array.from({ length: 4 }, () => {
         const bus = context.createGain(); bus.connect(master); return bus;
       });
-      ambience.gain.value = .46;
-      threats.gain.value = .67;
+      ambience.gain.value = paused ? .12 : .46;
+      threats.gain.value = paused ? .01 : .94;
       weapons.gain.value = .78;
       effects.gain.value = .47;
       ambienceLoop();
       for (const key of samples) {
         fetch(new URL('./assets/audio/' + key + '.ogg', import.meta.url))
           .then(response => { if (!response.ok) throw Error(key); return response.arrayBuffer(); })
-          .then(data => context.decodeAudioData(data)).then(data => buffers.set(key, data))
+          .then(data => context.decodeAudioData(data))
+          .then(data => buffers.set(key, voiceSamples.has(key) ? levelVoice(data) : data))
           .catch(() => {});
       }
       makeSounds();
     }
     if (context.state !== 'running') await context.resume().catch(() => {});
+  }
+
+  function levelVoice(input) {
+    const samples = input.getChannelData(0);
+    let peak = 0;
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+    if (peak === 0) return input;
+    let energy = 0, count = 0;
+    for (const sample of samples) {
+      if (Math.abs(sample) >= peak * .06) { energy += sample * sample; count++; }
+    }
+    const gain = Math.min(40, .24 / Math.sqrt(energy / count));
+    const result = context.createBuffer(1, input.length, input.sampleRate);
+    const output = result.getChannelData(0);
+    for (let i = 0; i < output.length; i++) {
+      const value = samples[i] * gain, magnitude = Math.abs(value);
+      output[i] = magnitude <= .66 ? value : Math.sign(value) * (.66 + .24 * Math.tanh((magnitude - .66) / .24));
+    }
+    return result;
   }
 
   function procedural(name, duration, calculate, channels = 1) {
@@ -91,6 +132,10 @@ export function createAudio() {
     procedural('flare', .68, (t, n, low) => (n*.74 + low*.26) * .50 * Math.exp(-t*5)
       * Math.min(1,t*74) * (.52 + .48*Math.sin(170*t)**2));
     procedural('swing', .23, (t, n, low) => (n*.4 + low*.6) * .56 * Math.sin(Math.PI*t/.23)**3);
+    procedural('rasp', .88, (t, n, low) => {
+      const voice = Math.sin(2 * Math.PI * (77*t + 1.2*Math.sin(8*t))) + .45 * Math.sin(2 * Math.PI * 221*t);
+      return (.17 * voice + .80*low + .065*n) * Math.sin(Math.PI*t/.88) ** 1.4 * (.68 + .32*Math.sin(t*43)**2);
+    });
     procedural('armor', .33, (t, n) => (.43 * Math.sin(2*Math.PI*91*t) + n*.57)
       * Math.exp(-t*22) * Math.min(1,t*90));
     procedural('fallback', .42, (t, n, low) => (n*.56 + low*.44)
@@ -103,38 +148,74 @@ export function createAudio() {
     });
   }
 
-  function play(name, { bus = effects, gain = .4, speed = 1, loc, priority = 0, occluded = false, id = null } = {}) {
+  function play(name, { bus = effects, gain = .4, speed = 1, loc } = {}) {
     const data = buffers.get(name);
     if (!data || !context || !bus) return;
-    const isVoice = bus === threats;
-    if (isVoice && active.size >= 6) {
-      const least = [...active].sort((a,b) => a.priority - b.priority)[0];
-      if (least.priority >= priority) return;
-      least.source.stop(); active.delete(least);
-    }
     const player = context.createBufferSource(), adjust = context.createGain();
     player.buffer = data; player.playbackRate.value = speed;
     adjust.gain.value = gain;
     player.connect(adjust);
-    let panner;
     if (loc) {
-      panner = context.createPanner();
+      const panner = context.createPanner();
       panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
       panner.refDistance = 1.35; panner.maxDistance = 21; panner.rolloffFactor = 1;
       setPosition(panner, loc);
-      if (occluded) {
-        const muffled = context.createBiquadFilter();
-        muffled.type = 'lowpass'; muffled.frequency.value = 560;
-        adjust.connect(muffled).connect(panner);
-      } else adjust.connect(panner);
+      adjust.connect(panner);
       panner.connect(bus);
     } else adjust.connect(bus);
-    if (isVoice) {
-      const cue = { source: player, panner, priority, id };
-      active.add(cue);
-      player.onended = () => active.delete(cue);
-    }
     player.start();
+  }
+
+  function stopVoice(voice) {
+    active.delete(voice.id);
+    const now = context.currentTime;
+    voice.gain.gain.setTargetAtTime(0, now, .014);
+    voice.source.stop(now + .055);
+  }
+
+  function applyThreatMix(voice, distance, now) {
+    const { gain, cutoff } = threatMix(distance, voice.occluded);
+    voice.gain.gain.setTargetAtTime(gain * voiceLevel[voice.type], now, .035);
+    voice.filter.frequency.setTargetAtTime(cutoff, now, .07);
+  }
+
+  function playVoice(event, run) {
+    const { id, kind, type } = event;
+    const head = listenerPosition || { x: run.player.x, y: run.player.y + run.player.eyeHeight, z: run.player.z };
+    const metres = distance3(head, event);
+    const priority = voicePriority(type, metres);
+    if (priority <= 0 || paused) return;
+    const own = active.get(id);
+    if (own && (type === 'voice' || voiceWeight[own.type] > voiceWeight[type])) return;
+    if (own) stopVoice(own);
+    if (active.size >= voiceLimit) {
+      let lowest, score = Infinity;
+      for (const voice of active.values()) {
+        const next = voicePriority(voice.type, distance3(head, voice.position));
+        if (next < score) { lowest = voice; score = next; }
+      }
+      if (score >= priority) return;
+      stopVoice(lowest);
+    }
+    const list = voices[kind];
+    const key = type === 'shriek' ? 'z10' : type === 'swing' ? 'swing' : list[Math.floor(Math.random() * list.length)];
+    const source = context.createBufferSource(), gain = context.createGain(), filter = context.createBiquadFilter();
+    const panner = context.createPanner();
+    source.buffer = buffers.get(key) || buffers.get('rasp');
+    source.playbackRate.value = (kind === 'brute' ? .67 : kind === 'shrieker' ? 1 : .84) + Math.random() * .18;
+    gain.gain.value = 0;
+    filter.type = 'lowpass';
+    panner.panningModel = 'HRTF';
+    panner.rolloffFactor = 0;
+    setPosition(panner, event);
+    source.connect(filter).connect(gain).connect(panner).connect(threats);
+    const now = context.currentTime;
+    const voice = { id, type, position: event, source, panner, filter, gain,
+      occluded: !run.world.clear(head, event, false), nextCover: now + .14 };
+    applyThreatMix(voice, metres, now);
+    active.set(id, voice);
+    source.onended = () => { if (active.get(id) === voice) active.delete(id); };
+    source.start();
   }
 
   function setPaused(value) {
@@ -142,7 +223,9 @@ export function createAudio() {
     if (!context) return;
     const t = context.currentTime;
     ambience.gain.setTargetAtTime(value ? .12 : .46, t, .11);
-    threats.gain.setTargetAtTime(value ? .01 : .67, t, .06);
+    threats.gain.setTargetAtTime(value ? .01 : .94, t, .06);
+    ducked = false;
+    if (value) for (const voice of active.values()) stopVoice(voice);
   }
 
   function setVolume(value) {
@@ -152,16 +235,31 @@ export function createAudio() {
 
   function listener(position, facing, up, run) {
     if (!context) return;
+    listenerPosition = position;
     const l = context.listener;
     setPosition(l, position);
     if (l.forwardX) {
       l.forwardX.value = facing.x; l.forwardY.value = facing.y; l.forwardZ.value = facing.z;
       l.upX.value = up.x; l.upY.value = up.y; l.upZ.value = up.z;
     } else l.setOrientation(facing.x, facing.y, facing.z, up.x, up.y, up.z);
-    for (const cue of active) {
-      if (!cue.id) continue;
-      const zombie = run.enemies.find(e => e.id === cue.id);
-      if (zombie && cue.panner) setPosition(cue.panner, { x:zombie.x,y:zombie.y+1.38,z:zombie.z });
+    const now = context.currentTime;
+    let close = false;
+    for (const voice of active.values()) {
+      const zombie = run.enemies.find(e => e.id === voice.id && !e.dead);
+      if (!zombie) { stopVoice(voice); continue; }
+      voice.position = mouth(zombie);
+      const metres = distance3(position, voice.position);
+      close ||= metres <= 7;
+      setPosition(voice.panner, voice.position);
+      if (now >= voice.nextCover) {
+        voice.occluded = !run.world.clear(position, voice.position, false);
+        voice.nextCover = now + .14;
+      }
+      applyThreatMix(voice, metres, now);
+    }
+    if (!paused && close !== ducked) {
+      ducked = close;
+      ambience.gain.setTargetAtTime(close ? .28 : .46, now, close ? .10 : .37);
     }
     if (!paused && run.time > lastCreak) {
       const a = Math.random() * Math.PI * 2, d = 7 + Math.random() * 10;
@@ -173,7 +271,6 @@ export function createAudio() {
 
   function events(batch, run) {
     if (!context) return;
-    const p = run.player;
     for (const e of batch) {
       if (e.type === 'shot') {
         const gain = e.weapon === 'shotgun' ? .81 : e.weapon === 'carbine' ? .72 : .59;
@@ -190,25 +287,13 @@ export function createAudio() {
         play('flare', { gain: .39, loc: e });
       } else if (e.type === 'death' || e.type === 'armorHit') {
         play('armor', { gain: .61, speed: e.type === 'death' ? .62 : .91 });
-      } else if (e.type === 'voice' || e.type === 'shriek' || e.type === 'windup' || e.type === 'swing') {
-        const gap = distance(e, p);
-        const urgent = e.type === 'windup' || e.type === 'swing' || e.type === 'shriek';
-        if (gap > (urgent ? 20 : 17)) continue;
-        const list = voices[e.kind] || voices.shambler;
-        const key = e.type === 'shriek' ? 'fastzombie1' : e.type === 'swing' ? 'swing' : list[Math.floor(Math.random() * list.length)];
-        const audible = 1 / (1 + (Math.max(0, gap - 1.5) / 5.1) ** 2);
-        const occluded = !run.world.clear({ x:p.x,y:p.y+p.eyeHeight,z:p.z }, e, false);
-        play(key, { bus: threats, id: e.id, loc: e, occluded,
-          priority: (urgent ? 3.3 : 1.25) * audible,
-          gain: (e.type === 'shriek' ? .89 : e.type === 'windup' ? .68 : .54) * audible * (occluded ? .52 : 1),
-          speed: (e.kind === 'brute' ? .68 : e.kind === 'shrieker' ? 1.12 : .90) + Math.random() * .21 });
-      }
+      } else if (e.type in voiceLevel) playVoice(e, run);
     }
   }
 
   return { unlock, setPaused, setVolume, listener, events, reset() {
     lastCreak = 2.8;
-    for (const cue of active) cue.source.stop();
-    active.clear();
+    listenerPosition = undefined;
+    for (const voice of active.values()) stopVoice(voice);
   } };
 }
