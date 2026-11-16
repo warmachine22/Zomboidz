@@ -18,7 +18,7 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 1. **Fear comes from uncertainty.** Visibility is limited to the left-hand flashlight. Spatial growls, screams, and other sounds hint at threats behind and beside you.
 2. **Aim for the brain.** Headshots kill instantly. Torso and limb damage takes multiple rounds; repeated leg hits can cause limping.
 3. **Slow walkers, overwhelming numbers.** Individual undead shuffle rather than sprint, but their population grows throughout a run. Standing still or wasting ammunition invites encirclement.
-4. **The flashlight is a survival tool.** Choose between long, focused light and a wide, short-range beam. Its battery runs down quickly; deliberate left-hand shaking restores it. Flashlight pickups extend its capacity and endurance.
+4. **The flashlight is a survival tool.** Choose between long, focused light and a wide, short-range beam. It provides 30 seconds of light per full charge, and recharges automatically in 5 seconds while switched off. Use the left controller trigger to toggle it; no shaking required. Flashlight pickups extend its on-time in 10-second increments, up to 90 seconds.
 5. **Minimal interface.** In VR, health, rounds, and flashlight charge live on a dim wristwatch rather than a floating HUD. Death is explained by a short third-person reenactment.
 6. **Accessible iteration.** Quest WebXR is the target; desktop and iPad controls make quick testing possible.
 
@@ -31,7 +31,7 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 | Shoot | Right trigger | Left mouse button | FIRE |
 | Reload | A/B or right grip | R | RELOAD |
 | Flashlight beam | X = focus; Y = wide | Q to toggle | WIDE / FOCUS |
-| Recharge | Rapidly shake left controller | Tap F | Hold CHARGE |
+| Flashlight on/off | Left controller trigger | F | LIGHT ON / LIGHT OFF |
 
 ## Survival mechanics
 
@@ -44,7 +44,7 @@ There is **no winning condition, campaign, or between-wave shop**. One zombie to
 
 ## Run locally
 
-You'll need a modern browser with JavaScript, WebGL2 and `DecompressionStream`. WebXR play additionally requires a compatible VR browser and secure origin (HTTPS).
+You'll need a modern browser with JavaScript and WebGL2. WebXR play additionally requires a compatible VR browser and secure origin (HTTPS).
 
 ```bash
 git clone https://github.com/warmachine22/Zomboidz.git
@@ -54,13 +54,13 @@ python3 -m http.server 8080
 
 Open http://localhost:8080 in Chrome/Safari for desktop or touch testing.
 
-To rebuild the compressed runtime after editing `src/game.js`:
+The playable website imports the editable `src/game.js` directly. An optional compressed build can be generated using:
 
 ```bash
 node scripts/build.mjs
 ```
 
-The root `game.js` is a lightweight browser loader; `game.js.gz` is the generated runtime, and `src/game.js` is the editable gameplay source. Three.js is imported from jsDelivr at runtime.
+The root `game.js` directly imports `src/game.js`. The optional `game.js.gz` output is not required to run or deploy this version. Three.js is imported from jsDelivr at runtime.
 
 ## Project documentation
 
@@ -77,7 +77,7 @@ The repository does not grant a license to use original third-party artwork outs
 
 ## Known limitations
 
-This is experimental, not a production-ready VR game. Quest hardware needs direct validation for shake sensitivity, animation fidelity, comfort, audio and maximum crowd size. Ragdolls are physics-inspired bone poses, not a full rigid-body physics simulation. The game requires network access for its Three.js CDN imports.
+This is experimental, not a production-ready VR game. Quest hardware needs direct validation for left-trigger toggling, animation fidelity, comfort, audio and maximum crowd size. Ragdolls are physics-inspired bone poses, not a full rigid-body physics simulation. The game requires network access for its Three.js CDN imports.
 
 ---
 

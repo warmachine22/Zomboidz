@@ -39,7 +39,7 @@ A single-player, first-person Meta Quest WebXR survival experiment. The mood is 
 
 - The forest is almost pitch-black without a flashlight. A realistic spill should illuminate nearby bark, ground and zombies without making the whole world visible.
 - **X** on Quest: focused long-range spotlight. **Y**: wide/short beam. Desktop Q and touch WIDE/FOCUS toggle.
-- A rapidly draining battery requires active management. Charge by **deliberately shaking the left Quest controller**; detect both fast head-relative translation and wrist rotation across frames, not ordinary movement.
+- A full battery powers the flashlight for **30 seconds while on**. When switched off, it **automatically recharges from empty to full in 5 seconds**. Press the left Quest trigger to toggle it; no shaking. Each flashlight chest increases on-time by 10 seconds (up to 90 seconds), with recharge time remaining five seconds.
 - Flashlight upgrade chests increase capacity, endurance and illumination range. Repeated upgrades should gradually make the light more dependable while preserving the charging mechanic.
 
 ## Embodiment and interface
@@ -61,7 +61,7 @@ The game is a browser-delivered, single-player prototype. Zombies currently shar
 ## Definition of success for this prototype
 
 - An approaching zombie is readable and hittable in the head.
-- Deliberate controller shaking visibly restores light in Quest.
+- Left trigger reliably switches the light on and off, and five seconds switched off restores an empty battery.
 - An individual walker isn't excessively fast, but ignoring several causes encirclement.
 - Falling enemies settle at ground level and never snap into a T-pose.
 - Continuous forward travel remains populated with distant threats.
@@ -70,4 +70,4 @@ The game is a browser-delivered, single-player prototype. Zombies currently shar
 
 ## Future experiments
 
-Headshot feedback polish, believable zombie obstacle navigation and group spacing, better corpse physics and body reactions, calibrated flashlights on physical Quest, measured 72/90Hz load testing, user comfort options, footstep rustling, enemy silhouettes and visual variants, improved adaptive audio, and usability testing of the wristwatch.
+Headshot feedback polish, believable zombie obstacle navigation and group spacing, better corpse physics and body reactions, calibrated flashlight switching and battery balance on physical Quest, measured 72/90Hz load testing, user comfort options, footstep rustling, enemy silhouettes and visual variants, improved adaptive audio, and usability testing of the wristwatch.

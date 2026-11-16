@@ -145,12 +145,12 @@ attach(gun,new THREE.BoxGeometry(.055,.038,.15),steel,0,-.068,-.17);
 const barrel=attach(gun,new THREE.CylinderGeometry(.025,.025,.16,9),steel,0,-.012,-.325,Math.PI/2);
 const flash=new THREE.PointLight(0xffaa75,0,2.3,2);flash.position.set(0,-.012,-.37);gun.add(flash);
 const isTouchDevice=Number(navigator.maxTouchPoints||0)>0||window.matchMedia?.('(pointer: coarse)')?.matches===true;
-let touchMoveX=0,touchMoveY=0,touchCharging=false,touchFiring=false;
+let touchMoveX=0,touchMoveY=0,touchFiring=false;
 const touchCss=document.createElement('style');touchCss.textContent="\n#touch-ui{display:none;position:fixed;inset:0;z-index:7;touch-action:none;pointer-events:none;font-family:monospace;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}\nbody.touch-play.playing:not(.xr-presenting) #touch-ui{display:block}\n#touch-look{position:absolute;inset:0 0 0 auto;width:68%;touch-action:none;pointer-events:auto}\n#touch-stick{position:absolute;left:calc(24px + env(safe-area-inset-left));bottom:calc(32px + env(safe-area-inset-bottom));width:148px;height:148px;border-radius:50%;border:2px solid #b8cba766;background:radial-gradient(circle,#899d5d25,#050b0875);pointer-events:auto;touch-action:none}\n#touch-knob{position:absolute;left:48px;top:48px;width:50px;height:50px;border-radius:50%;background:#b8d1a661;border:2px solid #c3e0aa94;box-shadow:0 0 20px #97ce7d22;pointer-events:none;transform:translate(0px,0px)}\n#touch-ui button{position:absolute;border:1px solid #bcd49b8a;color:#d8e9c0;background:#08130dc9;backdrop-filter:blur(7px);border-radius:14px;font:bold 13px monospace;letter-spacing:.5px;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}\n#touch-ui button:active{background:#8fa47e77;color:#fff}\n#touch-fire{right:calc(24px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:104px;height:104px;border-radius:50%!important;color:#f7e5da!important;border-color:#ca927fbb!important;font-size:17px!important;background:#25120cbf!important}\n#touch-reload{right:calc(146px + env(safe-area-inset-right));bottom:calc(37px + env(safe-area-inset-bottom));width:87px;height:54px}\n#touch-mode{right:calc(26px + env(safe-area-inset-right));bottom:calc(151px + env(safe-area-inset-bottom));width:100px;height:49px}\n#touch-charge{left:50%;transform:translateX(-50%);bottom:calc(33px + env(safe-area-inset-bottom));width:104px;height:57px}\n#touch-hint{position:absolute;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);background:#0209078a;border:1px solid #89988939;border-radius:18px;color:#9cae96;font:11px monospace;letter-spacing:.4px;padding:9px 13px;opacity:.79;pointer-events:none;white-space:nowrap}\n@media(max-width:700px){#touch-stick{left:12px;bottom:24px;width:116px;height:116px}#touch-knob{left:36px;top:36px;width:40px;height:40px}#touch-fire{right:12px;bottom:24px;width:85px;height:85px}#touch-reload{right:108px;bottom:28px;width:72px;height:44px;font-size:10px!important}#touch-mode{right:12px;bottom:118px;width:86px;height:44px}#touch-charge{bottom:25px;width:84px;height:50px;font-size:11px!important}#touch-hint{font-size:9px;padding:7px 8px}}\n@media(orientation:portrait){#touch-hint{top:67px}#touch-charge{bottom:calc(13px + env(safe-area-inset-bottom))}\n";document.head.appendChild(touchCss);
 
 if(isTouchDevice){
  document.body.classList.add('touch-play');
- document.body.insertAdjacentHTML('beforeend',"<div id=\"touch-ui\" aria-label=\"Tablet controls\"><div id=\"touch-look\" aria-label=\"Drag to aim\"></div><div id=\"touch-stick\" aria-label=\"Virtual movement joystick\"><div id=\"touch-knob\"></div></div><button type=\"button\" id=\"touch-fire\">FIRE</button><button type=\"button\" id=\"touch-reload\">RELOAD</button><button type=\"button\" id=\"touch-mode\">WIDE</button><button type=\"button\" id=\"touch-charge\">CHARGE</button><div id=\"touch-hint\">LEFT STICK · MOVE &nbsp; | &nbsp; RIGHT DRAG · LOOK</div></div>");
+ document.body.insertAdjacentHTML('beforeend',"<div id=\"touch-ui\" aria-label=\"Tablet controls\"><div id=\"touch-look\" aria-label=\"Drag to aim\"></div><div id=\"touch-stick\" aria-label=\"Virtual movement joystick\"><div id=\"touch-knob\"></div></div><button type=\"button\" id=\"touch-fire\">FIRE</button><button type=\"button\" id=\"touch-reload\">RELOAD</button><button type=\"button\" id=\"touch-mode\">WIDE</button><button type=\"button\" id=\"touch-charge\">LIGHT OFF</button><div id=\"touch-hint\">LEFT STICK · MOVE &nbsp; | &nbsp; RIGHT DRAG · LOOK</div></div>");
  const pad=$('touch-stick'),knob=$('touch-knob');let padId=null;
  function setPad(e){const b=pad.getBoundingClientRect(),x=e.clientX-(b.left+b.width/2),y=e.clientY-(b.top+b.height/2),r=Math.max(28,b.width*.35);touchMoveX=clamp(x/r,-1,1);touchMoveY=clamp(y/r,-1,1);const m=Math.hypot(touchMoveX,touchMoveY);if(m>1){touchMoveX/=m;touchMoveY/=m;}knob.style.transform='translate('+(touchMoveX*r*.68)+'px,'+(touchMoveY*r*.68)+'px)';}
  pad.addEventListener('pointerdown',e=>{e.preventDefault();if(padId!==null)return;padId=e.pointerId;pad.setPointerCapture(e.pointerId);setPad(e);});
@@ -166,15 +166,40 @@ if(isTouchDevice){
  const endFire=e=>{if(fireId===e.pointerId){fireId=null;touchFiring=false;}};fireButton.addEventListener('pointerup',endFire);fireButton.addEventListener('pointercancel',endFire);fireButton.addEventListener('lostpointercapture',endFire);
  $('touch-reload').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload();});
  $('touch-mode').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();toggleBeam();});
- const chargeButton=$('touch-charge');let chargeId=null;
- chargeButton.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();if(state!=='playing')return;chargeId=e.pointerId;chargeButton.setPointerCapture(e.pointerId);touchCharging=true;});
- const endCharge=e=>{if(chargeId===e.pointerId){chargeId=null;touchCharging=false;}};chargeButton.addEventListener('pointerup',endCharge);chargeButton.addEventListener('pointercancel',endCharge);chargeButton.addEventListener('lostpointercapture',endCharge);
+ const chargeButton=$('touch-charge');
+ chargeButton.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();toggleFlashlight();});
  for(const el of document.querySelectorAll('#touch-ui button'))el.addEventListener('contextmenu',e=>e.preventDefault());
 }
 
 
 let left=null,right=null,shootHeld=false,rightReloadHeld=false,rightRetryHeld=false;
-let beamMode='wide',leftXHeld=false,leftYHeld=false;
+let beamMode='wide',leftXHeld=false,leftYHeld=false,leftTriggerHeld=false;
+let flashlightOn=true,flashRunSeconds=30,lastToggleTime=-100;
+function setFlashlightOn(on,announce=true){
+ flashlightOn=Boolean(on)&&battery>0;
+ const button=$('touch-charge');
+ if(button){button.textContent=flashlightOn?'LIGHT OFF':'LIGHT ON';button.setAttribute('aria-label',flashlightOn?'Switch flashlight off':'Switch flashlight on');}
+ if(announce&&state==='playing')notice(flashlightOn?'FLASHLIGHT ON':'FLASHLIGHT OFF · CHARGING');
+}
+function updateFlashlightBattery(seconds){
+ if(state!=='playing'||seconds<=0)return;
+ if(flashlightOn){
+  battery=Math.max(0,battery-(batteryMax/flashRunSeconds)*seconds);
+  if(battery<=0)setFlashlightOn(false,false);
+ }else{
+  // Always 5 seconds to recharge from 0% to 100%, even after upgrades.
+  battery=Math.min(batteryMax,battery+(batteryMax/5)*seconds);
+ }
+}
+function toggleFlashlight(){
+ if(state!=='playing')return;
+ // Quest selectstart and gamepad polling can report the same press.
+ const now=performance.now();
+ if(now-lastToggleTime<190)return;
+ lastToggleTime=now;
+ setFlashlightOn(!flashlightOn);
+}
+
 function setBeamMode(mode,announce=true){
  beamMode=mode==='focus'?'focus':'wide';
  light.angle=beamMode==='focus'?.34:.86;
@@ -209,14 +234,19 @@ function paintWatch(){
  g.font='25px monospace';g.fillText('ROUNDS',213,189);
  g.fillStyle='#253e2d';g.fillRect(29,242,450,11);
  g.fillStyle=battery<15?'#b07a55':'#62856b';g.fillRect(29,242,450*clamp(battery/batteryMax,0,1),11);
- g.fillStyle=shakeEffort>.14?'#acdf90':'#54715c';g.font='23px monospace';g.fillText((shakeEffort>.14?'CHARGING ':'LIGHT ')+Math.ceil(battery/batteryMax*100)+'%',30,290);
+ g.fillStyle=flashlightOn?'#b2d6a8':'#b3a97b';g.font='23px monospace';g.fillText((flashlightOn?'LIGHT ON ':'RECHARGING ')+Math.ceil(battery/batteryMax*100)+'%',30,290);
  watchTexture.needsUpdate=true;
 }
 const hands=[];
 for(let i=0;i<2;i++){const c=renderer.xr.getController(i);rig.add(c);hands.push(c);
  c.addEventListener('connected',e=>{c.userData.input=e.data;if(e.data.handedness==='left'){left=c;c.add(lamp);lamp.position.set(0,-.032,-.07);c.add(watch);watch.position.set(-.012,-.082,.14);}if(e.data.handedness==='right'){right=c;c.add(gun);gun.position.set(0,-.04,-.08);}});
  c.addEventListener('disconnected',()=>{if(left===c){left=null;camera.add(lamp);lamp.position.set(-.24,-.21,-.31);camera.add(watch);watch.position.set(-.28,-.31,-.39);}if(right===c){right=null;camera.add(gun);gun.position.set(.26,-.23,-.38);}c.userData.input=null;});
- c.addEventListener('selectstart',()=>{if(c!==right)return;if(state==='dead'){startGame();return;}if(state==='playing'){shootHeld=true;fire();}});
+  c.addEventListener('selectstart',()=>{
+   if(c===left){toggleFlashlight();return;}
+   if(c!==right)return;
+   if(state==='dead'){startGame();return;}
+   if(state==='playing'){shootHeld=true;fire();}
+  });
  c.addEventListener('selectend',()=>{if(c===right)shootHeld=false;});
  c.addEventListener('squeezestart',()=>{if(c===right&&state==='playing')reload();});
 }
@@ -272,7 +302,7 @@ const modelReady=(async()=>{
 })();
 const zombies=[],pickups=[],particles=[];
 let state='menu',elapsed=0,wave=1,score=0,peak=0,ammo=6,battery=79,batteryMax=100,flashRange=22,flashDrain=7.1;
-let currentWeapon='pistol',bonusMagazine=0,nextSpawn=0,nextDrop=0,frame=0,weaponCooldown=0,reloadCooldown=0,muzzleTime=0,noticeUntil=0,shakePos=new THREE.Vector3(),shakeFiltered=new THREE.Vector3(),shakeOrientation=new THREE.Quaternion(),shakeEffort=0,shakeValid=false;
+let currentWeapon='pistol',bonusMagazine=0,nextSpawn=0,nextDrop=0,frame=0,weaponCooldown=0,reloadCooldown=0,muzzleTime=0,noticeUntil=0;
 let yaw=0,pitch=0,lastTime=performance.now(),uiClock=0;
 const held=new Set(),ray=new THREE.Raycaster(),tempPos=new THREE.Vector3(),tempQuat=new THREE.Quaternion(),shotDirection=new THREE.Vector3();
 const specs={pistol:{mag:6,rate:.3,spread:0,pellets:1,range:70,label:'SIDEARM / 9MM',sound:'pistol'},shotgun:{mag:4,rate:.78,spread:.11,pellets:7,range:25,label:'SHOTGUN / 12GA',sound:'shotgun'},smg:{mag:24,rate:.105,spread:.031,pellets:1,range:58,label:'SMG / AUTO',sound:'smg'}};
@@ -668,10 +698,10 @@ function makePickup(kind){
  pickups.push({g,kind,age:0,latch,glow});
 }
 
-function grab(p){scene.remove(p.g);pickups.splice(pickups.indexOf(p),1);if(p.kind==='flash'){batteryMax=Math.min(220,batteryMax+35);flashRange=Math.min(30,flashRange+3);flashDrain=Math.max(3.7,flashDrain-.85);battery=clamp(battery+42,0,batteryMax);notice('FLASHLIGHT: LONGER CHARGE');}else{currentWeapon=p.kind;bonusMagazine=0;ammo=specs[currentWeapon].mag;notice(currentWeapon==='shotgun'?'SHOTGUN ACQUIRED':'SMG ACQUIRED');}sound('reload-short',.58,1.25);updateUI();}
+function grab(p){scene.remove(p.g);pickups.splice(pickups.indexOf(p),1);if(p.kind==='flash'){flashRunSeconds=Math.min(90,flashRunSeconds+10);flashRange=Math.min(30,flashRange+3);flashDrain=batteryMax/flashRunSeconds;battery=clamp(battery+35,0,batteryMax);notice('FLASHLIGHT '+flashRunSeconds+'S RUNTIME');}else{currentWeapon=p.kind;bonusMagazine=0;ammo=specs[currentWeapon].mag;notice(currentWeapon==='shotgun'?'SHOTGUN ACQUIRED':'SMG ACQUIRED');}sound('reload-short',.58,1.25);updateUI();}
 function clearWorld(){for(const z of zombies){scene.remove(z.obj);z.mixer.stopAllAction();}zombies.length=0;for(const p of pickups)scene.remove(p.g);pickups.length=0;for(const p of particles)scene.remove(p.obj);particles.length=0;}
-function startGame(){if(state==='dead'&&!deathReady)return;if(!zombieTemplate){notice('LOADING 3D MODEL...');return;}clearDeathReplay();deathReady=false;gun.visible=true;lamp.visible=true;crowdBudget=64;perfSeconds=0;perfSamples=0;perfWindows=0;clearWorld();state='playing';elapsed=0;wave=2;score=0;headshots=0;ammo=6;currentWeapon='pistol';bonusMagazine=0;battery=79;batteryMax=100;flashRange=22;flashDrain=7.1;setBeamMode('wide',false);nextSpawn=1.9;nextDrop=24;noisePulses.length=0;playerMovingUntil=0;nextAheadCheck=0;frame=0;weaponCooldown=0;reloadCooldown=0;rig.position.set(0,0,0);shakeValid=false;shakeEffort=0;
- const v=renderer.xr.isPresenting;vrPanel.visible=false;deathPanel.visible=false;leftXHeld=false;leftYHeld=false;touchMoveX=0;touchMoveY=0;touchCharging=false;document.body.classList.add('playing');$('menu').classList.add('off');for(const id of ['hud','battery','elims'])$(id).classList.remove('hidden');$('reticle').classList.toggle('hidden',v);
+function startGame(){if(state==='dead'&&!deathReady)return;if(!zombieTemplate){notice('LOADING 3D MODEL...');return;}clearDeathReplay();deathReady=false;gun.visible=true;lamp.visible=true;crowdBudget=64;perfSeconds=0;perfSamples=0;perfWindows=0;clearWorld();state='playing';elapsed=0;wave=2;score=0;headshots=0;ammo=6;currentWeapon='pistol';bonusMagazine=0;battery=100;batteryMax=100;flashRange=22;flashRunSeconds=30;flashDrain=100/30;setFlashlightOn(true,false);lastToggleTime=-100;setBeamMode('wide',false);nextSpawn=1.9;nextDrop=24;noisePulses.length=0;playerMovingUntil=0;nextAheadCheck=0;frame=0;weaponCooldown=0;reloadCooldown=0;rig.position.set(0,0,0);leftTriggerHeld=false;
+ const v=renderer.xr.isPresenting;vrPanel.visible=false;deathPanel.visible=false;leftXHeld=false;leftYHeld=false;touchMoveX=0;touchMoveY=0;document.body.classList.add('playing');$('menu').classList.add('off');for(const id of ['hud','battery','elims'])$(id).classList.remove('hidden');$('reticle').classList.toggle('hidden',v);
  populateForest();audioInit();if(!v&&!isTouchDevice)renderer.domElement.requestPointerLock?.().catch(()=>{});updateUI();}
 // A short third-person reconstruction explains the fatal hit without forcibly
 // moving the VR headset camera (which could make the user uncomfortable).
@@ -765,7 +795,7 @@ function updateDeathReplay(dt){
 
 function dead(attacker){
  if(state!=='playing')return;
- state='dead';shootHeld=false;touchFiring=false;touchCharging=false;
+ state='dead';shootHeld=false;touchFiring=false;
  try{
   let b=Number(localStorage.getItem('zombiez-record')||0);
   if(elapsed>b){localStorage.setItem('zombiez-record',String(Math.floor(elapsed)));peak=elapsed;}
@@ -792,47 +822,23 @@ function leftStick(gamepad){
 }
 // A forgiving, frame-independent gesture detector: head-relative controller
 // translation and rapid wrist rotation both count. No one-frame 4cm reversals.
-function updateShakeCharge(relative,orientation,dt){
- const h=clamp(dt,.008,.085);
- if(!shakeValid){
-  shakePos.copy(relative);shakeFiltered.copy(relative);
-  shakeOrientation.copy(orientation);shakeEffort=0;shakeValid=true;return;
- }
- const speed=relative.distanceTo(shakePos)/h;
- const angle=2*Math.acos(clamp(Math.abs(orientation.dot(shakeOrientation)),0,1))/h;
- shakeFiltered.lerp(relative,1-Math.exp(-7.5*h));
- const highPass=relative.distanceTo(shakeFiltered);
- const translational=clamp((speed-.48)/.9,0,1)*clamp((highPass-.009)/.028,0,1);
- const rotational=clamp((angle-3.8)/6.5,0,1);
- const strength=Math.max(translational,rotational*.92);
- shakeEffort+=(strength-shakeEffort)*(1-Math.exp(-11*h));
- // A rapid shake replenishes visibly within a second. Ordinary walking with
- // still hands (head-relative position) produces no charge.
- if(shakeEffort>.14&&state==='playing')battery=Math.min(batteryMax,battery+h*(16+88*shakeEffort));
- shakePos.copy(relative);shakeOrientation.copy(orientation);
-}
 function move(dt){
  let ax=0,ay=0;
  if(renderer.xr.isPresenting){
   [ax,ay]=leftStick(left?.userData.input?.gamepad);
-  if(left){
-   const lh=left.getWorldPosition(new THREE.Vector3());
-   const view=renderer.xr.getCamera(camera);
-   const head=view.getWorldPosition(new THREE.Vector3());
-   const q=view.getWorldQuaternion(new THREE.Quaternion()).invert();
-   const relative=lh.sub(head).applyQuaternion(q);
-   const controllerQ=left.getWorldQuaternion(new THREE.Quaternion());
-   const relativeQ=view.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(controllerQ);
-   updateShakeCharge(relative,relativeQ,dt);
-  }else shakeValid=false;
 const leftButtons=left?.userData.input?.gamepad?.buttons;
   if(leftButtons){
+   // Fallback for WebXR browsers that do not dispatch selectstart reliably.
+   const trigger=Boolean(leftButtons[0]?.pressed);
+   if(trigger&&!leftTriggerHeld)toggleFlashlight();
+   leftTriggerHeld=trigger;
    // Meta Touch X and Y buttons (left controller buttons 4 and 5).
    const x=Boolean(leftButtons[4]?.pressed),y=Boolean(leftButtons[5]?.pressed);
    if(x&&!leftXHeld)setBeamMode('focus');
    if(y&&!leftYHeld)setBeamMode('wide');
    leftXHeld=x;leftYHeld=y;
   }
+  if(!leftButtons)leftTriggerHeld=false;
   const buttons=right?.userData.input?.gamepad?.buttons;
   if(buttons){
    const pressed=Boolean(buttons[4]?.pressed||buttons[5]?.pressed||buttons[1]?.pressed);
@@ -960,17 +966,18 @@ renderer.xr.addEventListener('sessionend',()=>{clearDeathReplay();deathReady=tru
 renderer.domElement.addEventListener('mousedown',e=>{if(e.button!==0||renderer.xr.isPresenting)return;if(state==='dead'){startGame();return;}if(state!=='playing')return;if(isTouchDevice)return;if(document.pointerLockElement!==renderer.domElement){renderer.domElement.requestPointerLock?.();return;}fire();shootHeld=true;});
 document.addEventListener('mouseup',()=>shootHeld=false);
 document.addEventListener('mousemove',e=>{if(isTouchDevice||document.pointerLockElement!==renderer.domElement||renderer.xr.isPresenting)return;yaw-=e.movementX*.00225;pitch=clamp(pitch-e.movementY*.0022,-1.2,1.2);camera.rotation.set(pitch,yaw,0);});
-document.addEventListener('keydown',e=>{held.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyR')reload();if(e.code==='KeyQ')toggleBeam();if(e.code==='KeyF'&&!e.repeat&&state==='playing'){battery=Math.min(batteryMax,battery+8);}if(e.code==='Enter'&&state==='dead')startGame();});
+document.addEventListener('keydown',e=>{held.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyR')reload();if(e.code==='KeyQ')toggleBeam();if(e.code==='KeyF'&&!e.repeat&&state==='playing')toggleFlashlight();if(e.code==='Enter'&&state==='dead')startGame();});
 document.addEventListener('keyup',e=>held.delete(e.code));
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 function loop(now){const wallDt=Math.min(.9,Math.max(0,(now-lastTime)/1000||.016));const dt=Math.min(.18,wallDt);lastTime=now;frame++;
  if(state==='playing'){elapsed+=wallDt;wave=2+Math.floor(elapsed/30);weaponCooldown=Math.max(0,weaponCooldown-wallDt);reloadCooldown=Math.max(0,reloadCooldown-wallDt);if(reloadCooldown===0&&window.reloadPending){ammo=specs[currentWeapon].mag+bonusMagazine;window.reloadPending=false;}
  if(reloadCooldown>0)window.reloadPending=true;
  if((shootHeld||touchFiring)&&currentWeapon==='smg'&&weaponCooldown<=0)fire();
- if(touchCharging)battery=Math.min(batteryMax,battery+wallDt*11);
+ // Charging happens automatically whenever the flashlight is switched off.
  adaptCrowd(wallDt);move(dt);updateZombies(dt);if(state==='playing'){updatePickups(dt);if(elapsed>nextAheadCheck){keepForestPopulatedAhead();nextAheadCheck=elapsed+3.4;}if(elapsed>nextSpawn){populateReplacement();if(elapsed>60||elapsed<playerMovingUntil)populateReplacement();if(elapsed>180)populateReplacement();nextSpawn=elapsed+Math.max(.55,2.15-wave*.095)+rnd(-.22,.25);}
  if(elapsed>nextDrop){let kind=elapsed<45?'flash':elapsed<80?'shotgun':elapsed<115?'smg':pick(['flash','shotgun','smg']);makePickup(kind);nextDrop=elapsed+Math.max(23,31-wave);}
- battery=Math.max(0,battery-flashDrain*wallDt);if(++treeTick%47===0)maintainForest();muzzleTime=Math.max(0,muzzleTime-dt);flash.intensity=muzzleTime>0?8:0;const lightPower=battery>0?Math.pow(battery/batteryMax,1.1):0;
+ updateFlashlightBattery(wallDt);
+ if(++treeTick%47===0)maintainForest();muzzleTime=Math.max(0,muzzleTime-dt);flash.intensity=muzzleTime>0?8:0;const lightPower=flashlightOn&&battery>0?.82+.18*Math.min(1,battery/(batteryMax*.15)):0;
  light.intensity=(beamMode==='focus'?205:155)*lightPower;
  light.distance=beamMode==='focus'?flashRange:flashRange*.61;
  spill.intensity=(beamMode==='focus'?25:48)*lightPower;

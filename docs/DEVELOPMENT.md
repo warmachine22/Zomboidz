@@ -6,7 +6,7 @@
 - Three.js 0.162 through an import map (jsDelivr CDN).
 - WebGL2 scene rendering, Three.js WebXR / VRButton, Web Audio API with HRTF positional sound.
 - GLTFLoader and MeshoptDecoder load the compressed PSX-style zombie model.
-- Game logic and procedural environment are in `src/game.js`; `game.js.gz` is its production gzip artifact; the root `game.js` is the small loader.
+- Game logic and procedural environment are in `src/game.js`; the root `game.js` loads it as a JavaScript module. Gzip output is optional.
 - The game can deploy on Vercel with no server framework or build step because the compiled files are committed.
 
 ## Repository layout
@@ -14,9 +14,9 @@
 ```text
 index.html                   # Entry page and desktop landing overlay
 style.css                    # UI styles
-game.js                      # Browser bootstrap: loads game.js.gz
-game.js.gz                   # Compiled compressed gameplay module
-src/game.js                  # Editable gameplay source (decompressed snapshot)
+game.js                      # Browser bootstrap: imports src/game.js
+game.js.gz                   # Optional generated gzip archive (not required)
+src/game.js                  # Editable gameplay source
 assets/npc-part-*.bin        # 15 chunks of a meshopt-compressed game-ready GLB
 assets/audio/*.ogg           # Spatial zombie and recorded weapon audio
 scripts/build.mjs            # Regenerates game.js.gz from src/game.js
@@ -36,7 +36,7 @@ python3 -m http.server 8080
 # Open http://localhost:8080 on desktop
 ```
 
-To modify the game, edit `src/game.js`, then rebuild with Node 20+:
+To modify the game, edit `src/game.js` and refresh the page. Optionally create a gzip artifact with Node 20+:
 
 ```bash
 node scripts/build.mjs
@@ -52,17 +52,17 @@ The world is built from instanced low-poly trees and textured procedural ground.
 
 Enemy AI follows a small state machine: initial wandering, alert via distance/footsteps/noise, pursuit with varied pace, and contact death. The intended endless horde target grows over time, but Quest frame timing can lower the permitted population to prioritize comfort.
 
-Light is a pair of SpotLights attached to the left controller; focused and wide modes adjust angle, intensity and distance. Battery charging uses sampled, head-relative left-controller translations and rotations. The gameplay state is entirely client-side and a minimal localStorage key retains the best run.
+Light is a pair of SpotLights attached to the left controller; focused and wide modes adjust angle, intensity and distance. Flashlight battery drains over 30 seconds while switched on and automatically refills in 5 seconds while switched off; Quest left trigger toggles it. Flashlight pickups add 10 seconds of on-time per upgrade, up to 90 seconds. The gameplay state is entirely client-side and a minimal localStorage key retains the best run.
 
 ## Touch and desktop testing
 
-- Desktop: WASD + pointer lock mouse aiming, click fire, R reload, F charge, Q beam mode.
-- Touch: virtual joystick, right-screen dragging, FIRE, RELOAD, CHARGE, beam toggle.
-- Production smoke tests used a desktop Chromium browser and emulated touch viewport. This is **not** a substitute for a physical Quest test, especially hand tracking, audio positioning, haptics, shake thresholds and comfort.
+- Desktop: WASD + pointer lock mouse aiming, click fire, R reload, F toggle flashlight, Q beam mode.
+- Touch: virtual joystick, right-screen dragging, FIRE, RELOAD, LIGHT ON/OFF, beam toggle.
+- Production smoke tests used a desktop Chromium browser and emulated touch viewport. This is **not** a substitute for a physical Quest test, especially hand tracking, audio positioning, haptics, left-trigger toggle and comfort.
 
 ## Build and deployment
 
-`node scripts/build.mjs` gzips the module into `game.js.gz`. The root bootstrap decompresses it in modern browsers using `DecompressionStream('gzip')` and imports it from a Blob URL; build outputs must stay in sync with source.
+`node scripts/build.mjs` optionally gzips the module into `game.js.gz`. The v0.9 browser entry point imports `src/game.js` directly, so a compressed artifact is not needed for ordinary static deployment.
 
 The project can be deployed as a static Vercel project. The original prototype is live at https://zombiez.vercel.app.
 
