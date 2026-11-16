@@ -15,9 +15,10 @@ export function questButtons(right, left, leftHanded, dual = false) {
   const light = leftHanded ? right : left;
   return {
     fire: button(weapon, 0), interact: button(weapon, 1),
-    reload: button(right, 4), cycleWeapon: button(right, 5),
+    reload: button(right, 4), cycleWeapon: !dual && button(right, 5),
     toggleLight: !dual && button(light, 0), offhandFire: dual && button(light, 0),
-    toggleBeam: button(left, 4), pause: button(left, 5),
+    toggleBeam: !dual && button(left, 4), pause: button(left, dual ? 4 : 5),
+    cyclePrimaryBeam: dual && button(weapon, 5), cycleOffhandBeam: dual && button(light, 5),
   };
 }
 

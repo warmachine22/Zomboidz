@@ -21,7 +21,9 @@ Quest Browser needs an HTTPS deployment to enter immersive VR. On the headset, u
 
 New weapons equip unloaded. Every weapon keeps its loaded rounds when you switch, and they all draw from the same spare ammo. An empty weapon starts reloading automatically when spares are available.
 
-Enable **Legendary Mode** in Settings before starting a practice run. You start with two 50-round pistols and a permanently powered light on each pistol. The Laser dot setting enables both aiming dots. Armor and ammo are the only pickups. On Quest, each trigger fires its pistol and right A tops up both from the shared reserve. Desktop and touch fire both pistols together. Legendary runs are kept out of the local scoreboards.
+Enable **Legendary Mode** in Settings before starting a practice run. You start with two 50-round pistols and a light on each pistol. On Quest, right B cycles the right gun's light and left Y cycles the left gun's light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other. Touch gets buttons for each light. The lights never run out of charge.
+
+The Laser dot setting enables both aiming dots. Armor and ammo are the only pickups. On Quest, each trigger fires its pistol and right A tops up both from the shared reserve. Desktop and touch fire both pistols together. Legendary runs are kept out of the local scoreboards.
 
 ## Development and QA
 

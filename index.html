@@ -63,6 +63,7 @@
           <dt>Light / Beam</dt><dd>Light / Beam buttons</dd>
         </dl></div>
       </div>
+      <p class="note">Legendary Mode uses right B and left Y to cycle each light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other.</p>
       <p class="note">Each weapon keeps its loaded rounds. Empty weapons reload automatically when spare ammo is available. Rare loot glows and attracts zombies as it fades.</p>
       <button data-back>Back</button>
     </section>
@@ -79,7 +80,7 @@
       <p class="eyebrow">FIELD KIT</p>
       <h2 id="settings-title">Settings</h2>
       <div class="preferences">
-        <label><span>Legendary Mode<small>Two 50-round pistols with permanent lights. Only armor and ammo drop.</small></span><input type="checkbox" data-setting="legendary"></label>
+        <label><span>Legendary Mode<small>Two 50-round pistols with lights that never run out. Only armor and ammo drop.</small></span><input type="checkbox" data-setting="legendary"></label>
         <label><span>Left-handed tools<small>Weapon in the left hand</small></span><input type="checkbox" data-setting="leftHanded"></label>
         <label><span>Seated VR<small>Calibrate standing eye height from your seated position</small></span><input type="checkbox" data-setting="seated"></label>
         <label><span>Reduced flashes<small>Dim weapon flashes and impact effects</small></span><input type="checkbox" data-setting="reducedFlashes"></label>
@@ -120,7 +121,7 @@
     <div id="look-pad"></div>
     <div id="stick" aria-label="Move"><i></i></div>
     <div class="touch-utilities">
-      <button id="touch-cycle" data-touch="cycleWeapon" disabled>Cycle</button><button id="touch-light" data-touch="toggleLight">Light</button><button data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
+      <button id="touch-cycle" data-touch="cycleWeapon" disabled>Cycle</button><button id="touch-light" data-touch="toggleLight">Light</button><button id="touch-beam" data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
     </div>
     <div class="touch-main">
       <button data-touch="interact">Equip</button><button data-touch="reload">Reload</button><button id="touch-fire">Fire</button>

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, LOOT, resolvedBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
+import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, LOOT, resolvePlayerBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
-import { createGunHandling, gunAngle, heldPose, mountedAim, pistolLampAim, toolLayouts } from './held-tools.js';
+import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim, toolLayouts } from './held-tools.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 
 const $ = id => document.getElementById(id);
@@ -514,7 +514,9 @@ function updateHUD(force = false) {
   const rounds = count => String(count).padStart(2, '0');
   $('rounds').firstChild.textContent = rounds(p.ammo) + (p.offhand ? ' + ' + rounds(p.offhand.ammo) : '') + ' ';
   $('rounds').lastChild.textContent = '/ ' + p.reserve;
-  text('light-text', (p.flashlight ? p.beam.toUpperCase() : 'RECHARGING') + ' · ' + (p.offhand ? '∞' : display + '%'));
+  const light = p.offhand ? legendaryBeamLabel(p, settings.leftHanded) + ' · ∞'
+    : (p.flashlight ? p.beam.toUpperCase() : 'RECHARGING') + ' · ' + display + '%';
+  text('light-text', light);
   $('charge').style.transform = 'scaleX(' + p.battery + ')';
   text('armor', '◆'.repeat(p.armor) + '◇'.repeat(3 - p.armor));
   $('armor').setAttribute('aria-label', p.armor + ' armor charges');
@@ -524,7 +526,10 @@ function updateHUD(force = false) {
   const reload = p.reload || p.offhand?.reload;
   $('reload-meter').hidden = !reload;
   $('touch-cycle').disabled = Object.keys(p.magazines).length < 2;
-  $('touch-light').disabled = Boolean(p.offhand);
+  if (touch) {
+    text('touch-beam', p.offhand ? (settings.leftHanded ? 'L Beam' : 'R Beam') : 'Beam');
+    text('touch-light', p.offhand ? (settings.leftHanded ? 'R Beam' : 'L Beam') : 'Light');
+  }
   if (reload) $('reload-progress').style.transform = 'scaleX(' + (1 - reload.left / reload.duration) + ')';
 }
 
@@ -552,8 +557,8 @@ function xrUI(sample, trackedView) {
         title: 'Enter the forest',
         lines: settings.legendary ? [
           'Legendary Mode · two 50-round pistols.',
-          'Each trigger fires its pistol. A reloads. Y pauses.',
-          'A permanent light on each pistol. X changes both beams.',
+          'Each trigger fires its pistol. A reloads. X pauses.',
+          'B cycles right light. Y cycles left light. Wide, Focus, Off.',
           'Weapon grip picks up armor. Ammo collects automatically.',
         ] : [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
           'A reloads. B cycles weapons. Y pauses.',
@@ -670,7 +675,8 @@ function frame(now, xrFrame) {
         if (sample.pause) pause();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
         else {
-          for (const key of ['reload', 'cycleWeapon', 'fire', 'offhandFire', 'toggleLight', 'toggleBeam', 'interact'])
+          for (const key of ['reload', 'cycleWeapon', 'fire', 'offhandFire', 'toggleLight', 'toggleBeam',
+            'cyclePrimaryBeam', 'cycleOffhandBeam', 'interact'])
             if (sample[key]) queued[key] = true;
           roomX += sample.roomX; roomZ += sample.roomZ;
         }
@@ -686,9 +692,9 @@ function frame(now, xrFrame) {
   const laser = active && settings.laserDot;
   aimHit = laser && !p.reload && view.aim ? traceAim(run, view.aim) : null;
   offhandAimHit = laser && p.offhand && !p.offhand.reload && view.offhandAim ? traceAim(run, view.offhandAim) : null;
-  const light = active && p.flashlight;
-  const beam = light && view.beam ? resolvedBeam(run.world, view.beam, view.view?.position) : null;
-  const offhandBeam = light && view.offhandBeam ? resolvedBeam(run.world, view.offhandBeam, view.view?.position) : null;
+  const lightsActive = active && p.flashlight;
+  const beam = lightsActive ? resolvePlayerBeam(run, view.beam, view.view?.position) : null;
+  const offhandBeam = lightsActive ? resolvePlayerBeam(run, view.offhandBeam, view.view?.position, true) : null;
   presentation.update(run, dt, settings, view.tracking, {
     active, stereo, calibration: calibrating, menu: phase === 'menu' && !stereo, beam, offhandBeam,
     aim: active ? view.aim : null, aimHit, offhandAim: active ? view.offhandAim : null, offhandAimHit,

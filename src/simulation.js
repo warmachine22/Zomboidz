@@ -6,7 +6,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.10';
+export const BUILD = '1.0.11';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -42,6 +42,7 @@ const ARMS = .29;
 const RESERVE_MAX = 125;
 const MAX_LOOSE_LOOT = 72;
 const LEGENDARY_CAPACITY = GUNS.pistol.capacities.at(-1);
+const beamCycle = { wide: 'focus', focus: 'off', off: 'wide' };
 const eye = (world, next, tall = 1.4) => ({ x: next.x, y: world.height(next.x, next.z) + tall, z: next.z });
 
 export function magazineCapacity(player) {
@@ -61,8 +62,8 @@ export function hordeTarget(time, difficulty = 'standard') {
     : 22 + (time - middle) * 16 / (maximum - middle)));
 }
 
-export function beamSettings(player) {
-  const focus = player.beam === 'focus';
+export function beamSettings(player, mode = player.beam) {
+  const focus = mode === 'focus';
   return { range: (focus ? 23 : 15) + player.upgrades.lens * 3, angle: focus ? .235 : .49 };
 }
 
@@ -80,15 +81,22 @@ export function resolvedBeam(world, lamp, head) {
   return hit.t > .12 ? { ...lamp, origin: rayPoint(head, ray, hit.t - .12) } : null;
 }
 
+export function resolvePlayerBeam(run, lamp, head, offhand = false) {
+  const p = run.player, mode = offhand ? p.offhand?.beam : p.beam;
+  if (!mode || mode === 'off') return null;
+  const cast = resolvedBeam(run.world, lamp, head);
+  return cast ? { ...cast, ...beamSettings(p, mode), mode } : null;
+}
+
 function norm(v) {
   const length = Math.hypot(v.x, v.y, v.z);
   return length > 0 ? { x: v.x / length, y: v.y / length, z: v.z / length } : POINT;
 }
 
-function inBeam(world, beam, at, range, angle) {
+function inBeam(world, beam, at) {
   const dx = at.x - beam.origin.x, dy = at.y - beam.origin.y, dz = at.z - beam.origin.z;
   const d = Math.hypot(dx, dy, dz);
-  return d < range && dx * beam.ray.x + dy * beam.ray.y + dz * beam.ray.z >= Math.cos(angle) * d
+  return d < beam.range && dx * beam.ray.x + dy * beam.ray.y + dz * beam.ray.z >= Math.cos(beam.angle) * d
     && world.clear(beam.origin, at);
 }
 
@@ -190,7 +198,7 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit, legendary,
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
       weapon: 'pistol', magazines: { pistol: legendary ? LEGENDARY_CAPACITY : GUNS.pistol.capacities[0] },
-      offhand: legendary ? { ammo: LEGENDARY_CAPACITY, reload: null, cooldown: 0 } : null,
+      offhand: legendary ? { ammo: LEGENDARY_CAPACITY, reload: null, cooldown: 0, beam: 'wide' } : null,
       get ammo() { return this.magazines[this.weapon]; },
       set ammo(rounds) { this.magazines[this.weapon] = rounds; },
       reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
@@ -463,7 +471,7 @@ function flareAssignments(run) {
   run.guards = next;
 }
 
-function perception(run, e, gap, lamps, beam) {
+function perception(run, e, gap, lamps) {
   const { world, player: p, time } = run, origin = eye(world, e, ENEMIES[e.kind].height * .87);
   const player = eye(world, p, p.eyeHeight * .8);
   const get = (x, z, score, reason, id, chase) => ({ x, z, score, reason, id, chase });
@@ -471,14 +479,15 @@ function perception(run, e, gap, lamps, beam) {
   const offer = candidate => { if (!best || candidate.score > best.score) best = candidate; };
   if (gap < 5.1 && world.clear(origin, player))
     offer(get(p.x, p.z, gap < 3.1 ? 4 : 1.15, 'saw player', 'player', true));
-  if (gap < beam.range + 5) {
+  if (lamps.length) {
     const litGround = { ...origin, y: e.y + .28 };
     for (const light of lamps) {
+      if (gap >= light.range + 5) continue;
       const { origin: lamp, ray } = light;
-      if (inBeam(world, light, origin, beam.range, beam.angle) ||
-        inBeam(world, light, litGround, beam.range, beam.angle) ||
+      if (inBeam(world, light, origin) ||
+        inBeam(world, light, litGround) ||
         (gap < 7 && world.clear(origin, rayPoint(lamp, ray, .4)))) {
-        offer(get(lamp.x, lamp.z, 1.08 - gap / (beam.range + 10) * .57, 'flashlight', 'lamp', true));
+        offer(get(lamp.x, lamp.z, 1.08 - gap / (light.range + 10) * .57, 'flashlight', 'lamp', true));
       }
     }
   }
@@ -674,7 +683,6 @@ function navigate(run, e, tx, tz, dt) {
 
 function updateEnemies(run, dt, lamps) {
   const { player: p, world, time } = run;
-  const beam = beamSettings(p);
   reserveAmbush(run);
   if (time >= run.nextSwarmTick) {
     flareAssignments(run);
@@ -686,7 +694,7 @@ function updateEnemies(run, dt, lamps) {
     const gap = distance(e, p);
     if (gap > 68) { e.dead = true; continue; }
     if (time >= e.nextThink) {
-      perception(run, e, gap, lamps, beam);
+      perception(run, e, gap, lamps);
       e.nextThink = time + (gap < 24 ? .20 : .48) + run.rng() * .08;
     }
     if (e.target?.chase) pursuing++;
@@ -701,7 +709,7 @@ function updateEnemies(run, dt, lamps) {
     e.turnRate = 0;
     if (e.ambush) {
       const at = eye(world,e,1.28);
-      const revealed = lamps.some(lamp => inBeam(world,lamp,at,beam.range,beam.angle));
+      const revealed = lamps.some(lamp => inBeam(world,lamp,at));
       const maneuver = ambushDecision(run,e,gap,revealed);
       if (maneuver) {
         e.reason = maneuver.reason;
@@ -768,12 +776,11 @@ export function defaultAim(run, pitch = 0, offhand = false) {
 
 export function visibleTargets(run, soundMemory = false) {
   const p = run.player, origin = eye(run.world, p, p.eyeHeight);
-  const beam = beamSettings(p);
   const lamps = activeBeams(run);
   const visible = [];
   for (const e of run.enemies) {
     const d = distance(p, e), head = enemyPose(e).head;
-    if (d < 3.8 || lamps.some(lamp => inBeam(run.world, lamp, head, beam.range, beam.angle))
+    if (d < 3.8 || lamps.some(lamp => inBeam(run.world, lamp, head))
       || (soundMemory && p.noisePeak > run.time && d < 11)) {
       if (run.world.clear(origin, head)) visible.push(e);
     }
@@ -804,17 +811,7 @@ export function stepRun(run, input = {}, dt = STEP) {
   p.protection = Math.max(0, p.protection - dt);
   p.yaw = input.yaw ?? p.yaw;
   p.eyeHeight = input.eyeHeight ?? p.eyeHeight;
-  if (!run.legendary && input.toggleLight && (p.flashlight || p.battery > .04)) {
-    p.flashlight = !p.flashlight;
-    emit(run, 'light', { on: p.flashlight });
-  }
-  if (input.toggleBeam) p.beam = p.beam === 'focus' ? 'wide' : 'focus';
-  const runtime = 30 + p.upgrades.battery * 8;
-  p.battery = run.legendary ? 1 : clamp(p.battery + (p.flashlight ? (input.lampUnavailable ? 0 : -dt / runtime) : dt / 5), 0, 1);
-  if (p.flashlight && p.battery <= 1e-8) {
-    p.flashlight = false;
-    emit(run, 'light', { on: false, empty: true });
-  }
+  updateFlashlights(run, input, dt);
   const mx = input.moveX || 0, mz = input.moveZ || 0, mag = Math.max(1, Math.hypot(mx, mz));
   const old = { x: p.x, y: p.y, z: p.z };
   const speed = input.walk ? 1.30 : 2.72;
@@ -832,10 +829,10 @@ export function stepRun(run, input = {}, dt = STEP) {
   const head = eye(world, p, p.eyeHeight);
   aim.viewOrigin ||= head;
   const lamp = input.lampUnavailable ? null : shiftPose(input.lamp) || { origin: { ...head, y: head.y - .16 }, ray: aim.ray };
-  run.beam = resolvedBeam(world, lamp, aim.viewOrigin);
+  run.beam = resolvePlayerBeam(run, lamp, aim.viewOrigin);
   const offhandLamp = p.offhand && !input.offhandUnavailable
     ? shiftPose(input.offhandLamp) || defaultAim(run, input.pitch, true) : null;
-  run.offhandBeam = resolvedBeam(world, offhandLamp, aim.viewOrigin);
+  run.offhandBeam = resolvePlayerBeam(run, offhandLamp, aim.viewOrigin, true);
   const lamps = activeBeams(run);
   p.stepDistance += Math.hypot(shift.x, shift.z);
   if (p.stepDistance > (input.walk ? .70 : .79)) {
@@ -871,14 +868,34 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (run.populate && run.time >= run.nextSpawn) {
     const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
-    const cone = beamSettings(p);
-    replenishHorde(run, cap, lamps.map(lamp => ({ ...lamp, ...cone })), addEnemy);
+    replenishHorde(run, cap, lamps, addEnemy);
     run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
   }
   updateEnemies(run, dt, lamps);
   run.noises = run.noises.filter(n => run.time < n.born + n.span);
   run.metrics.maxCrowd = Math.max(run.metrics.maxCrowd, run.enemies.length);
   return run.events;
+}
+
+function updateFlashlights(run, input, dt) {
+  const p = run.player;
+  if (p.offhand) {
+    if (input.cyclePrimaryBeam || input.toggleBeam) p.beam = beamCycle[p.beam];
+    if (input.cycleOffhandBeam || input.toggleLight) p.offhand.beam = beamCycle[p.offhand.beam];
+    p.flashlight = p.beam !== 'off' || p.offhand.beam !== 'off';
+    return;
+  }
+  if (input.toggleLight && (p.flashlight || p.battery > .04)) {
+    p.flashlight = !p.flashlight;
+    emit(run, 'light', { on: p.flashlight });
+  }
+  if (input.toggleBeam) p.beam = p.beam === 'focus' ? 'wide' : 'focus';
+  const runtime = 30 + p.upgrades.battery * 8;
+  p.battery = clamp(p.battery + (p.flashlight ? (input.lampUnavailable ? 0 : -dt / runtime) : dt / 5), 0, 1);
+  if (p.flashlight && p.battery <= 1e-8) {
+    p.flashlight = false;
+    emit(run, 'light', { on: false, empty: true });
+  }
 }
 
 function finishReload(run, state, dt) {

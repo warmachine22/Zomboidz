@@ -282,7 +282,7 @@ export function createAudio() {
       } else if (e.type === 'loaded' || e.type === 'dry' || e.type === 'light' || e.type === 'pickup' || e.type === 'weaponSwitch') {
         play('switch', { gain: e.type === 'dry' ? .36 : .23, speed: e.type === 'pickup' ? 1.57 : 1 });
       } else if (e.type === 'footstep') {
-        play(e.road ? 'gravel' : 'brush', { gain: e.quiet ? .13 : .24, speed: .86 + Math.random() * .26 });
+        play(e.road ? 'gravel' : 'brush', { gain: e.quiet ? .025 : .045, speed: .86 + Math.random() * .26 });
       } else if (e.type === 'flare') {
         play('flare', { gain: .39, loc: e });
       } else if (e.type === 'death' || e.type === 'armorHit') {

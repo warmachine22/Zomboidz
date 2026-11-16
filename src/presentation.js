@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
-import { beamSettings, ENEMIES, flarePower, GUNS, LOOT, STEP } from './simulation.js';
-import { reloadMount } from './held-tools.js';
+import { ENEMIES, flarePower, GUNS, LOOT, STEP } from './simulation.js';
+import { legendaryBeamLabel, reloadMount } from './held-tools.js';
 import { burstPhase, interpolateEnemyTransform, legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
 
@@ -398,6 +398,7 @@ function makeLamp(map = beamTexture()) {
   const lamp = new THREE.SpotLight(0xffedd2, 0, 17, .49, .78, 2);
   lamp.map = map;
   lamp.castShadow = true;
+  lamp.shadow.autoUpdate = false;
   lamp.shadow.mapSize.set(512, 512);
   lamp.shadow.camera.near = .06; lamp.shadow.camera.far = 34;
   lamp.shadow.bias = -.00019; lamp.shadow.normalBias = .028;
@@ -460,7 +461,6 @@ export function createPresentation(scene, art, layouts) {
   const lamp = makeLamp();
   const offhandLamp = makeLamp(lamp.map);
   offhandLamp.visible = false;
-  offhandLamp.shadow.autoUpdate = false;
   offhandLamp.shadow.mapSize.set(256, 256);
   const muzzle = new THREE.SpotLight(0xffb77e, 0, 12, .72, .72, 1.65);
   muzzle.castShadow = true;
@@ -751,7 +751,6 @@ export function createPresentation(scene, art, layouts) {
   function updateLoot(run, fixtures, beams) {
     const desired = new Set();
     const p = run.player;
-    const { range, angle } = beamSettings(p);
     const nearest = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && distance(item,p) < 34)
       .map(item => ({item, d:distance(item,p), power:flarePower(run.time-item.born)}))
       .filter(item => item.power > .005)
@@ -776,7 +775,7 @@ export function createPresentation(scene, art, layouts) {
       }
       const power = item.kind === 'ammo' ? 0 : flarePower(run.time - item.born);
       const spot = v3(item.x, item.y + .45, item.z);
-      const lit = beams.some(beam => coneReaches(run.world, beam.origin, beam.ray, spot, range, angle)) ||
+      const lit = beams.some(beam => coneReaches(run.world, beam.origin, beam.ray, spot, beam.range, beam.angle)) ||
         fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
         nearest.slice(0,quality).some(({item:other,power}) => other.id !== item.id &&
           distance(item,other) < 2.3+power*3.1 && run.world.clear({ ...other,y:other.y+.33 },spot));
@@ -831,10 +830,11 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
-  function updateWatch(run) {
+  function updateWatch(run, leftHanded) {
     const p = run.player;
     const reloading = p.reload || p.offhand?.reload;
-    const parts = [p.ammo, p.offhand?.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor, p.flashlight, p.beam, Boolean(reloading)];
+    const parts = [p.ammo, p.offhand?.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor,
+      p.flashlight, p.beam, p.offhand?.beam, leftHanded, Boolean(reloading)];
     const key = parts.join(':');
     if (key === lastWatch) return;
     lastWatch = key;
@@ -845,7 +845,9 @@ export function createPresentation(scene, art, layouts) {
     g.fillStyle = '#eeead8'; g.font = p.offhand ? 'bold 28px monospace' : 'bold 39px monospace';
     g.fillText(p.ammo + (p.offhand ? '+' + p.offhand.ammo : '') + '/' + p.reserve, 15, 72);
     g.font = '16px monospace'; g.fillStyle = '#9bb6a6';
-    g.fillText((p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + (p.offhand ? '∞' : Math.ceil(p.battery * 100) + '%'), 16, 110);
+    const light = p.offhand ? legendaryBeamLabel(p, leftHanded) + ' · ∞'
+      : (p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + Math.ceil(p.battery * 100) + '%';
+    g.fillText(light, 16, 110, 221);
     g.fillStyle = '#35433a'; g.fillRect(16, 124, 221, 11);
     g.fillStyle = p.battery > .21 ? '#b1c79e' : '#dfa36f';
     g.fillRect(16, 124, 221 * p.battery, 11);
@@ -909,28 +911,25 @@ export function createPresentation(scene, art, layouts) {
       if (mag) mag.position.y = -.10 * second.dip;
     }
     for (const flash of flashes) updateFlash(flash, run.world, dt, settings, active);
-    const { range, angle } = beamSettings(p);
     const power = .72 + .28 * clamp(p.battery / .16, 0, 1);
-    const intensity = (p.beam === 'focus' ? 520 : 340) * power;
-    updateLamp(lamp, beam, range, angle, intensity);
-    updateLamp(offhandLamp, offhandBeam, range, angle, intensity);
+    updateLamp(lamp, beam, power);
+    updateLamp(offhandLamp, offhandBeam, power);
     const litByLamp = lamp.intensity > 0 || offhandLamp.intensity > 0 || calibration;
     if (artworkLit !== litByLamp) {
       artworkLit = litByLamp;
       for (const mat of firstPersonMats.values()) mat.emissiveIntensity = litByLamp ? .85 : 0;
     }
-    updateWatch(run);
+    updateWatch(run, left);
   }
 
-  function updateLamp(light, beam, range, angle, intensity) {
-    if (beam) {
-      light.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
-      light.target.position.copy(light.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
-      if (!light.shadow.autoUpdate) light.shadow.needsUpdate = true;
-    }
-    light.angle = angle;
-    light.distance = range;
-    light.intensity = beam ? intensity : 0;
+  function updateLamp(light, beam, power) {
+    if (!beam) { light.intensity = 0; return; }
+    light.position.set(beam.origin.x, beam.origin.y, beam.origin.z);
+    light.target.position.copy(light.position).add(v3(beam.ray.x, beam.ray.y, beam.ray.z));
+    light.shadow.needsUpdate = true;
+    light.angle = beam.angle;
+    light.distance = beam.range;
+    light.intensity = (beam.mode === 'focus' ? 520 : 340) * power;
   }
 
   function updateFlash(flash, world, dt, settings, active) {

@@ -62,6 +62,40 @@ test('Legendary lamps resolve independently, reveal targets and respect cover an
   assert.equal(normal.offhandBeam, null);
 });
 
+test('Legendary Wide, Focus and Off are independent and restore charge-free light when cycled back', () => {
+  const run = room({ legendary: true }), p = run.player;
+  stepRun(run, { cyclePrimaryBeam: true });
+  assert.deepEqual([run.beam.mode, run.beam.range, run.offhandBeam.mode, run.offhandBeam.range],
+    ['focus', 23, 'wide', 15]);
+  assert.ok(run.beam.angle < run.offhandBeam.angle);
+
+  stepRun(run, { cyclePrimaryBeam: true, cycleOffhandBeam: true });
+  assert.equal(run.beam, null);
+  assert.equal(run.offhandBeam.mode, 'focus');
+  assert.equal(p.flashlight, true);
+
+  stepRun(run, { cycleOffhandBeam: true });
+  assert.equal(p.flashlight, false);
+  assert.equal(run.beam, null);
+  assert.equal(run.offhandBeam, null);
+  advance(run, 8);
+  assert.equal(p.battery, 1);
+
+  stepRun(run, { toggleLight: true }); // F and the touch Light button cycle the offhand.
+  assert.equal(run.beam, null);
+  assert.equal(run.offhandBeam.mode, 'wide');
+  stepRun(run, { toggleBeam: true }); // Q and the touch Beam button cycle the primary.
+  assert.equal(run.beam.mode, 'wide');
+  assert.equal(run.offhandBeam.mode, 'wide');
+
+  const normal = room();
+  stepRun(normal, { toggleBeam: true });
+  assert.equal(normal.beam.mode, 'focus');
+  stepRun(normal, { toggleBeam: true, cycleOffhandBeam: true });
+  assert.equal(normal.beam.mode, 'wide');
+  assert.equal(normal.offhandBeam, null);
+});
+
 test('the Legendary pistols aim and fire independently, with their own cooldowns', () => {
   const run = room({ legendary: true }), p = run.player;
   const left = addEnemy(run, 'shambler', p.x - 2, p.z - 6);

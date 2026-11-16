@@ -15,6 +15,11 @@ const recoilTuning = {
 export const gunAngle = value => Math.max(-25, Math.min(25, Math.round(Number.isFinite(value) ? value : 0)));
 const rotation = (pitch, yaw) => new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
 
+export function legendaryBeamLabel(player, leftHanded) {
+  const primary = player.beam.toUpperCase(), offhand = player.offhand.beam.toUpperCase();
+  return leftHanded ? 'R ' + offhand + ' · L ' + primary : 'R ' + primary + ' · L ' + offhand;
+}
+
 export function toolLayouts(art) {
   const layouts = Object.fromEntries(names.map(name => {
     const scene = art[name].scene;
