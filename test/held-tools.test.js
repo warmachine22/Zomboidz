@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Quaternion, Vector3 } from 'three';
 import { createGunHandling, heldPose, mountedAim } from '../src/held-tools.js';
 import { createRun, stepRun, traceAim } from '../src/simulation.js';
+import { questButtons } from '../src/xr.js';
 
 const layout = { muzzle: new Vector3(0, .10, -.42), support: new Vector3(.04, -.01, -.27) };
 const lamp = { muzzle: new Vector3(0, .03, -.16) };
@@ -11,6 +12,22 @@ const pose = (position = new Vector3()) => ({ position, quaternion: new Quaterni
 const forward = new Vector3(0, 0, -1);
 const view = pose(new Vector3(0, 1.6, 20));
 const weapon = pose(new Vector3(.17, 1.3, 19.6));
+
+test('Quest face buttons stay on the physical controller in either handedness mode', () => {
+  const pad = (...pressed) => ({ buttons: Array.from({ length: 6 }, (_, index) => ({ pressed: pressed.includes(index) })) });
+  for (const leftHanded of [false, true]) {
+    const a = questButtons(pad(4), pad(), leftHanded);
+    assert.ok(a.reload && !a.toggleBeam && !a.pause && !a.cycleWeapon);
+    const b = questButtons(pad(5), pad(), leftHanded);
+    assert.ok(b.cycleWeapon && !b.pause && !b.reload);
+    const left = questButtons(pad(), pad(4, 5), leftHanded);
+    assert.ok(left.pause && left.toggleBeam && !left.reload && !left.cycleWeapon);
+    const triggers = questButtons(pad(0, 1), pad(), leftHanded);
+    assert.equal(triggers.fire, !leftHanded);
+    assert.equal(triggers.interact, !leftHanded);
+    assert.equal(triggers.toggleLight, leftHanded);
+  }
+});
 
 test('tracked pointing controls aim while the grip controls placement and calibration is optional', () => {
   const pointer = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), .45);

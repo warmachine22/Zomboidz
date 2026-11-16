@@ -10,6 +10,16 @@ function poseOf(pose) { return { position: vec(pose.transform.position), quatern
 const button = (gamepad, index) => Boolean(gamepad?.buttons?.[index]?.pressed);
 const axis = (gamepad, index) => gamepad?.axes?.[gamepad.axes.length >= 4 ? index + 2 : index] || 0;
 
+export function questButtons(right, left, leftHanded) {
+  const weapon = leftHanded ? left : right;
+  const light = leftHanded ? right : left;
+  return {
+    fire: button(weapon, 0), interact: button(weapon, 1),
+    reload: button(right, 4), cycleWeapon: button(right, 5),
+    toggleLight: button(light, 0), toggleBeam: button(left, 4), pause: button(left, 5),
+  };
+}
+
 export function createXR(renderer, scene, rig) {
   let active = null, offsetYaw = 0, rawView = null, priorView = null, seatedHeight = null;
   let domMode = '', turnHeld = false, recoveredAt = 0, angleHeld = false;
@@ -103,11 +113,7 @@ export function createXR(renderer, scene, rig) {
     const right = sources.right?.gamepad, left = sources.left?.gamepad;
     const gunSource = sources[settings.leftHanded ? 'left' : 'right'];
     const handed = gunSource?.gamepad, other = settings.leftHanded ? right : left;
-    const gp = {
-      fire: button(handed, 0), interact: button(handed, 1),
-      reload: button(handed, 4), pause: button(handed, 5),
-      toggleLight: button(other, 0), toggleBeam: button(other, 4),
-    };
+    const gp = questButtons(right, left, settings.leftHanded);
     const pressed = {};
     for (const key of Object.keys(gp)) pressed[key] = gp[key] && !edges[key];
     edges = gp;

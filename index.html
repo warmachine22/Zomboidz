@@ -44,24 +44,26 @@
           <dt>Move quietly</dt><dd>Hold Shift</dd>
           <dt>Fire / Reload</dt><dd>Click or Space / R</dd>
           <dt>Light / Beam</dt><dd>F / Q</dd>
-          <dt>Equip</dt><dd>E near a pickup</dd>
+          <dt>Pick up / Cycle weapons</dt><dd>E / Tab</dd>
           <dt>Pause</dt><dd>Esc</dd>
         </dl></div>
         <div><h3>Quest</h3><dl>
           <dt>Move / Turn</dt><dd>Left stick / right stick</dd>
-          <dt>Fire / Reload</dt><dd>Weapon trigger / primary button</dd>
-          <dt>Light / Beam</dt><dd>Light trigger / primary button</dd>
-          <dt>Equip</dt><dd>Weapon grip near a pickup</dd>
+          <dt>Fire / Reload</dt><dd>Weapon trigger / right A</dd>
+          <dt>Cycle weapons</dt><dd>Right B</dd>
+          <dt>Light / Beam</dt><dd>Light trigger / left X</dd>
+          <dt>Pick up gear</dt><dd>Weapon grip near a pickup</dd>
           <dt>Brace</dt><dd>Hold light-hand grip near the gun</dd>
-          <dt>Pause</dt><dd>Weapon secondary button</dd>
+          <dt>Pause</dt><dd>Left Y</dd>
         </dl></div>
         <div><h3>Touch</h3><dl>
           <dt>Move / Look</dt><dd>Left stick / drag right side</dd>
           <dt>Fire / Reload / Equip</dt><dd>On-screen buttons</dd>
+          <dt>Cycle weapons</dt><dd>Cycle button</dd>
           <dt>Light / Beam</dt><dd>Light / Beam buttons</dd>
         </dl></div>
       </div>
-      <p class="note">Rare loot gives off light that fades. Sweep the ground to find old drops. Footsteps, light, and gunshots draw attention.</p>
+      <p class="note">Each weapon keeps its loaded rounds. Empty weapons reload automatically when spare ammo is available. Rare loot glows and attracts zombies as it fades.</p>
       <button data-back>Back</button>
     </section>
     <section class="sheet" id="scores" hidden aria-labelledby="scores-title">
@@ -117,7 +119,7 @@
     <div id="look-pad"></div>
     <div id="stick" aria-label="Move"><i></i></div>
     <div class="touch-utilities">
-      <button data-touch="toggleLight">Light</button><button data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
+      <button id="touch-cycle" data-touch="cycleWeapon" disabled>Cycle</button><button data-touch="toggleLight">Light</button><button data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
     </div>
     <div class="touch-main">
       <button data-touch="interact">Equip</button><button data-touch="reload">Reload</button><button id="touch-fire">Fire</button>

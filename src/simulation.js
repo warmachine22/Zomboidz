@@ -6,7 +6,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.7';
+export const BUILD = '1.0.8';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -184,7 +184,10 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
   const run = {
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit,
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
-      weapon: 'pistol', ammo: GUNS.pistol.capacities[0], reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
+      weapon: 'pistol', magazines: { pistol: GUNS.pistol.capacities[0] },
+      get ammo() { return this.magazines[this.weapon]; },
+      set ammo(rounds) { this.magazines[this.weapon] = rounds; },
+      reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
       flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
       travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
     enemies: [], loot: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
@@ -227,13 +230,12 @@ export function addEnemy(run, kind, x, z) {
   return enemy;
 }
 
-export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0, carried = false) {
+export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0) {
   if (run.settledLoot.has(id)) return null;
   const y = run.world.height(x, z);
-  const loot = { id, kind, x, z, y, born: run.time - (carried ? 25 : 0), amount,
-    availableAt: run.time + (carried ? 2.5 : 0), landmark: !id.startsWith('drop:') };
+  const loot = { id, kind, x, z, y, born: run.time, amount, landmark: !id.startsWith('drop:') };
   run.loot.push(loot);
-  if (kind !== 'ammo' && !carried) emit(run, 'flare', { x, y: y + .4, z, kind });
+  if (kind !== 'ammo') emit(run, 'flare', { x, y: y + .4, z, kind });
   return loot;
 }
 
@@ -257,8 +259,11 @@ function majorDrop(run) {
   const { player: p, world } = run;
   const options = Object.keys(UPGRADES).filter(k => p.upgrades[k] < UPGRADES[k].cap);
   options.push(run.time < 130 ? 'armor1' : run.time < 255 ? 'armor2' : 'armor3');
-  if (run.time > 54) options.push(p.weapon === 'shotgun' ? 'smg' : 'shotgun');
-  if (run.time >= 90 && p.weapon !== 'carbine') options.push('carbine');
+  if (run.time > 54) {
+    const next = ['shotgun', 'smg'].find(weapon => !Object.hasOwn(p.magazines, weapon));
+    if (next) options.push(next);
+  }
+  if (run.time >= 90 && !Object.hasOwn(p.magazines, 'carbine')) options.push('carbine');
   const kind = options[Math.floor(run.rng() * options.length)];
   const ahead = p.yaw + (run.rng() - .5) * 1.4;
   for (let i = 0; i < 11; i++) {
@@ -299,9 +304,10 @@ export function shoot(run, aim) {
   const { player: p, world } = run, gun = GUNS[p.weapon];
   if (run.status !== 'playing' || p.cooldown > 0 || p.reload) return;
   if (!p.ammo) {
+    if (startReload(run)) return;
     run.metrics.dryFire++;
     p.cooldown = .32;
-    emit(run, 'dry', { reason: p.reserve ? 'Reload' : 'No spare rounds' });
+    emit(run, 'dry', { reason: 'No spare rounds' });
     return;
   }
   const o = aim.origin, center = norm(aim.ray);
@@ -313,6 +319,7 @@ export function shoot(run, aim) {
   const flashOrigin = blocked ? rayPoint(blocked.point, blocked.ray, -.045) : o;
   noise(run, 'gunshot', flashOrigin, gun.noise, 2.8);
   emit(run, 'shot', { ...flashOrigin, ray: center, weapon: p.weapon, blocked: Boolean(blocked) });
+  if (!p.ammo) startReload(run);
   if (blocked) {
     emit(run, 'impact', { ...blocked.point, surface: blocked.surface });
     return;
@@ -366,16 +373,15 @@ export function startReload(run) {
 
 function takeLoot(run, confirm) {
   const p = run.player;
-  const nearby = run.loot.filter(l => !l.lost && l.availableAt <= run.time && Math.abs(l.x - p.x) < 1.5 && distance(l, p) < 1.19)
+  const nearby = run.loot.filter(l => !l.lost && Math.abs(l.x - p.x) < 1.5 && distance(l, p) < 1.19)
     .sort((a, b) => distance(a, p) - distance(b, p));
   run.offer = null;
-  let swap = null;
   for (const l of nearby) {
     const k = l.kind;
-    if ((k in GUNS && k === p.weapon) || (k.startsWith('armor') && Number(k.at(-1)) <= p.armor)) continue;
+    if (Object.hasOwn(p.magazines, k) || (k.startsWith('armor') && Number(k.at(-1)) <= p.armor)) continue;
     if (!run.world.clear(eye(run.world, p, .6), { ...l, y: l.y + .44 })) continue;
-    if ((k in GUNS && k !== p.weapon) || k.startsWith('armor')) {
-      if (!swap) { swap = l; run.offer = l; }
+    if (k in GUNS || k.startsWith('armor')) {
+      run.offer ??= l;
       continue;
     }
     if (k === 'ammo') {
@@ -393,20 +399,28 @@ function takeLoot(run, confirm) {
       take(run, l, LOOT[k].name + ' · ' + effect);
     }
   }
-  if (!confirm || !swap) return;
-  if (swap.kind in GUNS) {
-    const old = p.weapon;
-    // Preserve the rounds in the replaced gun without creating ammunition.
-    const pool = p.reserve + p.ammo;
-    p.weapon = swap.kind;
-    p.ammo = Math.min(p.ammo, magazineCapacity(p));
-    p.reserve = pool - p.ammo;
-    p.reload = null;
-    p.cooldown = .25;
-    setLoot(run, old, swap.x, swap.z, undefined, 0, true);
-  } else p.armor = Number(swap.kind.at(-1));
-  take(run, swap, LOOT[swap.kind].name);
+  const item = run.offer;
+  if (!confirm || !item) return;
+  if (item.kind in GUNS) {
+    p.magazines[item.kind] = 0;
+    equipWeapon(p, item.kind);
+  } else p.armor = Number(item.kind.at(-1));
+  take(run, item, LOOT[item.kind].name);
   run.offer = null;
+}
+
+function equipWeapon(player, weapon) {
+  player.weapon = weapon;
+  player.reload = null;
+  player.cooldown = Math.max(player.cooldown, .25);
+}
+
+function cycleWeapon(run) {
+  const p = run.player, weapons = Object.keys(p.magazines);
+  if (weapons.length < 2) return;
+  const next = weapons[(weapons.indexOf(p.weapon) + 1) % weapons.length];
+  equipWeapon(p, next);
+  emit(run, 'weaponSwitch', { weapon: next });
 }
 
 function take(run, loot, message) {
@@ -813,6 +827,7 @@ export function stepRun(run, input = {}, dt = STEP) {
     noise(run, 'footstep', eye(world, p, .26), radius, 1.56);
     emit(run, 'footstep', { road, quiet: Boolean(input.walk) });
   }
+  if (input.cycleWeapon) cycleWeapon(run);
   if (p.reload) {
     p.reload.left -= dt;
     if (p.reload.left <= 1e-8) {
@@ -828,6 +843,7 @@ export function stepRun(run, input = {}, dt = STEP) {
     run.lastChunkCheck = run.time;
   }
   takeLoot(run, input.interact);
+  if (!p.ammo && !p.reload && p.reserve > 0) startReload(run);
   if (run.populate && run.time >= run.nextLoot) {
     majorDrop(run);
     run.nextLoot = run.time + 48 + run.rng() * 14;

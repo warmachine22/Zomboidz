@@ -85,18 +85,21 @@ test('the max-tier pistol fires all 50 rounds, and a fourth pickup has no effect
   stepRun(run, { reload: true });
   advance(run, GUNS.pistol.reload);
   for (let shot = 1; shot <= 50; shot++) {
-    stepRun(run, { fire: true });
+    const events = stepRun(run, { fire: true });
     assert.equal(run.metrics.shots, shot);
     assert.equal(p.ammo, 50 - shot);
+    assert.equal(events.some(event => event.type === 'reload'), shot === 50);
     advance(run, Math.ceil(GUNS.pistol.interval / STEP) * STEP);
   }
   assert.equal(p.reserve, 6);
-  assert.equal(stepRun(run, { fire: true }).find(event => event.type === 'dry').reason, 'Reload');
+  assert.ok(p.reload);
+  advance(run, GUNS.pistol.reload);
+  assert.deepEqual([p.ammo, p.reserve], [6, 0]);
   const fresh = room().player;
   assert.deepEqual([fresh.upgrades.capacity, fresh.ammo, fresh.reserve], [0, 6, 50]);
 });
 
-test('capacity follows weapon swaps, and reloads retain Speed Loader and reserve limits', () => {
+test('capacity follows carried weapons, and reloads retain Speed Loader and reserve limits', () => {
   const run = room(), p = run.player;
   for (const kind of ['capacity', 'capacity', 'reload']) setLoot(run, kind, p.x, p.z);
   stepRun(run);
@@ -106,10 +109,13 @@ test('capacity follows weapon swaps, and reloads retain Speed Loader and reserve
   assert.equal(p.ammo, 24);
   setLoot(run, 'shotgun', p.x, p.z);
   stepRun(run, { interact: true });
-  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['shotgun', 2, 6, 50]);
-  advance(run, 2.6);
-  stepRun(run, { interact: true });
-  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['pistol', 2, 6, 50]);
+  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['shotgun', 2, 0, 32]);
+  assert.equal(p.reload.duration, GUNS.shotgun.reload * .85);
+  advance(run, 1.9);
+  assert.deepEqual([p.ammo, p.reserve], [6, 26]);
+  stepRun(run, { cycleWeapon: true });
+  assert.deepEqual([p.weapon, p.upgrades.capacity, p.ammo, p.reserve], ['pistol', 2, 24, 26]);
+  p.ammo = 6;
   p.reserve = 3;
   stepRun(run, { reload: true });
   advance(run, 1.3);
@@ -159,18 +165,77 @@ test('battery lasts 30 seconds, recharges in five, and gets a longer runtime fro
   assert.equal(p.flashlight, true);
 });
 
-test('weapon swaps require confirmation and conserve the ammo pool', () => {
+test('weapon pickups require confirmation, and cycling retains each magazine in pickup order', () => {
   const run = room(), p = run.player;
+  stepRun(run, { cycleWeapon: true });
+  assert.deepEqual(p.magazines, { pistol: 6 });
+  assert.equal(p.cooldown, 0);
   setLoot(run, 'shotgun', p.x, p.z);
   stepRun(run);
   assert.equal(p.weapon, 'pistol');
   assert.equal(run.offer.kind, 'shotgun');
   stepRun(run, { interact: true });
   assert.equal(p.weapon, 'shotgun');
-  assert.equal(p.ammo, 4);
-  assert.equal(p.ammo + p.reserve, 56);
-  const old = run.loot.find(l => l.kind === 'pistol');
-  assert.equal(flarePower(run.time - old.born), 0);
+  assert.equal(p.ammo, 0);
+  assert.equal(p.magazines.pistol, 6);
+  advance(run, GUNS.shotgun.reload);
+  assert.deepEqual([p.ammo, p.reserve], [4, 46]);
+  for (const kind of ['smg', 'carbine']) {
+    setLoot(run, kind, p.x, p.z);
+    stepRun(run, { interact: true });
+    assert.equal(p.weapon, kind);
+    assert.equal(p.ammo, 0);
+    advance(run, GUNS[kind].reload);
+  }
+  assert.equal(run.loot.some(item => item.kind === 'pistol'), false);
+  setLoot(run, 'shotgun', p.x, p.z);
+  stepRun(run, { interact: true });
+  assert.equal(run.offer, null);
+  assert.equal(p.weapon, 'carbine');
+  assert.equal(run.metrics.pickups.shotgun, 1);
+  for (const [kind, rounds] of Object.entries({ pistol: 6, shotgun: 4, smg: 24, carbine: 16 })) {
+    const events = stepRun(run, { cycleWeapon: true, fire: true });
+    assert.ok(events.some(event => event.type === 'weaponSwitch' && event.weapon === kind));
+    assert.equal(p.weapon, kind);
+    assert.equal(p.ammo, rounds);
+    assert.equal(run.metrics.shots, 0);
+  }
+  assert.equal(Object.values(p.magazines).reduce((total, shots) => total + shots, p.reserve), 56);
+  assert.deepEqual(room().player.magazines, { pistol: 6 });
+});
+
+test('cycling out of a mid-reload weapon preserves both magazines and spares', () => {
+  const run = room(), p = run.player;
+  setLoot(run, 'shotgun', p.x, p.z);
+  stepRun(run, { interact: true });
+  advance(run, .65);
+  assert.equal(p.reload.weapon, 'shotgun');
+  stepRun(run, { cycleWeapon: true });
+  advance(run, 3);
+  assert.equal(p.weapon, 'pistol');
+  assert.equal(p.reload, null);
+  assert.deepEqual(p.magazines, { pistol: 6, shotgun: 0 });
+  assert.equal(p.reserve, 50);
+  stepRun(run, { cycleWeapon: true });
+  assert.equal(p.reload.left, GUNS.shotgun.reload);
+});
+
+test('the last shot stays empty without spares and picking up ammo starts the reload', () => {
+  const run = room(), p = run.player;
+  p.ammo = 1;
+  p.reserve = 0;
+  stepRun(run, { fire: true });
+  assert.equal(p.ammo, 0);
+  assert.equal(p.reload, null);
+  advance(run, .34);
+  const events = stepRun(run, { fire: true });
+  assert.equal(events.find(event => event.type === 'dry').reason, 'No spare rounds');
+  setLoot(run, 'ammo', p.x, p.z, undefined, 3);
+  stepRun(run);
+  assert.equal(p.reload.left, GUNS.pistol.reload);
+  assert.deepEqual([p.ammo, p.reserve], [0, 3]);
+  advance(run, GUNS.pistol.reload);
+  assert.deepEqual([p.ammo, p.reserve], [3, 0]);
 });
 
 test('the Ranger carbine enters rare loot at 90 seconds and fires semi-auto with a two-second reload', () => {
@@ -188,18 +253,20 @@ test('the Ranger carbine enters rare loot at 90 seconds and fires semi-auto with
   Object.assign(carbine, { x: p.x, z: p.z });
   stepRun(run, { interact: true });
   assert.equal(p.weapon, 'carbine');
-  assert.equal(p.ammo, 6);
-  advance(run, .3);
+  assert.equal(p.ammo, 0);
+  assert.equal(p.reload.duration, 2);
+  advance(run, 2);
   stepRun(run, { fire: true });
   advance(run, .6, { fireHeld: true });
-  assert.equal(p.ammo, 5);
+  assert.equal(p.ammo, 15);
   assert.equal(run.metrics.shots, 1);
   stepRun(run, { reload: true });
   advance(run, 1.9, { fire: true });
-  assert.equal(p.ammo, 5);
+  assert.equal(p.ammo, 15);
   advance(run, .1);
   assert.equal(p.ammo, 16);
-  assert.equal(p.reserve, 39);
+  assert.equal(p.reserve, 33);
+  assert.equal(p.magazines.pistol, 6);
 });
 
 test('the flashlight keeps its charge when tracking is briefly unavailable', () => {

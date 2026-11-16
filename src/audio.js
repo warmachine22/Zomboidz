@@ -279,7 +279,7 @@ export function createAudio() {
       } else if (e.type === 'reload') {
         play(e.weapon === 'smg' || e.weapon === 'carbine' ? 'reload-smg-short' : e.weapon === 'shotgun' ? 'pump' : 'reload-short',
           { bus: weapons, gain: .35 });
-      } else if (e.type === 'loaded' || e.type === 'dry' || e.type === 'light' || e.type === 'pickup') {
+      } else if (e.type === 'loaded' || e.type === 'dry' || e.type === 'light' || e.type === 'pickup' || e.type === 'weaponSwitch') {
         play('switch', { gain: e.type === 'dry' ? .36 : .23, speed: e.type === 'pickup' ? 1.57 : 1 });
       } else if (e.type === 'footstep') {
         play(e.road ? 'gravel' : 'brush', { gain: e.quiet ? .13 : .24, speed: .86 + Math.random() * .26 });

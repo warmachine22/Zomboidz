@@ -319,14 +319,14 @@ renderer.xr.addEventListener('sessionend', () => {
   showHome();
 });
 
-const keyboard = { KeyR: 'reload', KeyF: 'toggleLight', KeyQ: 'toggleBeam', KeyE: 'interact', Space: 'fire' };
+const keyboard = { KeyR: 'reload', Tab: 'cycleWeapon', KeyF: 'toggleLight', KeyQ: 'toggleBeam', KeyE: 'interact', Space: 'fire' };
 document.addEventListener('keydown', event => {
   if (event.target.matches?.('input, textarea')) return;
   if (phase === 'playing') {
     held.add(event.code);
     if (keyboard[event.code] && !event.repeat) queued[keyboard[event.code]] = true;
     if (event.code === 'Escape') pause();
-    if (event.code === 'Space') event.preventDefault();
+    if (event.code === 'Space' || event.code === 'Tab') event.preventDefault();
     if (debugEnabled && event.code === 'KeyM' && !event.repeat) {
       debugVisible = !debugVisible;
       $('debug').hidden = !debugVisible;
@@ -470,6 +470,7 @@ function handleEvent(batch) {
   for (const event of batch) {
     if (event.type === 'dry') setNotice(event.reason, 1.25);
     else if (event.type === 'pickup') setNotice(event.message);
+    else if (event.type === 'weaponSwitch') setNotice(GUNS[event.weapon].name, 1.25);
     else if (event.type === 'light' && event.empty) setNotice('Battery depleted. Recharging.');
     else if (event.type === 'shot') {
       handling.kick(settings.leftHanded);
@@ -499,6 +500,7 @@ function updateHUD(force = false) {
   $('offer').hidden = !run.offer;
   if (run.offer) text('offer', (touch ? 'EQUIP' : 'E TO EQUIP') + ' · ' + LOOT[run.offer.kind].name);
   $('reload-meter').hidden = !p.reload;
+  $('touch-cycle').disabled = Object.keys(p.magazines).length < 2;
   if (p.reload) $('reload-progress').style.transform = 'scaleX(' + (1 - p.reload.left / p.reload.duration) + ')';
 }
 
@@ -524,14 +526,15 @@ function xrUI(sample, trackedView) {
     const cards = {
       menu: {
         title: 'Enter the forest',
-        lines: [DIFFICULTIES[settings.difficulty].name + ' difficulty · Light primary toggles mode.',
-          'Weapon trigger fires. Primary button reloads.', 'Light trigger toggles light. Hold light grip to brace.',
-          'Weapon grip equips loot. Left stick moves.'],
+        lines: [DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
+          'A reloads. B cycles weapons. Y pauses.',
+          'Light trigger toggles light. X changes beam in play.',
+          'Weapon grip picks up gear. Light grip braces the gun.'],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
-        second: 'WEAPON PRIMARY  ·  GUN ANGLE',
+        second: 'A  ·  GUN ANGLE',
       },
       paused: { title: 'Paused', lines: [pauseReason],
-        hint: sample.weaponTracked ? 'TRIGGER  ·  RESUME' : 'CONNECT WEAPON CONTROLLER', second: 'WEAPON PRIMARY  ·  GUN ANGLE' },
+        hint: sample.weaponTracked ? 'TRIGGER  ·  RESUME' : 'CONNECT WEAPON CONTROLLER', second: 'A  ·  GUN ANGLE' },
       angle: { title: 'Gun Angle', lines: [
         'Aim at this panel to see where the barrel points.',
         'Weapon stick adjusts pitch and yaw by 1°.',
@@ -631,7 +634,7 @@ function frame(now, xrFrame) {
         if (sample.pause) pause();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
         else {
-          for (const key of ['reload', 'fire', 'toggleLight', 'toggleBeam', 'interact'])
+          for (const key of ['reload', 'cycleWeapon', 'fire', 'toggleLight', 'toggleBeam', 'interact'])
             if (sample[key]) queued[key] = true;
           roomX += sample.roomX; roomZ += sample.roomZ;
         }

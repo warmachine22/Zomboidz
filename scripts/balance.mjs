@@ -37,7 +37,7 @@ function play(seed, style) {
   const rng = random(seed + style + ':policy');
   let scan = -.28, audio = [], knownLoot = null, seenEnemies = [], threat = null;
   let orbit = 0, nextDecision = 0, planned = {};
-  let sawEmpty = false, lastSwap = -30;
+  let sawEmpty = false, swaps = 0;
   while (run.status === 'playing' && run.time < maxTime) {
     if (run.time >= nextDecision) {
       nextDecision = run.time + .10;
@@ -48,7 +48,7 @@ function play(seed, style) {
       const gap = threat ? distance(p, threat) : Infinity;
       const desired = run.loot.filter(item => !item.lost && (item.kind !== 'ammo' || p.reserve < 110)
           && (!item.kind.startsWith('armor') || Number(item.kind.at(-1)) > p.armor)
-          && (!(item.kind in GUNS) || (item.kind !== p.weapon && run.time - lastSwap > 25)) && seen(run, item))
+          && !Object.hasOwn(p.magazines, item.kind) && seen(run, item))
         .sort((a,b) => distance(p,a) - distance(p,b))[0];
       if (desired && r.goal) knownLoot = desired;
       if (knownLoot?.lost || (knownLoot && distance(p,knownLoot) < 1 && !run.offer)) knownLoot = null;
@@ -79,13 +79,15 @@ function play(seed, style) {
         aim = { origin, ray: { x:(at.x-origin.x)/d+(rng()-.5)*r.aimError,
           y:(at.y-origin.y)/d+(rng()-.5)*r.aimError, z:(at.z-origin.z)/d+(rng()-.5)*r.aimError } };
       }
-      const reload = !p.reload && p.reserve && (!p.ammo || (!shoot && p.ammo < magazineCapacity(p) * .50));
+      const reload = !p.reload && p.reserve && p.ammo > 0 && !shoot && p.ammo < magazineCapacity(p) * .50;
       const dark = p.flashlight && (p.battery < .12 || (style === 'cautious' && !threat && p.battery < .54));
       const lit = !p.flashlight && p.battery > (gap < 8 ? .27 : .96);
-      if (!p.ammo && !p.reserve) sawEmpty = true;
-      const interact = run.offer && r.goal && (!(run.offer.kind in GUNS) ||
-        (run.time - lastSwap > 25 && run.offer.kind !== 'pistol'));
-      planned = { yaw, fire, aim, reload, toggleLight: dark || lit, interact: Boolean(interact),
+      const weapons = Object.keys(p.magazines);
+      const next = weapons[(weapons.indexOf(p.weapon) + 1) % weapons.length];
+      const anyLoaded = Object.values(p.magazines).some(Boolean);
+      if (!anyLoaded && !p.reserve) sawEmpty = true;
+      const cycleWeapon = !p.ammo && (gap < 9 && p.magazines[next] > 0 || !p.reserve && anyLoaded);
+      planned = { yaw, fire, aim, reload, cycleWeapon, toggleLight: dark || lit, interact: Boolean(run.offer && r.goal && !cycleWeapon),
         moveX: (course?.x || 0) * (knownLoot || gap < r.flee || !r.quiet ? 1 : .85),
         moveZ: (course?.z || 0) * (knownLoot || gap < r.flee || !r.quiet ? 1 : .85),
         walk: r.quiet && gap > r.flee };
@@ -93,14 +95,14 @@ function play(seed, style) {
     for (const e of stepRun(run, planned)) {
       if (['voice','shriek','windup','swing'].includes(e.type) && distance(p,e) < (e.type === 'shriek' ? 19 : 12))
         audio.push({ x:e.x,z:e.z,until:run.time+2.2 });
-      if (e.type === 'pickup' && e.kind in GUNS) lastSwap = run.time;
+      if (e.type === 'weaponSwitch' || e.type === 'pickup' && e.kind in GUNS) swaps++;
     }
     // One-shot intent consumed. The posture is held between decisions.
     planned = { yaw: planned.yaw, moveX: planned.moveX, moveZ: planned.moveZ, walk: planned.walk };
   }
   return {
     strategy: style, difficulty, seed, seconds: Math.round(run.time), kills: p.kills, headshots: p.headshots,
-    roundsFound: run.metrics.roundsPicked, ranDry: sawEmpty, swaps: Object.keys(GUNS).reduce((n,k) => n + (run.metrics.pickups[k] || 0), 0),
+    roundsFound: run.metrics.roundsPicked, ranDry: sawEmpty, swaps,
     upgrades: run.metrics.upgrades, bestCrowd: run.metrics.maxCrowd, pursuing: run.metrics.peakPursuit,
     diverted: run.metrics.peakDiversion, ambushes: run.metrics.ambushes.emerged,
     directions: run.metrics.directionalSamples ? Number((run.metrics.coveredSectors/run.metrics.directionalSamples).toFixed(2)) : 0,
