@@ -90,6 +90,24 @@ test('an existing zombie waits behind cover and follows a close footstep after a
   assert.equal(plan.destination,enemy.ambush.exit);
 });
 
+test('running around cover in any compass direction encounters later arrivals without exceeding the crowd limit', () => {
+  for (const difficulty of ['standard','hard']) for (let sector=0; sector<4; sector++) {
+    const run=createRun('Reed Valley',{difficulty,crowdLimit:10});
+    const p=run.player, goal=sector*Math.PI/2;
+    let facedArrival=false;
+    const options=[0,.35,-.35,.7,-.7,1.05,-1.05,1.44,-1.44,2.05,-2.05,Math.PI].map(angle=>angle+goal);
+    for (let i=0; i<125/STEP && run.status==='playing'; i++) {
+      const yaw=options.find(angle=>!run.world.blocks(p.x+Math.sin(angle)*.73,p.z-Math.cos(angle)*.73,.37)) ?? goal;
+      stepRun(run,{yaw,moveX:Math.sin(yaw),moveZ:-Math.cos(yaw)});
+      assert.ok(run.enemies.length<=10);
+      facedArrival ||= run.enemies.some(e=>e.spawn?.time>run.rules.opening && Math.hypot(e.x-p.x,e.z-p.z)<8.5 &&
+        (e.x-p.x)*Math.sin(yaw)-(e.z-p.z)*Math.cos(yaw)>1);
+      if (facedArrival && run.time>run.rules.opening+30) break;
+    }
+    assert.ok(facedArrival || run.status==='dead',difficulty+' route '+sector+' escaped pressure');
+  }
+});
+
 test('one exported contact emits one swing and checks reach and cover on the contact tick', () => {
   for (const block of [false,true]) {
     const run=room(), p=run.player;

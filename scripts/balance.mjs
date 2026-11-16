@@ -103,6 +103,7 @@ function play(seed, style) {
     roundsFound: run.metrics.roundsPicked, ranDry: sawEmpty, swaps: Object.keys(GUNS).reduce((n,k) => n + (run.metrics.pickups[k] || 0), 0),
     upgrades: run.metrics.upgrades, bestCrowd: run.metrics.maxCrowd, pursuing: run.metrics.peakPursuit,
     diverted: run.metrics.peakDiversion, ambushes: run.metrics.ambushes.emerged,
+    directions: run.metrics.directionalSamples ? Number((run.metrics.coveredSectors/run.metrics.directionalSamples).toFixed(2)) : 0,
     damage: Object.entries(run.metrics.damage).map(([k,v]) => k + ':' + v).join(','),
     fatal: run.death?.kind || 'survived',
   };

@@ -5,7 +5,7 @@ import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.4';
+export const BUILD = '1.0.5';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacity: 6, reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacity: 4, reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -186,7 +186,7 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
     metrics: { shots: 0, dryFire: 0, roundsPicked: 0, upgrades: 0, guarded: 0, lootFlareSeconds: 0,
       pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0,
-      spawns: [0,0,0,0], aheadSpawns: 0 },
+      spawns: [0,0,0,0], aheadSpawns: 0, directionalSamples:0, coveredSectors:0 },
   };
   updateLandmarks(run);
   run.difficulty = difficulty;
@@ -462,6 +462,8 @@ function perception(run, e, gap) {
       'loot flare', guard.id, false));
   }
   if (best?.chase) e.memory = { ...best, until: time + (best.reason === 'gunshot' ? 11 : 7) };
+  if (!best && e.approach?.role === 'cutoff' && e.approach.at <= time && e.approach.until > time && distance(e,e.approach) > 1)
+    best = get(e.approach.x,e.approach.z,.27,'intercepting','approach',false);
   if (!best && e.memory?.until > time && distance(e, e.memory) > 1.1)
     best = { ...e.memory, score: .19, reason: 'last ' + e.memory.reason };
   if (!best && e.approach?.at <= time && e.approach.until > time && distance(e, e.approach) > 1)
