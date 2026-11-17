@@ -1,6 +1,6 @@
 # Zomboidz — The Last Light project handbook
 
-This handbook describes the live 1.0 rebuild as of **1.0.17**. Start here when changing the game. See [development and playtesting](DEVELOPMENT.md) for commands and [release history](../progress.md) for changes by version. [Play the production build](https://zombiez.vercel.app/).
+This handbook describes the live 1.x release as of **1.1.0**. Start here when changing the game. See [development and playtesting](DEVELOPMENT.md) for commands, [environment dressing](ENVIRONMENT_DRESSING.md) for the 1.1.0 scenery system, and [release history](../progress.md) for changes by version. [Play the production build](https://zombiez.vercel.app/).
 
 ## Product and run flow
 
@@ -74,7 +74,8 @@ The default light lasts 30 seconds and recharges in five seconds when off. Base 
 
 ## Forest, extraction, and horde
 
-- **World generation.** A run seed and world coordinates determine 48 m terrain tiles, rolling ground, broad forest regions, roads, canopies, and landmarks. Terrain, collider, raycast, and navigation queries use the same geometry. Rendering streams a 3×3 ring while simulation maintains a bounded tile cache. Stable IDs preserve radio assignment, building encounters, and collected caches through tile unload and reload.
+- **World generation.** A run seed and world coordinates determine 48 m terrain tiles, rolling ground, broad forest regions, roads, canopies, and landmarks. Terrain, collider, raycast, and navigation queries use the same geometry. Rendering streams a heading-biased ring one chunk per frame while simulation maintains a bounded tile cache. Stable IDs preserve radio assignment, building encounters, and collected caches through tile unload and reload.
+- **Environment dressing.** After trees, loot, and entrance candidates are finalized, `dressing.js` adds seeded scenery from an independent RNG stream (`:dress:`), keeping 1.0.17 seed layouts identical: varied rock shapes and pebbles, road-shoulder gravel, grass tufts and dry shrubs, fallen logs and passable road-verge log barriers, dead standing trees (snags), animal carcasses (deer, grizzly bear, fox, rabbit) with scattered bones, stylized clothed human remains with packs, abandoned roadside vehicles (`sedan`, `pickup`, `van`), and camp motorcycles/clutter. `ambient-life.js` renders firefly pockets and flashlight-revealed carcass flies in a single view-space shader draw call, without adding real-time lights. See [environment dressing](ENVIRONMENT_DRESSING.md).
 - **Search routes.** A district in the code is a cluster of six buildings, four of them eligible sheds, joined by tracks. Five layouts and five palettes provide 25 visual combinations. The starter cluster lies past the roadside ruin. Distinct entrances, roofs, props, and room divisions are navigational landmarks. Reflective posts show road junctions. One seeded starter shed and about a third of other sites have exterior amber lanterns. Lantern assignment is independent of radio placement. Keep the woods dark between routes and preserve readable silhouettes without the flashlight.
 - **Radio.** The first approach within 12 m of each distinct eligible shed rolls 1-in-25. The 30th distinct eligible shed guarantees placement if all earlier rolls miss. One radio per run remains at its reachable interior spot even if the player leaves without finding it. Interaction within reach and line of sight triggers the reply and victory. The player searches by memory and environmental signs. Avoid adding visited markers or revealing the odds in the game UI.
 - **Building threats.** A building can be empty or trigger threats inside or outside. The first close visit resolves the encounter once. Spawn candidates are outside direct player sight, clear of occupancy, and share the active horde budget. Ordinary enemies can enter any building later.
@@ -105,10 +106,10 @@ Web Audio puts moving zombie sounds in 3D with distance gain and cover low-pass 
 | --- | --- |
 | `game.js` and `src/game.js` | Entry point, phase transitions, settings, control mapping, render loop, audio and rendering event dispatch |
 | `src/simulation.js` | Shared 30 Hz run simulation, timing, shots, interactions, upgrades, player and enemy movement, emitted events |
-| `src/world.js`, `src/districts.js`, `src/extraction.js` | Seeded world and building detail, terrain and cover queries, stable visits, encounters, radio |
+| `src/world.js`, `src/districts.js`, `src/extraction.js`, `src/dressing.js` | Seeded world, building detail, terrain/cover queries, stable visits, encounters, radio, and independent scenery placement |
 | `src/difficulty.js`, `src/horde.js`, `src/ambush.js` | Pressure curves, initial and later arrivals, safe placement, flanks, hidden ambushes |
 | `src/xr.js`, `src/held-tools.js` | WebXR session and tracking, controller and menu mappings, bracing, aim calibration, recoil, tool sockets |
-| `src/presentation.js`, `src/night-lighting.js`, `src/audio.js` | Three.js scene and effects, instanced props, light budgets, wrist display, audio mix and position |
+| `src/presentation.js`, `src/night-lighting.js`, `src/kit.js`, `src/ambient-life.js`, `src/audio.js` | Three.js scene and effects, procedural low-poly scenery kit, instanced props, light budgets, particle shader effects, wrist display, audio mix and position |
 | `src/enemy-motion.js` and generated `src/enemy-rigs.js` | Shared animation timing, pose blend, contact, foot locks, hit anchors. Regenerate the rig data from authored GLBs. |
 | `src/records.js` and `src/debug-map.js` | Browser persistence and score ranking, developer-only map based on live simulation state |
 

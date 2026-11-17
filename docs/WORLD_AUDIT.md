@@ -59,6 +59,18 @@ The survey materialized 6,912 backcountry tiles from 48 seed samples, covering 1
 
 Near passes count a landmark within 35 m of a sampled corridor over 664 km of combined corridor length. Cover, terrain, darkness, and travel choices affect which landmarks the player sees. 177 wrecks had headlights and 171 were beside cluster buildings. 94 of the 288 cluster buildings had exterior lanterns. The survey found all 25 available layout and palette combinations, across workshops, split sheds, lean-tos, porch cabins, and two-room cabins. Backcountry tiles represented all four biomes, with 29% clearing, 28% pine, 26% gully, and 17% ridge. Trees ranged from about 6 to 17 m tall.
 
+### 1.1.0 Environment dressing sample (6,912 tiles, 48 seeds)
+
+| Dressing element | Total across sample | Per chunk |
+| --- | ---: | ---: |
+| Animal carcasses (deer, bear, fox, rabbit) | 1,471 | 0.21 |
+| Human remains | 327 | 0.05 |
+| Abandoned roadside vehicles | 372 | 0.05 |
+| Camp motorcycles | 550 | 0.08 |
+| Road-verge log barriers | 631 | 0.09 |
+| Rocks (varied shapes) | 166,561 | 24.1 |
+| Extra triangles / colliders | 12,944,756 / 7,934 | 1,873 / 1.15 |
+
 ## Reproduce
 
 ```sh
