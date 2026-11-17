@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
-import { CHUNK, clamp, distance, random } from './world.js';
+import { CHUNK, clamp, distance, hash, random } from './world.js';
 import { ENEMIES, flarePower, GUNS, isSupply, LOOT, signalFlarePower, STEP } from './simulation.js';
 import { legendaryBeamLabel, reloadMount } from './held-tools.js';
 import { burstPhase, interpolateEnemyTransform, legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
+import { bake, grassGeometry, kit, shrubGeometry } from './kit.js';
+import { DRESSING, fireflyField, isSnag } from './dressing.js';
+import { createAmbientLife } from './ambient-life.js';
 
 const textures = new THREE.TextureLoader();
 const models = new GLTFLoader();
@@ -61,6 +64,8 @@ const surfaces = {
 };
 surfaces.stone.map.repeat.set(1.55, 1.55);
 surfaces.boards.map.repeat.set(2.2, .6);
+// 1.1.0 dressing: one vertex-colored material shared by every rock, log, carcass, person and vehicle.
+surfaces.remains = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .96, flatShading: true });
 
 const enemyModels = Object.keys(ENEMIES).flatMap(kind => [kind, kind + '-alt']);
 const modelNames = [...Object.keys(GUNS), 'flashlight', 'glove', 'wreck', ...enemyModels];
@@ -174,7 +179,7 @@ function terrain(world, area) {
       const px = area.cx * CHUNK + x * 2, pz = area.cz * CHUNK + z * 2;
       const road = world.roadDistance(px, pz);
       const shade = .83 + .13 * Math.sin(px * .33 + pz * .61) + .04 * Math.cos(pz);
-      turf(tint, road, shade);
+      turf(tint, road, shade, px, pz);
       if (road > 3) {
         const biome = world.region(px,pz);
         if (biome === 'pine') tint.multiplyScalar(.83);
@@ -202,9 +207,46 @@ function terrain(world, area) {
   return floor;
 }
 
-function turf(target, road, shade) {
+function turf(target, road, shade, px = 0, pz = 0) {
   const verge = clamp((road - 1.65) / 1.7, 0, 1);
-  target.setRGB(.76 - verge * .27, .74 - verge * .28, .68 - verge * .39).multiplyScalar(shade);
+  // Subtle gravel grit along road shoulders (1.5-3.6 m) when dressing is active.
+  const grit = DRESSING.enabled && road >= 1.5 && road <= 3.6
+    ? .92 + .14 * Math.sin(px * 1.7 + pz * 2.3) * Math.cos(px * 2.9 - pz * 1.3) : 1;
+  target.setRGB(.76 - verge * .27, .74 - verge * .28, .68 - verge * .39).multiplyScalar(shade * grit);
+}
+
+// 1.1.0 dressing. Dead standing trees reuse the existing instanced trunk with the crowns collapsed,
+// so they cost no extra draw calls. Everything else is one merged mesh plus two instanced cover meshes.
+function addDecor(group, area) {
+  const d = area.decor, items = [];
+  for (const r of d.rocks) items.push({ kind: r.shape === 3 ? 'rockSplit' : 'rock', variant: r.shape, x: r.x, y: r.y, z: r.z,
+    yaw: r.turn, sx: r.sx * 1.5, sy: r.sy * 1.5, sz: r.sz * 1.5, shade: r.shade });
+  for (const p of d.pebbles) items.push({ kind: 'pebble', x: p.x, y: p.y, z: p.z, yaw: p.turn, sx: p.s * 2, sy: p.s * 2, sz: p.s * 2, shade: p.shade });
+  for (const l of d.logs) items.push(l.barrier
+    ? { kind: 'logBarrier', x: l.x, y: l.y, z: l.z, yaw: l.yaw, sx: l.len / 5, sy: l.r / .35, sz: l.r / .35, shade: l.shade }
+    : { kind: 'logDecor', x: l.x, y: l.y, z: l.z, yaw: l.yaw, sx: l.len, sy: l.r * 2, sz: l.r * 2, shade: l.shade });
+  for (const r of d.remains) items.push({ kind: r.kind, variant: r.variant, x: r.x, y: r.y, z: r.z, yaw: r.yaw, shade: r.shade });
+  for (const s of d.stains) items.push({ kind: 'stain', x: s.x, y: s.y, z: s.z, yaw: s.yaw, sx: s.s * 2, sz: s.s * 2 });
+  for (const v of d.vehicles) items.push({ kind: v.kind, variant: v.hue, x: v.x, y: v.y, z: v.z, yaw: v.yaw, shade: v.shade });
+  const geometry = bake(items);
+  if (geometry) {
+    const mesh = new THREE.Mesh(geometry, surfaces.remains);
+    mesh.receiveShadow = true;
+    mesh.userData.disposeGeometry = true;
+    group.add(mesh);
+  }
+  const grass = d.cover.filter(c => !c.shrub), shrubs = d.cover.filter(c => c.shrub);
+  const grassMesh = instance(group, grassGeometry, surfaces.fern, grass.length);
+  const shrubMesh = instance(group, shrubGeometry, surfaces.fern, shrubs.length);
+  const tint = new THREE.Color();
+  for (const [i, c] of grass.entries()) {
+    place(grassMesh, i, c.x, c.y, c.z, c.size * 1.6, c.size * 1.6, c.size * 1.6, c.turn, tint.setRGB(.42 + c.tone * .30, .46 + c.tone * .26, .22 + c.tone * .10));
+  }
+  for (const [i, c] of shrubs.entries()) {
+    place(shrubMesh, i, c.x, c.y, c.z, c.size, c.size, c.size, c.turn,
+      c.dead ? tint.setRGB(.30 + c.tone * .18, .24 + c.tone * .13, .15 + c.tone * .06) : tint.setRGB(.15, .25 + c.tone * .10, .14));
+  }
+  group.userData.cover = [grassMesh, shrubMesh].filter(Boolean);
 }
 
 function makeChunk(world, area, art, lanternGlow) {
@@ -242,12 +284,19 @@ function makeChunk(world, area, art, lanternGlow) {
         width*(t.type===1?1.14:.88),t.height*(t.type===1?.119:.158),width,theta,new THREE.Color(shade*.74,shade,shade*.78));
     }
   }
+  if (area.decor) for (const [i, t] of area.trees.entries()) {
+    if (!isSnag(area.key, i, hash)) continue;
+    for (let j = 0; j < 4; j++) place(canopy, i * 4 + j, t.x, t.y, t.z, 1e-4, 1e-4, 1e-4, 0);
+    for (let j = 0; j < 5; j++) place(crowns, i * 5 + j, t.x, t.y, t.z, 1e-4, 1e-4, 1e-4, 0);
+    place(trunks, i, t.x, t.y + t.height * .5, t.z, t.r * 2, t.height, t.r * 2, t.turn, new THREE.Color(.40, .38, .36));
+  }
   for (const [i, f] of area.plants.entries()) {
     const green = f.brush ? .58 + f.tint * .42 : .35 + f.tint * .42;
     const tint = new THREE.Color(green * (f.brush ? .55 : 1.12), green, green * .60);
     place(brush, i, f.x, f.y + .015, f.z, f.size * .94, f.size * (f.brush ? 1.16 : .95), f.size, f.turn, tint);
   }
 
+  if (area.decor) addDecor(group, area);
   const rocks = area.props.filter(p => p.kind === 'stone');
   const stone = instance(group, rockGeometry, surfaces.stone, rocks.length, true);
   for (const [i, o] of rocks.entries()) {
@@ -502,6 +551,18 @@ export function createPresentation(scene, art, layouts) {
   const moon = new THREE.DirectionalLight(0xb2c7df, .34);
   moon.position.copy(moonDirection).multiplyScalar(70); scene.add(moon);
   const canopyLighting = createCanopyLighting();
+  const life = createAmbientLife(scene);
+  // Shader pre-warm: every material & instancing variant the dressing adds is drawn once far below
+  // the world during menu, so the first carcass, vehicle, or instanced grass never stalls mid-run.
+  const warmGroup = new THREE.Group();
+  const warmRock = new THREE.Mesh(kit('rock', 0), surfaces.remains);
+  warmRock.position.y = -400; warmRock.frustumCulled = false;
+  const warmCover = instance(warmGroup, grassGeometry, surfaces.fern, 1);
+  place(warmCover, 0, 0, -400, 0, 1, 1, 1, 0, new THREE.Color(1, 1, 1));
+  warmCover.frustumCulled = false;
+  warmGroup.add(warmRock);
+  canopyLighting.shade(warmGroup);
+  scene.add(warmGroup);
   const sky = fogSky(scene);
   const radioModel = makeRadio();
   scene.add(radioModel);
@@ -617,6 +678,7 @@ export function createPresentation(scene, art, layouts) {
     carbine: { power: 286, size: 1.13, duration: .092 },
     flaregun: { power: 96, size: .73, duration: .070 },
   };
+  const presentationState = { buzz: null };
   let impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
   let artworkLit = null;
 
@@ -630,6 +692,7 @@ export function createPresentation(scene, art, layouts) {
     pickups.clear();
     for (const view of signals.values()) discardLoot(view);
     signals.clear();
+    warm.clear(); heading.x = heading.z = 0; lastPos.x = lastPos.z = NaN; pendingBuilds = false; anchorList = [];
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
     for (const flash of flashes) flash.shot = null;
     lastWatch = '';
@@ -643,24 +706,81 @@ export function createPresentation(scene, art, layouts) {
     group.removeFromParent();
   }
 
+  // 1.1.0 streaming. Chunks are built one per frame (never in a burst), the chunk ring is also
+  // built around where the player is heading so tiles arrive early and hidden in the fog, and the
+  // world data of the ring beyond is generated ahead of time one tile per pass.
+  const heading = { x: 0, z: 0 }, lastPos = { x: NaN, z: NaN }, warm = new Set();
+  const streaming = { builds: 0, lastMs: 0, maxMs: 0, decorTris: 0, decorColliders: 0 };
+  let pendingBuilds = false, anchorList = [];
+
+  function trackHeading(p, dt) {
+    if (Number.isFinite(lastPos.x) && dt > 0 && dt < .5) {
+      const k = Math.min(1, dt * 1.6);
+      heading.x += ((p.x - lastPos.x) / dt - heading.x) * k;
+      heading.z += ((p.z - lastPos.z) / dt - heading.z) * k;
+    }
+    lastPos.x = p.x; lastPos.z = p.z;
+  }
+
+  function applyCover(p) {
+    for (const [key, view] of chunks) {
+      const meshes = view.userData.cover;
+      if (!meshes) continue;
+      const [x, z] = key.split(',').map(Number);
+      const near = Math.hypot((x + .5) * CHUNK - p.x, (z + .5) * CHUNK - p.z) < 62;
+      for (const mesh of meshes) mesh.visible = quality >= 3 || (quality === 2 && near);
+    }
+  }
+
   function updateChunks(world, p) {
     const cx = Math.floor(p.x / CHUNK), cz = Math.floor(p.z / CHUNK);
     canopyLighting.update(world, cx, cz);
-    let changed = false;
-    for (const [key, view] of chunks) {
-      const [x, z] = key.split(',').map(Number);
-      if (Math.max(Math.abs(x - cx), Math.abs(z - cz)) > 1) {
-        discardChunk(view); chunks.delete(key); changed = true;
+    const speed = Math.hypot(heading.x, heading.z);
+    const ahead = quality >= 2 && speed > .5
+      ? [Math.floor((p.x + heading.x / speed * 22) / CHUNK), Math.floor((p.z + heading.z / speed * 22) / CHUNK)] : null;
+    const wanted = new Map();
+    for (const [ox, oz, priority] of [[cx, cz, 0], ...(ahead ? [[ahead[0], ahead[1], 1]] : [])]) {
+      for (let z = oz - 1; z <= oz + 1; z++) for (let x = ox - 1; x <= ox + 1; x++) {
+        const key = x + ',' + z;
+        if (!wanted.has(key)) wanted.set(key, { x, z, key, priority, d: Math.hypot((x + .5) * CHUNK - p.x, (z + .5) * CHUNK - p.z) });
       }
     }
-    for (let z = cz - 1; z <= cz + 1; z++) for (let x = cx - 1; x <= cx + 1; x++) {
-      const area = world.chunk(x, z);
-      if (chunks.has(area.key)) continue;
+    let changed = false;
+    for (const [key, view] of chunks) {
+      if (!wanted.has(key)) { discardChunk(view); chunks.delete(key); changed = true; }
+    }
+    const missing = [...wanted.values()].filter(w => !chunks.has(w.key)).sort((a, b) => a.priority - b.priority || a.d - b.d);
+    const incremental = chunks.size > 0, limit = incremental ? 1 : missing.length;
+    for (const w of missing.slice(0, limit)) {
+      const started = performance.now();
+      const area = world.chunk(w.x, w.z);
       const view = makeChunk(world, area, art, lanternGlow);
       canopyLighting.shade(view);
       view.userData.lights = area.lights;
+      view.userData.anchors = area.decor?.anchors.filter(a => a.kind !== 'vehicle') ?? []; // flies gather on remains only
       chunks.set(area.key, view); localForest.add(view);
       changed = true;
+      const ms = performance.now() - started;
+      streaming.builds++; streaming.lastMs = ms; if (incremental) streaming.maxMs = Math.max(streaming.maxMs, ms);
+      streaming.decorTris = area.decor?.triangles ?? 0; streaming.decorColliders = area.decor?.colliders ?? 0;
+    }
+    pendingBuilds = missing.length > limit;
+    if (!pendingBuilds) {
+      // Generate world data for the ring beyond, one tile per pass, nearest to the heading first.
+      for (const [ox, oz] of [[cx, cz], ...(ahead ? [ahead] : [])]) {
+        let done = false;
+        for (let z = oz - 2; z <= oz + 2 && !done; z++) for (let x = ox - 2; x <= ox + 2 && !done; x++) {
+          const key = x + ',' + z;
+          if (warm.has(key)) continue;
+          warm.add(key); world.chunk(x, z); done = true;
+        }
+        if (done) break;
+      }
+    }
+    if (changed) {
+      anchorList = [];
+      for (const view of chunks.values()) if (view.userData.anchors?.length) anchorList.push(...view.userData.anchors);
+      applyCover(p);
     }
     return changed;
   }
@@ -834,14 +954,15 @@ export function createPresentation(scene, art, layouts) {
       }
       const power = flare.landed ? signalFlarePower(run.time - flare.born) : .62;
       const softened = reducedFlashes ? power * .64 : power;
+      const distFade = clamp((68 - d) / 10, 0, 1);
       view.group.position.set(flare.x, flare.y, flare.z);
       view.icon.scale.setScalar(flare.landed ? .18 + power * .17 : .24);
-      view.halo.scale.setScalar(flare.landed ? .3 + power * 1.2 : .59);
-      view.icon.material.opacity = Math.sqrt(power);
-      view.halo.material.opacity = softened * .92;
+      view.halo.scale.setScalar(flare.landed ? .4 + power * 1.7 : .72);
+      view.icon.material.opacity = Math.sqrt(power) * distFade;
+      view.halo.material.opacity = softened * .92 * distFade;
       if (d < 52 && power > .005) lights.push({ item: flare, d,
-        color: 0xff561e, reach: 1.7 + softened * (flare.landed ? 7 : 3),
-        intensity: softened * (flare.landed ? 43 : 19), height: .06 });
+        color: 0xff561e, reach: 2.4 + softened * (flare.landed ? 9.8 : 4.2),
+        intensity: softened * (flare.landed ? 69 : 30), height: .06 });
     }
     for (const [id, view] of signals) if (!desired.has(id)) { discardLoot(view); signals.delete(id); }
     return lights;
@@ -884,15 +1005,16 @@ export function createPresentation(scene, art, layouts) {
         fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
         nearest.some(({ item: other, reach, height }) => other.id !== item.id &&
           distance(item, other) < reach && run.world.clear({ ...other, y: other.y + height }, spot));
-      const strength = Math.max(lit ? .80 : 0, power * .95, item.kind === 'flareAmmo' && d < 3.3 ? .35 : 0);
+      const distFade = clamp((34 - d) / 6, 0, 1);
+      const strength = Math.max(lit ? .80 : 0, power * .95, item.kind === 'flareAmmo' && d < 3.3 ? .35 : 0) * distFade;
       view.icon.visible = strength > .02;
       view.icon.material.opacity = strength;
       const scale = (supply ? .24 : .53) * (1 + power * .13);
       view.icon.scale.set(scale, scale, 1);
       view.icon.position.y = item.kind === 'flareAmmo' ? .55 : supply ? .30 : .51;
-      view.halo.visible = power > .005;
+      view.halo.visible = power * distFade > .005;
       view.halo.position.y = .37;
-      view.halo.material.opacity = power * .61;
+      view.halo.material.opacity = power * .61 * distFade;
       view.halo.scale.setScalar(.66 + power * .63);
     }
     for (const [id, view] of pickups) if (!desired.has(id)) { discardLoot(view); pickups.delete(id); }
@@ -1076,6 +1198,21 @@ export function createPresentation(scene, art, layouts) {
     marker.material.color.setHex(laserColors[hit.zone] ?? 0xf35347);
   }
 
+  // Fireflies appear only inside seeded pockets. Carcass flies show only where a beam or flare lights the remains.
+  function updateLife(run, p, fixtures, beams, reduced, menu) {
+    const litTest = a => {
+      const spot = v3(a.x, a.y, a.z);
+      return beams.some(b => coneReaches(run.world, b.origin, b.ray, spot, b.range, b.angle))
+        || fixtures.some(s => coneReaches(run.world, s, s.ray, spot, s.radius, s.angle))
+        || run.signalFlares.some(f => f.landed && distance(f, a) < 9);
+    };
+    const result = life.update(run.time, p, run.world.height(p.x, p.z), anchorList, litTest, { quality, reduced, menu });
+    const field = fireflyField(run.world.phase, p.x, p.z), lo = DRESSING.firefly.threshold - .03;
+    const t = clamp((field - lo) / .11, 0, 1);
+    life.setFirefly(menu || run.status !== 'playing' ? 0 : t * t * (3 - 2 * t) * (reduced ? .6 : 1));
+    presentationState.buzz = result.buzz;
+  }
+
   function update(run, dt, settings, tracking,
       { active, inspecting, stereo, calibration, menu, aimHit, aim, offhandAimHit, offhandAim, beam, offhandBeam, viewpoint, enemyAlpha }) {
     if (run !== currentRun) reset(run);
@@ -1088,10 +1225,12 @@ export function createPresentation(scene, art, layouts) {
       radioModel.rotation.y = radio.turn === 2 ? Math.PI : 0;
     }
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
-    const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
+    trackHeading(p, dt);
+    const terrainChanged = (!chunks.size || pendingBuilds || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
     updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha, frozen);
     updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean), settings.reducedFlashes);
+    updateLife(run, p, fixtures, [beam, offhandBeam].filter(Boolean), settings.reducedFlashes, menu);
     updateTools(run, dt, settings, tracking, active, inspecting, stereo, calibration, beam, offhandBeam);
     updateAimDot(dot, aimHit, viewpoint);
     updateAimDot(offhandDot, offhandAimHit, viewpoint);
@@ -1120,8 +1259,9 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
-  return { update, events, reset, pickupImage: kind => iconTextures[kind].image.toDataURL(), setQuality(value) {
+  return { update, events, reset, stats: streaming, state: presentationState, pickupImage: kind => iconTextures[kind].image.toDataURL(),   setQuality(value) {
     quality = value;
+    if (currentRun) applyCover(currentRun.player);
     const resolution = value > 1 ? 512 : 256;
     for (const [light, size] of [[lamp, resolution], [offhandLamp, resolution / 2]]) {
       if (light.shadow.mapSize.x === size) continue;

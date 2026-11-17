@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CHUNK, clamp } from './world.js';
+import { CHUNK, clamp, hash } from './world.js';
+import { isSnag } from './dressing.js';
 
 export const moonDirection = new THREE.Vector3(-.49, .24, -.63).normalize();
 const span = CHUNK * 3;
@@ -23,7 +24,9 @@ export function canopyMask(world, cx, cz, pixels) {
     }
   }
   for (let z = cz - 2; z <= cz + 2; z++) for (let x = cx - 2; x <= cx + 2; x++) {
-    for (const tree of world.chunk(x, z).trees) {
+    const area = world.chunk(x, z);
+    for (const [i, tree] of area.trees.entries()) {
+      if (area.decor && isSnag(area.key, i, hash)) continue; // dead trees cast no canopy shade
       const radius = tree.crown ?? 2.5 + tree.r * 2;
       imprint(tree.x, tree.z, radius, radius, 0, .87 + (tree.thick ?? .2)*.10);
       const projected = tree.height * .47 / moonDirection.y;

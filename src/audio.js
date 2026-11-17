@@ -39,7 +39,7 @@ function setPosition(node, position) {
 export function createAudio() {
   const buffers = new Map(), active = new Map();
   let context, master, ambience, threats, weapons, effects, listenerPosition;
-  let lastCreak = 0, volume = .76, paused = true, ducked = false;
+  let lastCreak = 0, lastCrow = 18, volume = .76, paused = true, ducked = false;
 
   async function unlock() {
     if (!context) {
@@ -128,6 +128,13 @@ export function createAudio() {
       * Math.min(1, t*110) * (.65 + .35 * Math.sin(2*Math.PI*59*t)**2));
     procedural('creak', .81, (t, n, low) => (Math.sin(2*Math.PI*(76 + 19*t)*t)*.23 + low*.77)
       * Math.sin(Math.PI*t/.81)**3 * (Math.sin(t*36)**2));
+    // Distant crow caw: nasal falling two-note call, low in frequency compared to zombie shrieks.
+    procedural('caw', .72, (t, n, low) => {
+      const pulse = (t < .26 ? Math.sin(Math.PI * t / .26) : t > .36 && t < .66 ? Math.sin(Math.PI * (t - .36) / .30) : 0) ** 1.3;
+      const f = 560 - 110 * t;
+      const harm = Math.sin(2 * Math.PI * f * t) * .45 + Math.sin(2 * Math.PI * f * 1.5 * t) * .25 + Math.sin(2 * Math.PI * f * 2 * t) * .15;
+      return (harm * .72 + low * .35 + n * .05) * pulse * .48;
+    });
     procedural('switch', .10, (t, n, low) => (n*.68 + low*.32) * Math.exp(-t*54) * Math.min(1,t*160));
     procedural('flare', .68, (t, n, low) => (n*.74 + low*.26) * .50 * Math.exp(-t*5)
       * Math.min(1,t*74) * (.52 + .48*Math.sin(170*t)**2));
@@ -270,6 +277,37 @@ export function createAudio() {
       play('creak', { bus: ambience, loc: { x:position.x+Math.cos(a)*d,y:position.y+.8,z:position.z+Math.sin(a)*d },
         gain: .21, speed: .72+Math.random()*.53 });
     }
+    if (!paused && !close && run.time > lastCrow) {
+      const a = Math.random() * Math.PI * 2, d = 16 + Math.random() * 10;
+      lastCrow = run.time + 28 + Math.random() * 27;
+      play('caw', { bus: ambience, loc: { x: position.x + Math.cos(a) * d, y: position.y + 7, z: position.z + Math.sin(a) * d },
+        gain: .16, speed: .9 + Math.random() * .2 });
+    }
+  }
+
+  // 1.1.0 carcass buzz: one looped, positional, quiet sound. A steady 182 Hz buzz with a fast
+  // flutter, unlike any zombie cue, audible only within about 9 m of remains that have flies.
+  let buzz;
+  function setBuzz(target) {
+    if (!context) return;
+    const now = context.currentTime;
+    if (!buzz) {
+      if (!target || paused) return;
+      const source = context.createBufferSource(), gain = context.createGain(), panner = context.createPanner();
+      source.buffer = procedural('buzz', 2, (t, n) => (Math.sin(2 * Math.PI * 182 * t) + .5 * Math.sin(2 * Math.PI * 364 * t))
+        * (.5 + .5 * Math.sin(2 * Math.PI * 23 * t)) ** 2 * .28 + n * .04);
+      source.loop = true;
+      panner.panningModel = 'HRTF'; panner.distanceModel = 'linear';
+      panner.refDistance = 1; panner.maxDistance = 10; panner.rolloffFactor = 1;
+      gain.gain.value = 0;
+      source.connect(gain).connect(panner).connect(ambience);
+      source.start();
+      buzz = { gain, panner };
+    }
+    if (!target || paused) { buzz.gain.gain.setTargetAtTime(0, now, .3); return; }
+    setPosition(buzz.panner, target);
+    const level = Math.max(0, Math.min(1, (9 - target.d) / 9));
+    buzz.gain.gain.setTargetAtTime(level * level * .24, now, .25);
   }
 
   function events(batch, run) {
@@ -299,8 +337,9 @@ export function createAudio() {
     }
   }
 
-  return { unlock, setPaused, setVolume, listener, events, reset() {
+  return { unlock, setPaused, setVolume, listener, events, setBuzz, reset() {
     lastCreak = 2.8;
+    lastCrow = 18 + Math.random() * 14;
     listenerPosition = undefined;
     for (const voice of active.values()) stopVoice(voice);
   } };
