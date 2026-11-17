@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addEnemy, createRun, ENEMIES, enemyPose, flarePower, GUNS, hordeTarget, inspectFlashlights, magazineCapacity,
-  setLoot, shoot, stepRun, STEP, traceAim, visibleTargets } from '../src/simulation.js';
+  setLoot, shoot, signalFlarePower, stepRun, STEP, traceAim, visibleTargets } from '../src/simulation.js';
 import { animatedAnchors } from '../src/enemy-motion.js';
 import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
 import { createWorld, distance, START } from '../src/world.js';
@@ -304,9 +304,7 @@ test('battery lasts 30 seconds, recharges in five, and gets a longer runtime fro
 
 test('weapon pickups require confirmation, and cycling retains each magazine in pickup order', () => {
   const run = room(), p = run.player;
-  stepRun(run, { cycleWeapon: true });
-  assert.deepEqual(p.magazines, { pistol: 6 });
-  assert.equal(p.cooldown, 0);
+  assert.deepEqual(p.magazines, { pistol: 6, flaregun: 1 });
   setLoot(run, 'shotgun', p.x, p.z);
   stepRun(run);
   assert.equal(p.weapon, 'pistol');
@@ -330,15 +328,15 @@ test('weapon pickups require confirmation, and cycling retains each magazine in 
   assert.equal(run.offer, null);
   assert.equal(p.weapon, 'carbine');
   assert.equal(run.metrics.pickups.shotgun, 1);
-  for (const [kind, rounds] of Object.entries({ pistol: 6, shotgun: 4, smg: 24, carbine: 16 })) {
+  for (const [kind, rounds] of Object.entries({ pistol: 6, flaregun: 1, shotgun: 4, smg: 24, carbine: 16 })) {
     const events = stepRun(run, { cycleWeapon: true, fire: true });
     assert.ok(events.some(event => event.type === 'weaponSwitch' && event.weapon === kind));
     assert.equal(p.weapon, kind);
     assert.equal(p.ammo, rounds);
     assert.equal(run.metrics.shots, 0);
   }
-  assert.equal(Object.values(p.magazines).reduce((total, shots) => total + shots, p.reserve), 56);
-  assert.deepEqual(room().player.magazines, { pistol: 6 });
+  assert.equal(p.magazines.pistol + p.magazines.shotgun + p.magazines.smg + p.magazines.carbine + p.reserve, 56);
+  assert.deepEqual(room().player.magazines, { pistol: 6, flaregun: 1 });
 });
 
 test('cycling out of a mid-reload weapon preserves both magazines and spares', () => {
@@ -351,10 +349,96 @@ test('cycling out of a mid-reload weapon preserves both magazines and spares', (
   advance(run, 3);
   assert.equal(p.weapon, 'pistol');
   assert.equal(p.reload, null);
-  assert.deepEqual(p.magazines, { pistol: 6, shotgun: 0 });
+  assert.deepEqual(p.magazines, { pistol: 6, flaregun: 1, shotgun: 0 });
   assert.equal(p.reserve, 50);
   stepRun(run, { cycleWeapon: true });
+  stepRun(run, { cycleWeapon: true });
   assert.equal(p.reload.left, GUNS.shotgun.reload);
+});
+
+test('the flare gun starts with 20 flares and reloads from its own scavengeable reserve', () => {
+  const run = room(), p = run.player;
+  assert.equal(p.magazines.flaregun + p.flares, 20);
+  assert.equal(room({ difficulty: 'hard' }).player.flares, 19);
+  const legendary = room({ legendary: true });
+  assert.equal(legendary.player.magazines.flaregun, undefined);
+  assert.equal(setLoot(legendary, 'flareAmmo', 0, 20), null);
+  stepRun(run, { cycleWeapon: true });
+  assert.equal(p.weapon, 'flaregun');
+  advance(run, .30);
+  stepRun(run, { fire: true });
+  assert.deepEqual([p.ammo, p.flares, p.reserve, p.magazines.pistol], [0, 19, 50, 6]);
+  assert.equal(p.reload.weapon, 'flaregun');
+  advance(run, GUNS.flaregun.reload);
+  assert.deepEqual([p.ammo, p.flares], [1, 18]);
+  assert.equal(run.metrics.shots, 0);
+  p.flares = 0;
+  stepRun(run, { fire: true });
+  assert.equal(p.ammo, 0);
+  assert.equal(p.reload, null);
+  setLoot(run, 'flareAmmo', p.x, p.z, undefined, 4);
+  assert.ok(!run.events.some(event => event.type === 'flare'));
+  assert.ok(stepRun(run).some(event => event.message === '+4 flares'));
+  advance(run, GUNS.flaregun.reload);
+  assert.deepEqual([p.ammo, p.flares, p.reserve], [1, 3, 50]);
+});
+
+test('a launched flare follows a ballistic path, attracts some zombies and burns out after ten seconds', () => {
+  const run = room(), p = run.player;
+  p.flashlight = false;
+  p.protection = 30;
+  run.world.raycast = (o, ray, range) => {
+    const t = -o.y / ray.y;
+    return ray.y < 0 && t >= 0 && t <= range ? { kind: 'earth', t } : null;
+  };
+  stepRun(run, { cycleWeapon: true });
+  advance(run, .30);
+  const aim = { origin: { x: p.x, y: 1.6, z: p.z }, ray: { x: 0, y: 0, z: -1 } };
+  const expected = traceAim(run, aim).point;
+  const close = addEnemy(run, 'shambler', p.x + 2.6, p.z);
+  close.stun = 30;
+  for (let i = 0; i < 10; i++) addEnemy(run, 'shambler', expected.x + i - 5, expected.z - 4);
+  stepRun(run, { fire: true, aim });
+  assert.equal(run.signalFlares.length, 1);
+  assert.equal(run.signalFlares[0].landed, false);
+  assert.ok(run.enemies.every(e => e.hp === ENEMIES[e.kind].hp));
+  advance(run, .9);
+  const flare = run.signalFlares[0];
+  assert.ok(flare.landed);
+  assert.ok(Math.abs(expected.z - flare.z) < .2);
+  assert.ok(distance(flare, p) > 8 && distance(flare, p) < 13);
+  assert.equal(signalFlarePower(run.time - flare.born), 1);
+  const diverted = run.enemies.filter(e => e.reason === 'signal flare');
+  assert.ok(diverted.length >= 2 && diverted.length <= 6);
+  assert.equal(close.target.id, 'player');
+  advance(run, 6);
+  assert.equal(run.status, 'playing');
+  assert.ok(signalFlarePower(run.time - flare.born) < .7);
+  advance(run, 4);
+  assert.equal(run.signalFlares.length, 0);
+  assert.ok(run.enemies.every(e => e.reason !== 'signal flare'));
+});
+
+test('solid cover intercepts the flare and hides it from zombies behind the wall', () => {
+  const run = room(), p = run.player;
+  p.flashlight = false;
+  const wall = p.z - 3;
+  run.world.raycast = (o, ray, range) => {
+    const t = (wall - o.z) / ray.z;
+    return t >= 0 && t <= range ? { kind: 'wall', t } : null;
+  };
+  run.world.clear = (a, b) => (a.z < wall) === (b.z < wall);
+  stepRun(run, { cycleWeapon: true });
+  advance(run, .30);
+  const zombie = addEnemy(run, 'shambler', p.x, wall - 2);
+  const visible = addEnemy(run, 'shambler', p.x + 4, wall + 1);
+  stepRun(run, { fire: true, aim: { origin: { x: p.x, y: 1.6, z: p.z }, ray: { x: 0, y: 0, z: -1 } } });
+  advance(run, .9);
+  assert.ok(run.signalFlares[0].landed);
+  assert.ok(run.signalFlares[0].z > wall);
+  assert.equal(run.signalFlares[0].y, .13);
+  assert.equal(visible.reason, 'signal flare');
+  assert.notEqual(zombie.reason, 'signal flare');
 });
 
 test('the last shot stays empty without spares and picking up ammo starts the reload', () => {

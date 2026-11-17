@@ -131,6 +131,9 @@ export function createAudio() {
     procedural('switch', .10, (t, n, low) => (n*.68 + low*.32) * Math.exp(-t*54) * Math.min(1,t*160));
     procedural('flare', .68, (t, n, low) => (n*.74 + low*.26) * .50 * Math.exp(-t*5)
       * Math.min(1,t*74) * (.52 + .48*Math.sin(170*t)**2));
+    procedural('flaregun', .42, (t, n, low) => (low * .53 + n * .13) * Math.exp(-t * 28) * Math.min(1, t * 900)
+      + (.14 * Math.sin(2 * Math.PI * (290 * t + 565 * t * t)) + .12 * n)
+        * Math.sin(Math.PI * t / .42) ** 2);
     procedural('swing', .23, (t, n, low) => (n*.4 + low*.6) * .56 * Math.sin(Math.PI*t/.23)**3);
     procedural('rasp', .88, (t, n, low) => {
       const voice = Math.sin(2 * Math.PI * (77*t + 1.2*Math.sin(8*t))) + .45 * Math.sin(2 * Math.PI * 221*t);
@@ -286,8 +289,8 @@ export function createAudio() {
         play('switch', { gain: e.type === 'dry' ? .36 : .23, speed: e.type === 'pickup' ? 1.57 : 1 });
       } else if (e.type === 'footstep') {
         play(e.road ? 'gravel' : 'brush', { gain: e.quiet ? .025 : .045, speed: .86 + Math.random() * .26 });
-      } else if (e.type === 'flare') {
-        play('flare', { gain: .39, loc: e });
+      } else if (e.type === 'flare' || e.type === 'signalFlare') {
+        play('flare', { gain: e.type === 'signalFlare' ? .63 : .39, loc: e });
       } else if (e.type === 'death' || e.type === 'armorHit') {
         play('armor', { gain: .61, speed: e.type === 'death' ? .62 : .91 });
       } else if (e.type === 'swing') {

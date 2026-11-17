@@ -10,6 +10,7 @@ const recoilTuning = {
   shotgun: { pitch: 11.5, yaw: .85, travel: .062, recovery: .15 },
   smg: { pitch: 3.2, yaw: .36, travel: .014, recovery: .145 },
   carbine: { pitch: 6.3, yaw: .50, travel: .036, recovery: .105 },
+  flaregun: { pitch: 3.4, yaw: .38, travel: .015, recovery: .10 },
 };
 
 export const gunAngle = value => Math.max(-25, Math.min(25, Math.round(Number.isFinite(value) ? value : 0)));

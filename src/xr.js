@@ -225,7 +225,8 @@ export function createXR(renderer, scene, rig) {
   function haptic(kind, settings, braced = false, offhand = false) {
     const leftHand = settings.leftHanded !== offhand;
     const s = sources[leftHand ? 'left' : 'right'];
-    const strengths = { shotgun: [.79, 52], smg: [.37, 22], armor: [.89, 125], carbine: [.64, 40], pistol: [.51, 32] };
+    const strengths = { shotgun: [.79, 52], smg: [.37, 22], armor: [.89, 125],
+      carbine: [.64, 40], pistol: [.51, 32], flaregun: [.36, 38] };
     const [strength, duration] = strengths[kind];
     const pulse = (source, force) => source?.gamepad?.hapticActuators?.[0]?.pulse?.(force, duration)?.catch?.(() => {});
     pulse(s, strength);

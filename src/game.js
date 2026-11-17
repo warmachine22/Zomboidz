@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, LOOT,
-  resolvePlayerBeam, setLoot, STEP, stepRun, traceAim } from './simulation.js';
+import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, isSupply, LOOT,
+  resolvePlayerBeam, setLoot, signalFlarePower, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { clamp } from './world.js';
 import { createAudio } from './audio.js';
@@ -576,7 +576,7 @@ function updateHUD(force = false) {
   text('weapon-name', p.offhand ? 'DUAL SERVICE PISTOLS' : GUNS[p.weapon].name.toUpperCase());
   const rounds = count => String(count).padStart(2, '0');
   $('rounds').firstChild.textContent = rounds(p.ammo) + (p.offhand ? ' + ' + rounds(p.offhand.ammo) : '') + ' ';
-  $('rounds').lastChild.textContent = '/ ' + p.reserve;
+  $('rounds').lastChild.textContent = '/ ' + p.equippedReserve;
   const light = p.offhand ? legendaryBeamLabel(p, settings.leftHanded) + ' · ∞'
     : (p.flashlight ? p.beam.toUpperCase() : 'RECHARGING') + ' · ' + display + '%';
   text('light-text', light);
@@ -634,7 +634,7 @@ function xrUI(sample, trackedView) {
           'Weapon grip picks up armor. Ammo collects automatically.',
         ] : ['Search sheds for a radio and call for extraction.',
           DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
-          'A reloads. B cycles weapons. Y pauses.',
+          'A reloads. B cycles weapons and flare gun. Y pauses.',
           'Weapon grip uses the radio. Light trigger toggles light.'],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
         second: 'A  ·  GUN ANGLE',
@@ -813,7 +813,9 @@ if (debugEnabled) {
   window.render_game_to_text = () => JSON.stringify({
     phase, seed: run.seed, difficulty:run.difficulty, elapsed: Number(run.time.toFixed(2)), player: run.player,
     enemies: run.enemies.map(({ id, kind, appearance, x, z, reason, route }) => ({ id, kind, appearance, x, z, reason, route })),
-    loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.kind === 'ammo' ? 0 : flarePower(run.time - l.born) })),
+    loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: isSupply(l.kind) ? 0 : flarePower(run.time - l.born) })),
+    signalFlares: run.signalFlares.map(({ id, x, y, z, landed, born }) =>
+      ({ id, x, y, z, landed, power: landed ? signalFlarePower(run.time - born) : null })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,
     laser: aimHit ? { zone:aimHit.zone, point:aimHit.point } : null,
     offhandLaser: offhandAimHit ? { zone:offhandAimHit.zone, point:offhandAimHit.point } : null,

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CHUNK, clamp, distance, random } from './world.js';
-import { ENEMIES, flarePower, GUNS, LOOT, STEP } from './simulation.js';
+import { ENEMIES, flarePower, GUNS, isSupply, LOOT, signalFlarePower, STEP } from './simulation.js';
 import { legendaryBeamLabel, reloadMount } from './held-tools.js';
 import { burstPhase, interpolateEnemyTransform, legacyEnemyMotion, solvedEnemyPose } from './enemy-motion.js';
 import { beamTexture, createCanopyLighting, moonDirection } from './night-lighting.js';
@@ -586,7 +586,7 @@ export function createPresentation(scene, art, layouts) {
   const iconTextures = Object.fromEntries(Object.keys(LOOT).map(kind => [kind, lootIcon(kind)]));
   const flares = Array.from({ length: 3 }, () => new THREE.PointLight(0xffa661, 0, 5.9, 1.65));
   scene.add(...flares);
-  const chunks = new Map(), enemyMeshes = new Map(), pickups = new Map();
+  const chunks = new Map(), enemyMeshes = new Map(), pickups = new Map(), signals = new Map();
   const pool = Object.fromEntries(enemyModels.map(name => [name, []]));
   const effects = [];
   const effectGeometry = new THREE.TetrahedronGeometry(.038);
@@ -600,6 +600,7 @@ export function createPresentation(scene, art, layouts) {
     shotgun: { power: 350, size: 1.35, duration: .100 },
     smg: { power: 112, size: .72, duration: .070 },
     carbine: { power: 286, size: 1.13, duration: .092 },
+    flaregun: { power: 96, size: .73, duration: .070 },
   };
   let pumpElapsed = Infinity, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
   let artworkLit = null;
@@ -612,6 +613,8 @@ export function createPresentation(scene, art, layouts) {
     enemyMeshes.clear();
     for (const view of pickups.values()) discardLoot(view);
     pickups.clear();
+    for (const view of signals.values()) discardLoot(view);
+    signals.clear();
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
     for (const flash of flashes) flash.shot = null;
     pumpElapsed = Infinity;
@@ -794,13 +797,54 @@ export function createPresentation(scene, art, layouts) {
     return world.clear(from,target);
   }
 
-  function updateLoot(run, fixtures, beams) {
+  function updateSignals(run, reducedFlashes) {
+    const desired = new Set();
+    const lights = [];
+    for (const flare of run.signalFlares) {
+      const d = distance(flare, run.player);
+      if (d > 68) continue;
+      desired.add(flare.id);
+      let view = signals.get(flare.id);
+      if (!view) {
+        const group = new THREE.Group();
+        const icon = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: glow, color: 0xffe5b1, transparent: true, depthWrite: false, toneMapped: false,
+        }));
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: glow, color: 0xff4a16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        group.add(halo, icon);
+        scene.add(group);
+        view = { group, halo, icon };
+        signals.set(flare.id, view);
+      }
+      const power = flare.landed ? signalFlarePower(run.time - flare.born) : .62;
+      const softened = reducedFlashes ? power * .64 : power;
+      view.group.position.set(flare.x, flare.y, flare.z);
+      view.icon.scale.setScalar(flare.landed ? .18 + power * .17 : .24);
+      view.halo.scale.setScalar(flare.landed ? .3 + power * 1.2 : .59);
+      view.icon.material.opacity = Math.sqrt(power);
+      view.halo.material.opacity = softened * .92;
+      if (d < 52 && power > .005) lights.push({ item: flare, d,
+        color: 0xff561e, reach: 1.7 + softened * (flare.landed ? 7 : 3),
+        intensity: softened * (flare.landed ? 43 : 19), height: .06 });
+    }
+    for (const [id, view] of signals) if (!desired.has(id)) { discardLoot(view); signals.delete(id); }
+    return lights;
+  }
+
+  function updateLoot(run, fixtures, beams, reducedFlashes) {
     const desired = new Set();
     const p = run.player;
-    const nearest = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && distance(item,p) < 34)
-      .map(item => ({item, d:distance(item,p), power:flarePower(run.time-item.born)}))
-      .filter(item => item.power > .005)
-      .sort((a,b) => a.d - b.d);
+    const lights = updateSignals(run, reducedFlashes);
+    for (const item of run.loot) {
+      const d = distance(item,p);
+      if (item.lost || d >= 34 || isSupply(item.kind)) continue;
+      const power = flarePower(run.time - item.born);
+      if (power > .005) lights.push({ item, d, color: LOOT[item.kind].color,
+        reach: 2.3 + power * 3.1, intensity: 13.5 * power, height: .32 });
+    }
+    const nearest = lights.sort((a, b) => (a.d + 4) / Math.sqrt(a.intensity) - (b.d + 4) / Math.sqrt(b.intensity)).slice(0, quality);
     for (const item of run.loot) {
       const d = distance(item, p);
       if (item.lost || d > 34) continue;
@@ -819,18 +863,19 @@ export function createPresentation(scene, art, layouts) {
         group.position.set(item.x, item.y, item.z);
         view = { group, icon, halo }; pickups.set(item.id, view);
       }
-      const power = item.kind === 'ammo' ? 0 : flarePower(run.time - item.born);
+      const supply = isSupply(item.kind);
+      const power = supply ? 0 : flarePower(run.time - item.born);
       const spot = v3(item.x, item.y + .45, item.z);
       const lit = beams.some(beam => coneReaches(run.world, beam.origin, beam.ray, spot, beam.range, beam.angle)) ||
         fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
-        nearest.slice(0,quality).some(({item:other,power}) => other.id !== item.id &&
-          distance(item,other) < 2.3+power*3.1 && run.world.clear({ ...other,y:other.y+.33 },spot));
-      const strength = Math.max(lit ? .80 : 0, power * .95);
+        nearest.some(({ item: other, reach, height }) => other.id !== item.id &&
+          distance(item, other) < reach && run.world.clear({ ...other, y: other.y + height }, spot));
+      const strength = Math.max(lit ? .80 : 0, power * .95, item.kind === 'flareAmmo' && d < 3.3 ? .35 : 0);
       view.icon.visible = strength > .02;
       view.icon.material.opacity = strength;
-      const scale = (item.kind === 'ammo' ? .24 : .53) * (1 + power * .13);
+      const scale = (supply ? .24 : .53) * (1 + power * .13);
       view.icon.scale.set(scale, scale, 1);
-      view.icon.position.y = .30 + (item.kind !== 'ammo' ? .21 : 0);
+      view.icon.position.y = item.kind === 'flareAmmo' ? .55 : supply ? .30 : .51;
       view.halo.visible = power > .005;
       view.halo.position.y = .37;
       view.halo.material.opacity = power * .61;
@@ -839,12 +884,12 @@ export function createPresentation(scene, art, layouts) {
     for (const [id, view] of pickups) if (!desired.has(id)) { discardLoot(view); pickups.delete(id); }
     for (const [i, light] of flares.entries()) {
       const near = nearest[i];
-      light.intensity = near && i < quality ? 13.5 * near.power : 0;
+      light.intensity = near?.intensity ?? 0;
       if (light.intensity) {
         const { item } = near;
-        light.position.set(item.x, item.y + .32, item.z);
-        light.color.set(LOOT[item.kind].color);
-        light.distance = 2.3 + near.power * 3.1;
+        light.position.set(item.x, item.y + near.height, item.z);
+        light.color.set(near.color);
+        light.distance = near.reach;
       }
     }
   }
@@ -870,7 +915,7 @@ export function createPresentation(scene, art, layouts) {
       if (event.type === 'shot') {
         flashes[Number(Boolean(event.offhand))].shot = { ...event, elapsed: 0, fresh: true };
         if (event.weapon === 'shotgun') pumpElapsed = 0;
-        if (quality > 1) debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
+        if (quality > 1 && event.weapon !== 'flaregun') debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
       if (event.type === 'impact') debris(event);
     }
@@ -879,7 +924,7 @@ export function createPresentation(scene, art, layouts) {
   function updateWatch(run, leftHanded) {
     const p = run.player;
     const reloading = p.reload || p.offhand?.reload;
-    const parts = [p.ammo, p.offhand?.ammo, p.reserve, Math.ceil(p.battery * 10), p.armor,
+    const parts = [p.weapon, p.ammo, p.offhand?.ammo, p.equippedReserve, Math.ceil(p.battery * 10), p.armor,
       p.flashlight, p.beam, p.offhand?.beam, leftHanded, Boolean(reloading)];
     const key = parts.join(':');
     if (key === lastWatch) return;
@@ -887,9 +932,10 @@ export function createPresentation(scene, art, layouts) {
     const g = watch.ctx;
     g.fillStyle = '#121918'; g.fillRect(0, 0, 256, 156);
     g.strokeStyle = '#566c5c'; g.strokeRect(3, 3, 250, 150);
-    g.fillStyle = '#94a898'; g.font = '19px monospace'; g.fillText(reloading ? 'RELOADING' : 'ROUNDS', 16, 27);
+    g.fillStyle = '#94a898'; g.font = '19px monospace';
+    g.fillText(reloading ? 'RELOADING' : p.weapon === 'flaregun' ? 'FLARES' : 'ROUNDS', 16, 27);
     g.fillStyle = '#eeead8'; g.font = p.offhand ? 'bold 28px monospace' : 'bold 39px monospace';
-    g.fillText(p.ammo + (p.offhand ? '+' + p.offhand.ammo : '') + '/' + p.reserve, 15, 72);
+    g.fillText(p.ammo + (p.offhand ? '+' + p.offhand.ammo : '') + '/' + p.equippedReserve, 15, 72);
     g.font = '16px monospace'; g.fillStyle = '#9bb6a6';
     const light = p.offhand ? legendaryBeamLabel(p, leftHanded) + ' · ∞'
       : (p.flashlight ? p.beam.toUpperCase() : 'CHARGE') + '  ' + Math.ceil(p.battery * 100) + '%';
@@ -948,6 +994,8 @@ export function createPresentation(scene, art, layouts) {
       const cycling = calibration ? 0 : clamp((pumpElapsed - .19) / .34, 0, 1);
       pump.position.z = Math.sin(cycling * Math.PI) * .081 + dip * .046;
     }
+    const breech = gun.getObjectByName('Breech');
+    if (breech) breech.rotation.x = -1.03 * dip;
     const second = reloadMount(p.offhand?.reload, !left);
     offhandMount.rotation.set(second.pitch, 0, second.roll);
     offhandMount.position.y = second.y;
@@ -1033,7 +1081,7 @@ export function createPresentation(scene, art, layouts) {
     const terrainChanged = (!chunks.size || tick % 12 === 0) && updateChunks(run.world, p);
     const fixtures = updateFixtures(p, terrainChanged);
     updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha, frozen);
-    updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean));
+    updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean), settings.reducedFlashes);
     updateTools(run, dt, settings, tracking, active, inspecting, stereo, calibration, beam, offhandBeam);
     updateAimDot(dot, aimHit, viewpoint);
     updateAimDot(offhandDot, offhandAimHit, viewpoint);

@@ -7,12 +7,13 @@ import { ambushDecision, reserveAmbush } from './ambush.js';
 import { reachableRadio, visitBuildings } from './extraction.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.13';
+export const BUILD = '1.0.14';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
   smg: { name: 'Compact SMG', capacities: [24, 28, 32, 36], reload: 1.8, interval: .102, range: 49, damage: .93, noise: 48, rounds: 1, spread: .02 },
   carbine: { name: 'Ranger carbine', capacities: [16, 20, 24, 28], reload: 2, interval: .24, range: 75, damage: 1.49, noise: 53, rounds: 1, spread: 0 },
+  flaregun: { name: 'Flare gun', capacities: [1, 1, 1, 1], reload: 1.35, interval: .42 },
 };
 export const ENEMIES = {
   shambler: { speed: .985, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
@@ -30,6 +31,7 @@ export const UPGRADES = {
 export const LOOT = {
   ...UPGRADES,
   ammo: { name: 'Spare rounds', icon: '⋮', color: '#bac5b8' },
+  flareAmmo: { name: 'Spare flares', icon: '⁝', color: '#ff9664' },
   pistol: { name: 'Service pistol', icon: 'pistol', color: '#f0cc91' },
   shotgun: { name: 'Pump shotgun', icon: 'shotgun', color: '#ffd299' },
   smg: { name: 'Compact SMG', icon: 'smg', color: '#ebbc91' },
@@ -41,6 +43,11 @@ export const LOOT = {
 const POINT = { x: 0, y: 0, z: -1 };
 const ARMS = .29;
 const RESERVE_MAX = 125;
+const FLARE_RESERVE_MAX = 49;
+const FLARE_BURN = 10;
+const FLARE_FLIGHT = 2.5;
+const FLARE_SPEED = 23;
+const FLARE_GRAVITY = 18;
 const MAX_LOOSE_LOOT = 72;
 const LEGENDARY_CAPACITY = GUNS.pistol.capacities.at(-1);
 const beamCycle = { wide: 'focus', focus: 'off', off: 'wide' };
@@ -54,6 +61,19 @@ export function flarePower(age) {
   if (age <= 5) return 1;
   const fade = clamp((25 - age) / 20, 0, 1);
   return fade * fade * (3 - 2 * fade);
+}
+
+export function isSupply(kind) {
+  return kind === 'ammo' || kind === 'flareAmmo';
+}
+
+export function signalFlarePower(age) {
+  const fade = clamp((FLARE_BURN - age) / (FLARE_BURN - 1.5), 0, 1);
+  return fade * fade * (3 - 2 * fade);
+}
+
+function isFlareTarget(reason) {
+  return reason === 'loot flare' || reason === 'signal flare';
 }
 
 export function hordeTarget(time, difficulty = 'standard') {
@@ -183,6 +203,11 @@ function traceRay(world, origin, ray, range, targets) {
 export function traceAim(run, aim) {
   if (!aim?.origin || !aim?.ray) return null;
   const blocked = muzzleCover(run.world, aim);
+  if (run.player.weapon === 'flaregun') {
+    const flare = createSignalFlare(aim, blocked);
+    while (flare.age < FLARE_FLIGHT && !flare.landed) advanceFlare(run.world, flare, .12);
+    return flare.landed ? { zone: 'cover', point: flare } : null;
+  }
   if (blocked) return blocked;
   const { range } = GUNS[run.player.weapon], ray = norm(aim.ray);
   const { hits, cover } = traceRay(run.world, aim.origin, ray, range, prepareTargets(run, aim.origin, ray, range));
@@ -199,14 +224,16 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
   const run = {
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit, legendary,
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
-      weapon: 'pistol', magazines: { pistol: legendary ? LEGENDARY_CAPACITY : GUNS.pistol.capacities[0] },
+      weapon: 'pistol', magazines: legendary ? { pistol: LEGENDARY_CAPACITY } : { pistol: GUNS.pistol.capacities[0], flaregun: 1 },
       offhand: legendary ? { ammo: LEGENDARY_CAPACITY, reload: null, cooldown: 0, beam: 'wide' } : null,
       get ammo() { return this.magazines[this.weapon]; },
       set ammo(rounds) { this.magazines[this.weapon] = rounds; },
+      get equippedReserve() { return this.weapon === 'flaregun' ? this.flares : this.reserve; },
+      flares: legendary ? 0 : 19,
       reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
       flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
       travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
-    enemies: [], loot: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
+    enemies: [], loot: [], signalFlares: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
     search: { visits: new Map(), sheds: 0, radio: null },
     nextId: 1, nextSpawn: 2, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, lastBuildingCheck: -Infinity, dryKills: 0,
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
@@ -253,7 +280,7 @@ export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0
   const y = run.world.height(x, z);
   const loot = { id, kind, x, z, y, born: run.time, amount, landmark: !id.startsWith('drop:') };
   run.loot.push(loot);
-  if (kind !== 'ammo') emit(run, 'flare', { x, y: y + .4, z, kind });
+  if (!isSupply(kind)) emit(run, 'flare', { x, y: y + .4, z, kind });
   return loot;
 }
 
@@ -264,6 +291,10 @@ function updateLandmarks(run) {
     for (const site of area.loot) {
       if (run.time >= site.unlock && distance(p, site) < 35 && !known.has(site.id))
         setLoot(run, site.kind, site.x, site.z, site.id, site.kind === 'ammo' ? 16 : 0);
+      if (run.legendary || site.kind !== 'ammo' || run.time < site.unlock || distance(p, site) >= 35) continue;
+      const id = site.id + ':flares';
+      if (!known.has(id) && !run.settledLoot.has(id) && random(run.seed + ':' + id)() < .36)
+        setLoot(run, 'flareAmmo', site.x, site.z, id, 4);
     }
   }
   run.loot = run.loot.filter(item => !item.lost);
@@ -316,6 +347,47 @@ function eliminate(run, e, headshot) {
     eligible.push(run.time < 110 ? 'armor1' : run.time < 260 ? 'armor2' : 'armor3');
     setLoot(run, eligible[Math.floor(run.rng() * eligible.length)], e.x, e.z);
   }
+  if (!run.legendary && p.kills % 8 === 0) setLoot(run, 'flareAmmo', e.x, e.z, undefined, 3);
+}
+
+function createSignalFlare(aim, blocked) {
+  const ray = norm(aim.ray);
+  const point = blocked ? rayPoint(blocked.point, blocked.ray, -.045) : aim.origin;
+  return { ...point, age: 0, landed: false, vx: blocked ? 0 : ray.x * FLARE_SPEED,
+    vy: blocked ? 0 : ray.y * FLARE_SPEED, vz: blocked ? 0 : ray.z * FLARE_SPEED };
+}
+
+function advanceFlare(world, flare, dt) {
+  const remaining = Math.min(dt, FLARE_FLIGHT - flare.age);
+  const dx = flare.vx * remaining, dz = flare.vz * remaining;
+  const dy = (flare.vy - .5 * FLARE_GRAVITY * remaining) * remaining;
+  const length = Math.hypot(dx, dy, dz);
+  const ray = length ? { x: dx / length, y: dy / length, z: dz / length } : POINT;
+  const hit = length ? world.raycast(flare, ray, length) : null;
+  flare.age += remaining;
+  flare.vy -= FLARE_GRAVITY * remaining;
+  const point = rayPoint(flare, ray, hit ? Math.max(0, hit.t - .04) : length);
+  if (hit || flare.age >= FLARE_FLIGHT) {
+    flare.landed = true;
+    const ground = world.height(point.x, point.z);
+    const below = hit?.kind !== 'earth' && point.y > ground + .13
+      ? world.raycast(point, { x: 0, y: -1, z: 0 }, point.y - ground)
+      : null;
+    point.y = (below && below.kind !== 'earth' ? point.y - below.t : ground) + .13;
+  }
+  Object.assign(flare, point);
+}
+
+function updateSignalFlares(run, dt) {
+  run.signalFlares = run.signalFlares.filter(flare => run.time - flare.born < FLARE_BURN);
+  for (const flare of run.signalFlares) {
+    if (flare.landed) continue;
+    advanceFlare(run.world, flare, dt);
+    if (!flare.landed) continue;
+    flare.born = run.time;
+    run.nextSwarmTick = Math.min(run.nextSwarmTick, run.time);
+    emit(run, 'signalFlare', { x: flare.x, y: flare.y, z: flare.z });
+  }
 }
 
 export function shoot(run, aim, offhand = false) {
@@ -326,16 +398,23 @@ export function shoot(run, aim, offhand = false) {
     if (startReload(run, offhand)) return;
     run.metrics.dryFire++;
     state.cooldown = .32;
-    emit(run, 'dry', { reason: 'No spare rounds' });
+    emit(run, 'dry', { reason: p.weapon === 'flaregun' ? 'No spare flares' : 'No spare rounds' });
     return;
   }
   const o = aim.origin, center = norm(aim.ray);
   const blocked = muzzleCover(world, aim);
   state.ammo--;
   state.cooldown = gun.interval;
+  const flashOrigin = blocked ? rayPoint(blocked.point, blocked.ray, -.045) : o;
+  if (p.weapon === 'flaregun') {
+    run.signalFlares.push({ ...createSignalFlare(aim, blocked), id: 'signal:' + run.nextId++, born: run.time });
+    noise(run, 'flare launch', flashOrigin, 8, .8);
+    emit(run, 'shot', { ...flashOrigin, ray: center, weapon: p.weapon, blocked: Boolean(blocked), offhand });
+    startReload(run);
+    return;
+  }
   p.noisePeak = run.time + .28;
   run.metrics.shots++;
-  const flashOrigin = blocked ? rayPoint(blocked.point, blocked.ray, -.045) : o;
   noise(run, 'gunshot', flashOrigin, gun.noise, 2.8);
   emit(run, 'shot', { ...flashOrigin, ray: center, weapon: p.weapon, blocked: Boolean(blocked), offhand });
   if (!state.ammo) startReload(run, offhand);
@@ -383,7 +462,7 @@ export function shoot(run, aim, offhand = false) {
 export function startReload(run, offhand = false) {
   const p = run.player, gun = GUNS[p.weapon];
   const state = offhand ? p.offhand : p;
-  if (!state || state.reload || !p.reserve || state.ammo >= magazineCapacity(p) || run.status !== 'playing') return false;
+  if (!state || state.reload || !p.equippedReserve || state.ammo >= magazineCapacity(p) || run.status !== 'playing') return false;
   const duration = gun.reload * .85 ** p.upgrades.reload;
   state.reload = { duration, left: duration, weapon: p.weapon };
   emit(run, 'reload', { weapon: p.weapon, offhand });
@@ -409,11 +488,17 @@ function takeLoot(run, confirm) {
       p.reserve += got;
       run.metrics.roundsPicked += got;
       take(run, l, '+' + got + ' rounds');
+    } else if (k === 'flareAmmo') {
+      const got = Math.max(0, Math.min(FLARE_RESERVE_MAX - p.flares, l.amount || 3));
+      if (!got) continue;
+      p.flares += got;
+      take(run, l, '+' + got + ' flares');
     } else if (k in UPGRADES && p.upgrades[k] < UPGRADES[k].cap) {
       p.upgrades[k]++;
       run.metrics.upgrades++;
       const effect = k === 'capacity'
-        ? magazineCapacity(p) + (p.weapon === 'shotgun' ? ' shells' : ' rounds')
+        ? p.weapon === 'flaregun' ? 'Firearm magazines expanded'
+          : magazineCapacity(p) + (p.weapon === 'shotgun' ? ' shells' : ' rounds')
         : UPGRADES[k].description;
       take(run, l, LOOT[k].name + ' · ' + effect);
     }
@@ -452,23 +537,30 @@ function take(run, loot, message) {
 function flareAssignments(run) {
   const { world, player: p } = run;
   const next = new Map();
-  const budget = Math.max(1, Math.round(run.enemies.length * .27));
-  const candidates = run.loot.filter(item => !item.lost && item.kind !== 'ammo' && run.time - item.born < 25);
-  candidates.sort((a, b) => b.born - a.born || distance(a, p) - distance(b, p));
-  for (const loot of candidates) {
+  const lootBudget = Math.max(1, Math.round(run.enemies.length * .27));
+  const signalBudget = Math.max(1, Math.round(run.enemies.length * .52));
+  const signals = run.signalFlares.filter(flare => flare.landed).sort((a, b) => b.born - a.born);
+  const loot = run.loot.filter(item => !item.lost && !isSupply(item.kind) && run.time - item.born < 25);
+  loot.sort((a, b) => b.born - a.born || distance(a, p) - distance(b, p));
+  for (const item of [...signals, ...loot]) {
+    const signal = item.landed === true;
+    const budget = signal ? signalBudget : lootBudget;
     if (next.size >= budget) break;
-    if (loot.lost || loot.kind === 'ammo' || distance(loot, p) > 47) continue;
-    const power = flarePower(run.time - loot.born);
+    if (distance(item, p) > (signal ? 66 : 47)) continue;
+    const age = run.time - item.born;
+    const power = signal ? signalFlarePower(age) : flarePower(age);
     if (power < .04) continue;
-    const range = 17 * Math.sqrt(power);
-    const nearby = run.enemies.filter(e => !e.dead && distance(e, loot) < range && distance(p, e) > 3.1);
-    const lit = { ...loot, y: loot.y + .48 };
-    const limit = Math.min(3, budget - next.size, Math.round(nearby.length * .25 * Math.sqrt(power)));
+    const range = (signal ? 25 : 17) * Math.sqrt(power);
+    const nearby = run.enemies.filter(e => !e.dead && distance(e, item) < range && distance(p, e) > 3.1);
+    const lit = { ...item, y: item.y + (signal ? .10 : .48) };
+    const interested = (signal ? .58 : .25) * Math.sqrt(power);
+    const limit = Math.min(signal ? 7 : 3, budget - next.size, Math.round(nearby.length * interested));
     if (!limit) continue;
     const choices = nearby.filter(e => !next.has(e.id) && world.clear(eye(world, e), lit))
-      .sort((a, b) => distance(a, loot) - distance(b, loot) + (a.target?.id === loot.id ? -2.2 : 0)
-        + (b.target?.id === loot.id ? 2.2 : 0));
-    for (const e of choices.slice(0, limit)) next.set(e.id, { ...loot, power, range });
+      .sort((a, b) => distance(a, item) - distance(b, item) + (a.target?.id === item.id ? -2.2 : 0)
+        + (b.target?.id === item.id ? 2.2 : 0));
+    for (const e of choices.slice(0, limit)) next.set(e.id, { ...item, power, range,
+      reason: signal ? 'signal flare' : 'loot flare' });
   }
   run.guards = next;
 }
@@ -503,8 +595,9 @@ function perception(run, e, gap, lamps) {
   }
   const guard = run.guards?.get(e.id);
   if (guard) {
-    offer(get(guard.x, guard.z, (1.0 - .39 * distance(e, guard) / guard.range) * guard.power,
-      'loot flare', guard.id, false));
+    const strength = guard.reason === 'signal flare' ? 1.5 : 1;
+    offer(get(guard.x, guard.z, (strength - .39 * distance(e, guard) / guard.range) * guard.power,
+      guard.reason, guard.id, false));
   }
   if (best?.chase) e.memory = { ...best, until: time + (best.reason === 'gunshot' ? 11 : 7) };
   if (!best && e.approach?.role === 'cutoff' && e.approach.at <= time && e.approach.until > time && distance(e,e.approach) > 1)
@@ -514,11 +607,11 @@ function perception(run, e, gap, lamps) {
   if (!best && e.approach?.at <= time && e.approach.until > time && distance(e, e.approach) > 1)
     best = get(e.approach.x, e.approach.z, .12, 'approaching', 'approach', false);
   if (best && e.target && e.target.id !== best.id && e.swapAfter > time &&
-    best.score < 1.2 && (e.target.reason !== 'loot flare' || guard?.id === e.target.id))
+    best.score < 1.2 && (!isFlareTarget(e.target.reason) || guard?.id === e.target.id))
     best = e.target;
   if (best?.id !== e.target?.id) e.swapAfter = time + .68;
   const nextReason = best?.reason || 'roaming';
-  if (nextReason === 'loot flare' && e.reason !== nextReason) run.metrics.guarded++;
+  if (isFlareTarget(nextReason) && e.reason !== nextReason) run.metrics.guarded++;
   if (nextReason !== e.reason) e.changedAt = time;
   e.reason = nextReason;
   e.target = best;
@@ -704,7 +797,7 @@ function updateEnemies(run, dt, lamps) {
       e.nextThink = time + (gap < 24 ? .20 : .48) + run.rng() * .08;
     }
     if (e.target?.chase) pursuing++;
-    if (e.reason === 'loot flare') diverted++;
+    if (isFlareTarget(e.reason)) diverted++;
     e.stun = Math.max(0, e.stun - dt);
     e.slow = Math.max(0, e.slow - dt);
     e.stumble = Math.max(0, e.stumble - dt);
@@ -882,7 +975,7 @@ export function stepRun(run, input = {}, dt = STEP) {
       return run.events;
     }
   }
-  if (!p.ammo && !p.reload && p.reserve > 0) startReload(run);
+  if (!p.ammo && !p.reload && p.equippedReserve > 0) startReload(run);
   if (p.offhand?.ammo === 0 && !p.offhand.reload && p.reserve > 0) startReload(run, true);
   if (run.populate && run.time >= run.nextLoot) {
     majorDrop(run);
@@ -892,6 +985,7 @@ export function stepRun(run, input = {}, dt = STEP) {
     replenishHorde(run, cap, lamps, addEnemy);
     run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
   }
+  updateSignalFlares(run, dt);
   updateEnemies(run, dt, lamps);
   run.noises = run.noises.filter(n => run.time < n.born + n.span);
   run.metrics.maxCrowd = Math.max(run.metrics.maxCrowd, run.enemies.length);
@@ -928,9 +1022,10 @@ function finishReload(run, state, dt) {
   state.reload.left -= dt;
   if (state.reload.left > 1e-8) return;
   const p = run.player;
-  const amount = Math.min(magazineCapacity(p) - state.ammo, p.reserve);
+  const amount = Math.min(magazineCapacity(p) - state.ammo, p.equippedReserve);
   state.ammo += amount;
-  p.reserve -= amount;
+  if (p.weapon === 'flaregun') p.flares -= amount;
+  else p.reserve -= amount;
   state.reload = null;
   if (amount > 0) emit(run, 'loaded', { weapon: p.weapon, offhand: state === p.offhand });
 }

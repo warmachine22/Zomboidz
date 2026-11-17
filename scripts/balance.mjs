@@ -1,4 +1,4 @@
-import { beamSettings, createRun, enemyPose, flarePower, GUNS, magazineCapacity, stepRun, visibleTargets } from '../src/simulation.js';
+import { beamSettings, createRun, enemyPose, flarePower, GUNS, isSupply, magazineCapacity, stepRun, visibleTargets } from '../src/simulation.js';
 import { angleDelta, clamp, direction, distance, random } from '../src/world.js';
 
 const rules = {
@@ -19,7 +19,7 @@ function angleTo(a, b) { return Math.atan2(b.x - a.x, a.z - b.z); }
 function seen(run, item) {
   const p = run.player, gap = distance(p, item);
   const { range, angle } = beamSettings(p);
-  return (gap < 3 || (gap < 28 && item.kind !== 'ammo' && flarePower(run.time - item.born) > .13) ||
+  return (gap < 3 || (gap < 28 && !isSupply(item.kind) && flarePower(run.time - item.born) > .13) ||
     (p.flashlight && gap < range && Math.abs(angleDelta(angleTo(p, item), p.yaw)) < angle))
     && run.world.clear({ x:p.x, y:p.y+p.eyeHeight, z:p.z }, { x:item.x, y:item.y+.4, z:item.z });
 }
@@ -46,7 +46,7 @@ function play(seed, style) {
         distance(p,e) < 3.8 || Math.abs(angleDelta(angleTo(p,e), p.yaw)) < .87);
       threat = seenEnemies[0] || audio[0];
       const gap = threat ? distance(p, threat) : Infinity;
-      const desired = run.loot.filter(item => !item.lost && (item.kind !== 'ammo' || p.reserve < 110)
+      const desired = run.loot.filter(item => !item.lost && item.kind !== 'flareAmmo' && (item.kind !== 'ammo' || p.reserve < 110)
           && (!item.kind.startsWith('armor') || Number(item.kind.at(-1)) > p.armor)
           && !Object.hasOwn(p.magazines, item.kind) && seen(run, item))
         .sort((a,b) => distance(p,a) - distance(p,b))[0];
@@ -69,7 +69,7 @@ function play(seed, style) {
       if (!looking) scan += .15 * (style === 'stationary' ? 1 : .54);
       const heading = looking ? angleTo(p, looking) : course ? Math.atan2(course.x, -course.z) + Math.sin(scan) * .42 : scan;
       const yaw = p.yaw + clamp(angleDelta(heading, p.yaw), -.66, .66);
-      const fire = shoot && Math.abs(angleDelta(heading,p.yaw)) < .63 && p.ammo > 0 && !p.reload && p.cooldown <= 1e-6;
+      const fire = p.weapon !== 'flaregun' && shoot && Math.abs(angleDelta(heading,p.yaw)) < .63 && p.ammo > 0 && !p.reload && p.cooldown <= 1e-6;
       let aim;
       if (fire) {
         const pose = enemyPose(shoot), head = rng() < (style === 'aggressive' ? .43 : style === 'cautious' ? .82 : .75);
@@ -82,11 +82,12 @@ function play(seed, style) {
       const reload = !p.reload && p.reserve && p.ammo > 0 && !shoot && p.ammo < magazineCapacity(p) * .50;
       const dark = p.flashlight && (p.battery < .12 || (style === 'cautious' && !threat && p.battery < .54));
       const lit = !p.flashlight && p.battery > (gap < 8 ? .27 : .96);
-      const weapons = Object.keys(p.magazines);
+      const weapons = Object.keys(p.magazines).filter(weapon => weapon !== 'flaregun');
       const next = weapons[(weapons.indexOf(p.weapon) + 1) % weapons.length];
-      const anyLoaded = Object.values(p.magazines).some(Boolean);
+      const anyLoaded = weapons.some(weapon => p.magazines[weapon] > 0);
       if (!anyLoaded && !p.reserve) sawEmpty = true;
-      const cycleWeapon = !p.ammo && (gap < 9 && p.magazines[next] > 0 || !p.reserve && anyLoaded);
+      const cycleWeapon = p.weapon === 'flaregun' || weapons.length > 1 &&
+        !p.ammo && (gap < 9 && p.magazines[next] > 0 || !p.reserve && anyLoaded);
       planned = { yaw, fire, aim, reload, cycleWeapon, toggleLight: dark || lit, interact: Boolean(run.offer && r.goal && !cycleWeapon),
         moveX: (course?.x || 0) * (knownLoot || gap < r.flee || !r.quiet ? 1 : .85),
         moveZ: (course?.z || 0) * (knownLoot || gap < r.flee || !r.quiet ? 1 : .85),

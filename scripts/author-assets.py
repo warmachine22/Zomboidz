@@ -263,6 +263,33 @@ def hardware(kind):
             block("Magazine rib", (side * .018, .059, -.058), (.002, .009, .095), edge, .001, mag, -.14)
         block("Magazine floor plate", (0, .056, -.121), (.041, .067, .009), carbon, .002, mag)
         muzzle, muzzle_y = .572, .063
+    elif kind == "flaregun":
+        orange = material("Weathered rescue orange", (.71, .16, .038), .79)
+        profile("Grip shell", [(-.082, .046), (-.089, -.008), (-.111, -.084),
+                (-.068, -.101), (-.034, -.097), (-.008, .020), (.100, .033), (.093, .052)],
+                .045, orange, root, .007)
+        profile("Rubber backstrap", [(-.088, .014), (-.111, -.076), (-.100, -.086),
+                (-.092, -.079), (-.075, -.002)], .037, carbon, root, .004)
+        for side in [-1, 1]:
+            for i in range(5):
+                block("Molded grip ribs", (side * .022, -.060 - i * .004, -.027 - i * .013),
+                      (.004, .041, .006), polymer, .0015, root, -.16)
+        block("Receiver saddle", (0, -.023, .062), (.047, .100, .036), steel, .004, root)
+        block("Guard base", (0, .050, -.010), (.029, .084, .011), orange, .004, root)
+        block("Guard front", (0, .091, .014), (.029, .012, .050), orange, .004, root, -.10)
+        block("Trigger", (0, .023, .016), (.009, .010, .027), steel, .002, root, -.26)
+        breech = empty("Breech", (0, .067, .045))
+        breech.parent = root
+        tube("Signal barrel", (0, .007, .038), .024, .182, orange, breech, sides=16)
+        tube("Chamber band", (0, -.072, .038), .025, .021, steel, breech, sides=16)
+        tube("Muzzle band", (0, .092, .038), .025, .022, steel, breech, sides=16)
+        tube("Muzzle recess", (0, .104, .038), .017, .002, carbon, breech, sides=16)
+        tube("Wear ring", (0, .106, .038), .025, .003, edge, breech, sides=16)
+        tube("Recessed bore", (0, .108, .038), .018, .002, carbon, breech, sides=16)
+        block("Front bead", (0, .076, .064), (.007, .009, .006), ivory, .001, breech)
+        block("Rear sight", (0, -.068, .096), (.027, .013, .007), steel, .001, root)
+        block("Break lever", (.026, -.043, .071), (.011, .030, .009), polymer, .002, root)
+        muzzle, muzzle_y = .178, .083
     else:
         tube("Body", (0, .034, .020), .029, .196, polymer, root, sides=12)
         tube("Tail cap", (0, -.078, .020), .030, .019, carbon, root, sides=10)
@@ -280,6 +307,7 @@ def hardware(kind):
         "shotgun": (0, -.086, -.022),
         "smg": (0, -.075, -.033),
         "carbine": (0, -.079, -.028),
+        "flaregun": (0, -.058, -.031),
         "flashlight": (0, -.011, -.008),
     }[kind]
     empty("GripSocket", palm).parent = root
@@ -289,6 +317,7 @@ def hardware(kind):
         "shotgun": (.047, .350, -.025),
         "smg": (.042, .231, .012),
         "carbine": (.043, .275, -.024),
+        "flaregun": (.034, -.044, -.055),
     }.get(kind)
     if support:
         empty("SupportSocket", support).parent = root
@@ -664,7 +693,7 @@ def zombie(kind, alternate=False):
     bpy.ops.wm.save_as_mainfile(filepath=str(source / (name + ".blend")), compress=True)
 
 
-weapons = ["pistol", "shotgun", "smg", "carbine", "flashlight"]
+weapons = ["pistol", "shotgun", "smg", "carbine", "flaregun", "flashlight"]
 zombies = ["shambler", "shrieker", "brute"]
 requested = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [*weapons,"glove","wreck",*zombies]
 for name in requested:

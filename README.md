@@ -1,6 +1,6 @@
 # Zomboidz — The Last Light
 
-An endless first-person zombie survival game for Meta Quest 3 Browser and desktop, with on-screen controls for touch. Survive Blackwater Forest with a service pistol, 50 spare rounds, a flashlight, and whatever you can scavenge. Gunshots, footsteps, and visible light draw the horde. A fresh rare drop burns like a flare and may draw a few walkers away from you.
+An endless first-person zombie survival game for Meta Quest 3 Browser and desktop, with on-screen controls for touch. Survive Blackwater Forest with a service pistol, 50 spare rounds, a flare gun, a flashlight, and whatever you can scavenge. Gunshots, footsteps, and visible light draw the horde. A fresh rare drop burns like a flare and may draw a few walkers away from you.
 
 [Play the current release](https://zombiez.vercel.app/). Refresh the page to load the latest release.
 
@@ -21,7 +21,9 @@ The woods go dark beyond the flashlight, landmark lights, and active flares. Mai
 
 Quest Browser needs an HTTPS deployment to enter immersive VR. On the headset, use **Enter VR**, then the weapon trigger to start. The left stick moves and the right stick snap turns. Right A reloads, right B cycles weapons, left X changes the beam, and left Y pauses. Use the weapon grip to pick up gear and the light trigger to toggle the flashlight.
 
-New weapons equip unloaded. Every weapon keeps its loaded rounds when you switch, and they all draw from the same spare ammo. An empty weapon starts reloading automatically when spares are available.
+New weapons equip unloaded. Firearms share one reserve, and each weapon keeps its loaded rounds when you switch. An empty weapon starts reloading automatically when spares are available.
+
+Standard and Hard runs start with a loaded flare gun and 19 spare flares. Cycle to it and launch a flare ahead of you to draw nearby zombies toward the landing spot for up to 10 seconds. The optional aim dot marks the expected landing spot. Spare flares collect automatically near ammo caches and from occasional zombie drops.
 
 Enable **Legendary Mode** in Settings before starting a practice run. You start with two 50-round pistols and a light on each pistol. On Quest, right B cycles the right gun's light and left Y cycles the left gun's light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other. Touch gets buttons for each light. The lights never run out of charge.
 
