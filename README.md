@@ -6,6 +6,8 @@ An endless first-person zombie survival game for Meta Quest 3 Browser and deskto
 
 Survive and escape by following roads and tracks to search sheds. When you find the working radio, approach it and press **E**, use the **weapon grip** in VR, or tap **Call** on touch. The reply confirms extraction and ends the run with your escape time.
 
+Open **Help** from the main menu for in-game images of sheds, the radio, and each zombie type, plus a guide to pickup icons.
+
 ## Play locally
 
 Requires Node.js 20 or newer.

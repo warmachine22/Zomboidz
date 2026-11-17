@@ -1,12 +1,12 @@
 # Zomboidz — The Last Light project handbook
 
-This handbook describes the live 1.0 rebuild as of **1.0.16**. Start here when changing the game. See [development and playtesting](DEVELOPMENT.md) for commands and [release history](../progress.md) for changes by version. [Play the production build](https://zombiez.vercel.app/).
+This handbook describes the live 1.0 rebuild as of **1.0.17**. Start here when changing the game. See [development and playtesting](DEVELOPMENT.md) for commands and [release history](../progress.md) for changes by version. [Play the production build](https://zombiez.vercel.app/).
 
 ## Product and run flow
 
 Zomboidz is a single-player browser survival and escape game. **Meta Quest 3 Browser** is the release target. Desktop is first person, and touch has an on-screen joystick and drag-to-look. The player follows roads into a dark, procedurally streamed forest, manages their ammo and light, and searches sheds for a radio while the horde grows.
 
-1. The main menu selects difficulty and mode, shows the build number and extraction objective, and links to controls, settings, and local scores. Quest immersive play starts through **Enter VR** over HTTPS and has a controller-operated start panel.
+1. The main menu selects difficulty and mode, shows the build number and extraction objective, and links to Help, controls, settings, and local scores. Help explains the objective and shows game-rendered reference images and actual pickup icons. Quest immersive play starts through **Enter VR** over HTTPS and has a controller-operated start panel.
 2. A run can end in death or extraction. A clean hit kills an unarmored player. One armor charge absorbs one hit, and a better vest or plate pickup replaces a weaker one. Armor comes in one-, two-, or three-charge pieces.
 3. On a fatal hit, the scene freezes at contact and identifies the attacker. The player can look, snap turn on Quest, and move or toggle their flashlight during inspection. Quest right A opens the results or returns to inspection from the death result. Desktop and touch use the Results and Look around controls.
 4. A working radio plays a short reply and ends the run as **Escaped**. The result shows escape time, kills, and headshots. Helicopter animation is deferred.

@@ -7,6 +7,7 @@ import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
+import { fillHelp } from './help.js';
 import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim,
   shotgunPumpTravel, toolLayouts } from './held-tools.js';
 import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, MODES } from './difficulty.js';
@@ -300,8 +301,19 @@ function openResults() {
   if (!xr.active) $('restart').focus();
 }
 
+let helpReady = false;
 function showPanel(id) {
-  for (const panel of ['home', 'controls', 'scores', 'settings']) $(panel).hidden = panel !== id;
+  const returningFromHelp = id === 'home' && !$('help').hidden;
+  for (const panel of ['home', 'help', 'controls', 'scores', 'settings']) $(panel).hidden = panel !== id;
+  $('shell').scrollTop = 0;
+  if (id === 'help') {
+    if (!helpReady) {
+      fillHelp($('help'),presentation.pickupImage);
+      helpReady = true;
+    }
+    $('help-title').focus({ preventScroll:true });
+  }
+  if (returningFromHelp) $('help-tab').focus({ preventScroll:true });
   if (id === 'scores') {
     $('score-difficulty').value = settings.difficulty;
     showScores();

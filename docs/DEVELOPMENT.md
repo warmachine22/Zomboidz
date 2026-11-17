@@ -32,6 +32,8 @@ Run `node scripts/check-search.mjs --routes-only` to walk seeded shed routes wit
 
 The [zombie-free world audit](WORLD_AUDIT.md) records extraction times, directional shed coverage, radio probabilities, and the frequency of wrecks and campsites. Run `node scripts/audit-world.mjs` to repeat all four checks.
 
+To refresh the Help artwork after changing models or structures, open `/assets/dev/guide.html` on the dev server. Choose a subject, select **Save WebP**, and replace the matching image in `assets/guide`. The capture page uses the actual game scene and a brighter fill for legibility. The Help pickup pictures come from the in-game icon textures.
+
 ## Quest release check
 
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.

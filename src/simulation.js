@@ -7,7 +7,7 @@ import { ambushDecision, reserveAmbush } from './ambush.js';
 import { reachableRadio, visitBuildings } from './extraction.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.16';
+export const BUILD = '1.0.17';
 export { hordeTarget } from './difficulty.js';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },

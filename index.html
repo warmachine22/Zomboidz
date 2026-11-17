@@ -35,10 +35,66 @@
       </div>
       <p id="status" role="status" class="status">Preparing game assets…</p>
       <nav class="menu-links" aria-label="Game menu">
+        <button id="help-tab" data-panel="help">Help</button>
         <button data-panel="controls">Controls</button>
         <button data-panel="scores">Local scores</button>
         <button data-panel="settings">Settings</button>
       </nav>
+    </section>
+    <section class="sheet help-sheet" id="help" hidden aria-labelledby="help-title">
+      <div class="help-header">
+        <div>
+          <h2 id="help-title" tabindex="-1">Help</h2>
+          <nav aria-label="Help sections">
+            <a href="#help-escape">Survive &amp; escape</a>
+            <a href="#help-enemies">Zombies</a>
+            <a href="#help-pickups">Pickups</a>
+          </nav>
+        </div>
+        <button data-back>Back to menu</button>
+      </div>
+      <section id="help-escape" class="help-section">
+        <h3>Survive &amp; escape</h3>
+        <p>Survive the growing horde while you search for a working radio. Follow the road and take dirt tracks to sheds. Reflective posts mark turns, and some entrances have amber lanterns. Inside, look for a green display and antenna on a crate. When the extraction prompt appears, press <strong>E</strong> on desktop, squeeze the <strong>weapon grip</strong> in VR, or tap <strong>Call</strong> on touch. Calling for help ends the run with your escape time.</p>
+        <div class="help-photos">
+          <figure>
+            <img data-guide-photo="workshop" width="960" height="600" alt="In-game workshop shed with a wide doorway, a peaked roof, and a wrecked vehicle beside it">
+            <figcaption><strong>Workshop shed</strong><span>Look for a wide doorway under a peaked roof.</span></figcaption>
+          </figure>
+          <figure>
+            <img data-guide-photo="lean-to" width="960" height="600" alt="In-game lean-to shed with a sloping roof and an offset doorway">
+            <figcaption><strong>Lean-to shed</strong><span>Look for a sloped roof and a doorway off to one side.</span></figcaption>
+          </figure>
+          <figure>
+            <img data-guide-photo="radio" width="960" height="600" alt="In-game extraction radio with a long antenna and green display, resting on a crate">
+            <figcaption><strong>Extraction radio</strong><span>Step close and call for help when prompted.</span></figcaption>
+          </figure>
+        </div>
+        <p>Keep spare rounds on hand and switch the flashlight off to recharge it. Zombies react to footsteps, gunshots, and visible light. Fire a flare away from your route to distract part of the horde. A single hit is fatal without armor.</p>
+      </section>
+      <section id="help-enemies" class="help-section">
+        <h3>Zombies</h3>
+        <div class="help-photos">
+          <figure>
+            <img data-guide-photo="shambler" width="960" height="600" loading="lazy" alt="Two shambler variants wearing torn work clothes and leaning as they walk">
+            <figcaption><strong>Shambler</strong><span>A limping walker with an uneven reach. Groups can close in from different sides. One headshot kills it.</span></figcaption>
+          </figure>
+          <figure>
+            <img data-guide-photo="shrieker" width="960" height="600" loading="lazy" alt="Two shrieker variants with narrow bodies and forward-leaning poses">
+            <figcaption><strong>Shrieker</strong><span>Listen for its warning cry before a short sprint. One headshot kills it.</span></figcaption>
+          </figure>
+          <figure>
+            <img data-guide-photo="brute" width="960" height="600" loading="lazy" alt="Two broad-shouldered brute variants in heavy, torn clothing">
+            <figcaption><strong>Brute</strong><span>Slow, heavy strikes. A fresh brute takes three Service pistol headshots or five torso hits with base ammo.</span></figcaption>
+          </figure>
+        </div>
+      </section>
+      <section id="help-pickups" class="help-section">
+        <h3>Pickups</h3>
+        <p>Walk close to collect ammo and upgrades. Confirm a weapon or better armor with the same button you use for the radio. Special gear glows briefly and can draw zombies while it fades.</p>
+        <div id="help-inventory"></div>
+      </section>
+      <button data-back>Back to menu</button>
     </section>
     <section class="sheet" id="controls" hidden aria-labelledby="controls-title">
       <p class="eyebrow">FIELD GUIDE</p>

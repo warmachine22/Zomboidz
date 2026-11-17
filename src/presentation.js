@@ -1120,7 +1120,7 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
-  return { update, events, reset, setQuality(value) {
+  return { update, events, reset, pickupImage: kind => iconTextures[kind].image.toDataURL(), setQuality(value) {
     quality = value;
     const resolution = value > 1 ? 512 : 256;
     for (const [light, size] of [[lamp, resolution], [offhandLamp, resolution / 2]]) {

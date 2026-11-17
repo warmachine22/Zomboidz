@@ -9,12 +9,12 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const development = process.argv.includes('--dev');
 const out = path.join(root, development ? '.cache/zomboidz' : 'dist');
 
-const assetDirs = ['assets/art', 'assets/audio'];
+const assetDirs = ['assets/art', 'assets/audio', 'assets/guide'];
 
 const options = {
   absWorkingDir: root,
-  entryPoints: ['game.js'],
-  outfile: path.join(out, 'game.js'),
+  entryPoints: development ? { game: 'game.js', guide: 'scripts/capture-guide.js' } : ['game.js'],
+  ...(development ? { outdir: out } : { outfile: path.join(out, 'game.js') }),
   target: ['es2022'],
   format: 'esm',
   bundle: true,
