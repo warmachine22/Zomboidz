@@ -1,6 +1,6 @@
 # Zomboidz — The Last Light: v0.11
 
-Historical alpha specification. The 1.0 rebuild is documented in `README.md` and `docs/DEVELOPMENT.md`.
+Historical alpha specification. The 1.0 rebuild is documented in the [project handbook](docs/HANDBOOK.md).
 
 ## Game goal
 

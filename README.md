@@ -49,4 +49,4 @@ The balance runner compares stationary, cautious, and aggressive strategies acro
 
 Deploy the generated `dist/` directory over HTTPS. Add `?perf=1` to the deployed URL to view Quest frame timing and active crowd size during live play. The session must be tested on a physical Quest 3 to verify aiming alignment, spatial audio, comfort, and the 72 Hz target.
 
-Scores live in the browser on the device that played. Each completed run can be replayed with the same seed or a new forest. See [development notes](docs/DEVELOPMENT.md) and [asset credits](CREDITS.md).
+Scores live in the browser on the device that played. Each completed run can be replayed with the same seed or a new forest. See the [project handbook](docs/HANDBOOK.md), [development notes](docs/DEVELOPMENT.md), and [asset credits](CREDITS.md).

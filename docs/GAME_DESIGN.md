@@ -1,6 +1,6 @@
 # Game Design — Zomboidz: The Last Light
 
-Historical v0.11 design notes. Current controls and survival rules are in `README.md`.
+Historical v0.11 design notes. Current controls and survival rules are in the [project handbook](HANDBOOK.md).
 
 ## One-sentence pitch
 

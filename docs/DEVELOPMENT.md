@@ -2,6 +2,8 @@
 
 The game builds to a static directory. The executable bundles Three.js instead of fetching it at runtime. There is no service, account, or remote score database. The development server watches source and serves the game with optional diagnostics.
 
+Read [the project handbook](HANDBOOK.md) for current features, system ownership, and design decisions.
+
 Push completed releases to GitHub `main` as `warmachine22`. The Vercel Git integration runs the tests and build before publishing `main` to the managed production domain. Other branches get previews. Check the build label at [zombiez.vercel.app](https://zombiez.vercel.app/) after a normal refresh. The HTML is served with `Cache-Control: no-store`, and each build fingerprints its script, styles, and assets.
 
 The public alias `zombiez.vercel.app` is assigned to the routing deployment in `deploy/public-url`. Its rewrites serve the current managed production build at the original browser origin, which keeps local scores and settings available. Vercel reserves the name against adding it directly as a project domain. For a routing change, deploy just that directory to the existing `zombiez` project as a preview, verify its page and assets, then assign the public alias to that routing deployment. Ordinary game releases require only the Git push.
@@ -20,7 +22,7 @@ To regenerate the original GLBs, run Blender 4.5 LTS in the background.
 blender --background --factory-startup --python-exit-code 1 --python scripts/author-assets.py
 ```
 
-The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies. To regenerate the six enemy models alone, append `-- shambler shrieker brute` and then run `node scripts/export-enemy-rig.mjs`. The editable Blender files, named actions, and contact markers are in `art-source`. Each alternate appearance uses the same skeleton and clips as its type. The second command samples the exported GLBs and binds the collision anchors to their joints. The game solves those joint transforms on fixed ticks for hit detection and smooths enemy transforms and poses between renders. For held hardware, append `-- pistol shotgun smg carbine flashlight`. See the credits for asset sources.
+The script creates the authored weapons, flashlight, gloves, utility wreck, and rigged zombies. To regenerate the six enemy models alone, append `-- shambler shrieker brute` and then run `node scripts/export-enemy-rig.mjs`. The editable Blender files, named actions, and contact markers are in `art-source`. Each alternate appearance uses the same skeleton and clips as its type. The second command samples the exported GLBs and binds the collision anchors to their joints. The game solves those joint transforms on fixed ticks for hit detection and smooths enemy transforms and poses between renders. For held hardware, append `-- pistol shotgun smg carbine flaregun flashlight`. See the credits for asset sources.
 
 Run the shambler comparison on the dev server with `?debug&scenario=motion`. Append `&version=before` for the 1.0.3 model and baseline animation, `&view=side` for the close side view, or `&light=moon` to start with the flashlight off. Both versions walk around the same trunk and take scripted hits. The old GLB ships with the development server only.
 
@@ -33,7 +35,7 @@ Run `node scripts/check-search.mjs --routes-only` to walk seeded shed routes wit
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.
 2. Compare paths and nearby silhouettes with the flashlight off and on. Try firing and reloading while moving. Compare normal and reduced flashes near cover. Cross a road to an active flare and observe how the horde divides.
 3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
-4. Use `?perf=1` and Meta’s performance tools for a 15-minute stress run with the flashlight on. The headset HUD shows FPS, 95th-percentile frame interval, missed frames, and active crowd versus its current cap. Record those together in the late run. The target is 72 Hz with 48 enemies on Quest 3.
+4. Use `?perf=1` and Meta’s performance tools with the flashlight on, starting with Hard and Arsenal Test at minute 20. The headset HUD shows FPS, 95th-percentile frame interval, missed frames, and active crowd versus its current target. Record these together through late-wave combat and note how long the run lasts. Aim for a sustained 15-minute sample at 72 Hz on Quest 3. Hard late runs target 42–45 enemies depending on the seed and available device budget.
 5. Stand still with the flashlight off. Have a second person confirm the approach direction of a zombie before calling it out, then turn your head and check that the sound stays with the zombie. Compare an approach in open ground with a zombie behind a wall. Check both the headset speakers and headphones if available.
 
 Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.
