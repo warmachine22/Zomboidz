@@ -30,6 +30,8 @@ Run `npm run balance -- --difficulty=normal` and repeat with `--difficulty=easy`
 
 Run `node scripts/check-search.mjs --routes-only` to walk seeded shed routes with the real collision and movement rules. Omit the flag to exercise combat and radio interaction along those routes. The scripted explorer uses a known route and reports first shed time, sheds reached, deaths, and escapes. Use `?debug&scenario=lantern` locally to review a shed from a distance with the flashlight off. On a physical Quest 3, select Hard and the 20-minute Arsenal Test preset with `?perf=1` and record the active crowd, P95 frame time, and missed frames.
 
+The [zombie-free world audit](WORLD_AUDIT.md) records extraction times, directional shed coverage, radio probabilities, and the frequency of wrecks and campsites. Run `node scripts/audit-world.mjs` to repeat all four checks.
+
 ## Quest release check
 
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.

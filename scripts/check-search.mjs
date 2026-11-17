@@ -1,6 +1,8 @@
 import { createRun, enemyPose, stepRun, STEP, visibleTargets } from '../src/simulation.js';
 import { CHUNK, createWorld, distance, START } from '../src/world.js';
 import { DIFFICULTIES } from '../src/difficulty.js';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const seeds = ['Blackwater','Cold Creek','Reed Valley','Split Pine','Rain Line','district-path-0','district-path-2','1','2','3','4','5'];
 const stride = 2;
@@ -16,7 +18,7 @@ function walkable(world, a, b) {
   return true;
 }
 
-function findPath(world, start, goal) {
+export function findPath(world, start, goal, grid = stride) {
   const initial = { ...start, i:0,j:0,cost:0, estimate:distance(start,goal) };
   const open = new Map([['0,0',initial]]), closed = new Set();
   while (open.size) {
@@ -25,7 +27,7 @@ function findPath(world, start, goal) {
     const key = best.i + ',' + best.j;
     open.delete(key);
     closed.add(key);
-    if (distance(best,goal) <= stride*1.55 && walkable(world,best,goal)) {
+    if (distance(best,goal) <= grid*1.55 && walkable(world,best,goal)) {
       const path = [goal];
       for (let point = best; point.parent; point = point.parent) path.push({ x:point.x,z:point.z });
       return path.reverse();
@@ -33,11 +35,11 @@ function findPath(world, start, goal) {
     for (const [di,dj] of moves) {
       const i = best.i+di, j = best.j+dj, near = i+','+j;
       if (closed.has(near)) continue;
-      const point = { x:start.x+i*stride,z:start.z+j*stride,i,j,parent:best };
+      const point = { x:start.x+i*grid,z:start.z+j*grid,i,j,parent:best };
       if (point.x < Math.min(start.x,goal.x)-42 || point.x > Math.max(start.x,goal.x)+42 ||
         point.z < Math.min(start.z,goal.z)-42 || point.z > Math.max(start.z,goal.z)+42) continue;
       const verge = world.roadDistance(point.x,point.z) > 3.2;
-      point.cost = best.cost + Math.hypot(di,dj)*stride*(verge ? 1.17 : 1);
+      point.cost = best.cost + Math.hypot(di,dj)*grid*(verge ? 1.17 : 1);
       if (point.cost >= (open.get(near)?.cost ?? Infinity) || !walkable(world,best,point)) continue;
       point.estimate = point.cost + distance(point,goal);
       open.set(near,point);
@@ -134,27 +136,31 @@ function simulate(seed, points, difficulty, maxSeconds) {
     crowd:run.metrics.maxCrowd };
 }
 
-const routeOnly = process.argv.includes('--routes-only');
-const maxSeconds = Number(process.argv.find(arg=>arg.startsWith('--seconds='))?.split('=')[1] ?? (routeOnly ? 1300 : 780));
-if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) throw Error('Specify a positive number of seconds.');
-const rows = [], routes = [];
-for (const seed of seeds) {
-  const { points, legs } = planRoute(seed);
-  routes.push(...legs);
-  for (const difficulty of routeOnly ? ['route'] : Object.keys(DIFFICULTIES))
-    rows.push({ seed, difficulty, ...simulate(seed,points,difficulty,maxSeconds) });
-  console.log('Checked',seed,'(' + routes.length + ' route legs so far)');
+function main() {
+  const routeOnly = process.argv.includes('--routes-only');
+  const maxSeconds = Number(process.argv.find(arg=>arg.startsWith('--seconds='))?.split('=')[1] ?? (routeOnly ? 1300 : 780));
+  if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) throw Error('Specify a positive number of seconds.');
+  const rows = [], routes = [];
+  for (const seed of seeds) {
+    const { points, legs } = planRoute(seed);
+    routes.push(...legs);
+    for (const difficulty of routeOnly ? ['route'] : Object.keys(DIFFICULTIES))
+      rows.push({ seed, difficulty, ...simulate(seed,points,difficulty,maxSeconds) });
+    console.log('Checked',seed,'(' + routes.length + ' route legs so far)');
+  }
+  console.table(rows);
+  for (const kind of ['firstShed','neighbors','searchLegs','betweenClusters']) {
+    const times = routes.filter(leg=>leg.kind===kind).map(leg=>leg.seconds);
+    console.log(kind, Math.round(Math.min(...times)) + '–' + Math.round(Math.max(...times)) + ' s',
+      times.filter(t=>t>=30 && t<=90).length + '/' + times.length + ' within 30–90 s');
+  }
+  for (const difficulty of new Set(rows.map(row=>row.difficulty))) {
+    const group = rows.filter(row=>row.difficulty===difficulty);
+    const first = group.map(row=>row.first).filter(t=>t!==null).sort((a,b)=>a-b);
+    const median = first.length ? first[Math.floor(first.length/2)] : 'unreached';
+    console.log(difficulty, 'median first shed', median, 's | total sheds', group.reduce((sum,row)=>sum+row.sheds,0),
+      '| deaths', group.filter(row=>row.result==='dead').length, '| escapes', group.filter(row=>row.result==='escaped').length);
+  }
 }
-console.table(rows);
-for (const kind of ['firstShed','neighbors','searchLegs','betweenClusters']) {
-  const times = routes.filter(leg=>leg.kind===kind).map(leg=>leg.seconds);
-  console.log(kind, Math.round(Math.min(...times)) + '–' + Math.round(Math.max(...times)) + ' s',
-    times.filter(t=>t>=30 && t<=90).length + '/' + times.length + ' within 30–90 s');
-}
-for (const difficulty of new Set(rows.map(row=>row.difficulty))) {
-  const group = rows.filter(row=>row.difficulty===difficulty);
-  const first = group.map(row=>row.first).filter(t=>t!==null).sort((a,b)=>a-b);
-  const median = first.length ? first[Math.floor(first.length/2)] : 'unreached';
-  console.log(difficulty, 'median first shed', median, 's; total sheds', group.reduce((sum,row)=>sum+row.sheds,0),
-    '; deaths', group.filter(row=>row.result==='dead').length, '; escapes', group.filter(row=>row.result==='escaped').length);
-}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
