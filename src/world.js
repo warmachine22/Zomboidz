@@ -1,4 +1,5 @@
 import { buildDistrictSite, makeDistrict, trackDistance } from './districts.js';
+import { DRESSING, dress } from './dressing.js';
 
 export const CHUNK = 48;
 export const START = { x: 0, z: 20 };
@@ -168,7 +169,7 @@ export function createWorld(seed) {
       area.loot.push({ id: key + ':' + id, x, z, kind, unlock });
     };
     const site = (type, x, z, lit = false, supplies = true) => {
-      sites.push({ x, z, r: type === 'house' || type === 'camp' ? 7 : 4 });
+      sites.push({ x, z, r: type === 'house' || type === 'camp' ? 7 : 4, type });
       if (type === 'house') {
         const y = height(x, z) - .17;
         box(x, z - 2.5, 6.5, 2.7, .38, y, 'houseBack');
@@ -274,6 +275,8 @@ export function createWorld(seed) {
       if (area.colliders.every(o => Math.hypot(x - o.x, z - o.z) > (o.r || Math.max(o.rx, o.rz)) + .6))
         area.entrances.push({ x, z });
     }
+    // 1.1.0 scenery. Runs last with its own random stream, so everything above is unchanged.
+    if (DRESSING.enabled) area.decor = dress(area, { seed, left, top, CHUNK, height, roadDistance, region, sites, random, hash, START, phase });
     return area;
   };
 
@@ -323,7 +326,8 @@ export function createWorld(seed) {
   function raycast(origin, ray, range, ground = true) {
     const endX = origin.x + ray.x * range, endZ = origin.z + ray.z * range;
     let t = range + 1, object = null;
-    // Pad by the largest cover footprint because authored props can straddle a chunk edge.
+    // Pad by the largest cover footprint (3.5 m; dressing vehicles and log segments stay within <= 2.6 m)
+    // because authored props can straddle a chunk edge.
     for (let j = Math.floor((Math.min(origin.z, endZ) - 3.5) / CHUNK); j <= Math.floor((Math.max(origin.z, endZ) + 3.5) / CHUNK); j++) {
       for (let i = Math.floor((Math.min(origin.x, endX) - 3.5) / CHUNK); i <= Math.floor((Math.max(origin.x, endX) + 3.5) / CHUNK); i++) {
         for (const o of chunk(i, j).colliders) {
@@ -360,5 +364,5 @@ export function createWorld(seed) {
 
   const districtSites = (x,z) => [...district(x,z).buildings.values()]
     .flatMap(site => chunk(Math.floor(site.x/CHUNK),Math.floor(site.z/CHUNK)).buildings);
-  return { seed, height, sample, density, region, roadDistance, chunk, around, blocks, move, raycast, clear, districtSites };
+  return { seed, phase, height, sample, density, region, roadDistance, chunk, around, blocks, move, raycast, clear, districtSites };
 }
