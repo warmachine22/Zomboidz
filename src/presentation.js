@@ -602,7 +602,7 @@ export function createPresentation(scene, art, layouts) {
     carbine: { power: 286, size: 1.13, duration: .092 },
     flaregun: { power: 96, size: .73, duration: .070 },
   };
-  let pumpElapsed = Infinity, impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
+  let impactPool = [], quality = 3, tone = '', tick = 0, currentRun = null, lastWatch = '';
   let artworkLit = null;
 
   function reset(run) {
@@ -617,7 +617,6 @@ export function createPresentation(scene, art, layouts) {
     signals.clear();
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
     for (const flash of flashes) flash.shot = null;
-    pumpElapsed = Infinity;
     lastWatch = '';
   }
 
@@ -914,7 +913,6 @@ export function createPresentation(scene, art, layouts) {
     for (const event of batch) {
       if (event.type === 'shot') {
         flashes[Number(Boolean(event.offhand))].shot = { ...event, elapsed: 0, fresh: true };
-        if (event.weapon === 'shotgun') pumpElapsed = 0;
         if (quality > 1 && event.weapon !== 'flaregun') debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
       if (event.type === 'impact') debris(event);
@@ -981,19 +979,16 @@ export function createPresentation(scene, art, layouts) {
     gloveL.scale.x = left ? 1 : -1;
     watchGroup.position.x = left ? .04 : -.04;
     const { progress: showReload, dip, y, pitch, roll } = reloadMount(!calibration && p.reload, left);
-    weaponMount.rotation.set(pitch, 0, roll);
-    weaponMount.position.y = y;
+    const free = 1 - (tracking.brace ?? 0);
+    weaponMount.rotation.set(pitch * free, 0, roll * free);
+    weaponMount.position.y = y * free;
     const slide = gun.getObjectByName('Slide'), mag = gun.getObjectByName('Magazine'), pump = gun.getObjectByName('Pump');
     if (slide) slide.position.z = (tracking.gunKick || 0) * 1.35 + (showReload > .72 && showReload < .91 ? .019 : 0);
     if (mag) {
       mag.position.y = dip * (p.weapon === 'smg' || p.weapon === 'carbine' ? -.16 : -.10);
       mag.visible = p.weapon !== 'shotgun' || dip > .13;
     }
-    if (active) pumpElapsed += dt;
-    if (pump) {
-      const cycling = calibration ? 0 : clamp((pumpElapsed - .19) / .34, 0, 1);
-      pump.position.z = Math.sin(cycling * Math.PI) * .081 + dip * .046;
-    }
+    if (pump) pump.position.z = tracking.pumpTravel;
     const breech = gun.getObjectByName('Breech');
     if (breech) breech.rotation.x = -1.03 * dip;
     const second = reloadMount(p.offhand?.reload, !left);

@@ -7,7 +7,8 @@ import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
-import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim, toolLayouts } from './held-tools.js';
+import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim,
+  shotgunPumpTravel, toolLayouts } from './held-tools.js';
 import { DIFFICULTIES, difficultyKey } from './difficulty.js';
 import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
 
@@ -67,6 +68,7 @@ let quality = 3, perfElapsed = 0, perfFrames = 0, stableWindows = 0, missed = 0,
 const perfTimes = [];
 let debugVisible = false;
 let aimHit = null, offhandAimHit = null;
+let shotgunFiredAt = -Infinity;
 let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
@@ -85,7 +87,7 @@ function clearInput() {
 function setPhase(next) {
   phase = next;
   calibrating = false;
-  handling.reset(run.player.weapon);
+  handling.reset(run.player.weapon, !!xr.active);
   offhandHandling.reset('pistol');
   panelKey = '';
   const running = phase === 'playing', inspecting = phase === 'inspect', isXR = !!xr.active;
@@ -162,6 +164,7 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
     if (!run.legendary && qs.get('light') === 'moon') run.player.flashlight = false;
   }
   runId = rapidSeed();
+  shotgunFiredAt = -Infinity;
   notice = '';
   hudAt = debugAt = -1;
   quality = 3;
@@ -518,13 +521,16 @@ function desktopView() {
   } };
 }
 
-function trackedView(stereo, update = false, sample = null, dt = 0, lead = 0) {
-  const p = run.player, view = stereo ? xr.sync(p, settings) : desktopView();
+function trackedView(stereo, lead = 0) {
+  const p = run.player, view = stereo ? xr.sync(p) : desktopView();
   const kind = p.weapon, layout = layouts[kind];
   view.tracking.weapon = heldPose(view.tracking.weapon, stereo);
   view.tracking.lamp = heldPose(view.tracking.lamp, stereo);
-  if (update) handling.updateBrace(kind, view.tracking, layout, settings, !p.offhand && stereo && phase === 'playing', sample?.supportGrip, dt);
-  view.tracking = handling.resolve(view.tracking, layout, view.view, settings, stereo, calibrating, lead);
+  const pumpTravel = kind === 'shotgun' && !calibrating
+    ? shotgunPumpTravel(run.time + lead - shotgunFiredAt, p.reload) : 0;
+  view.tracking = handling.resolve(view.tracking, layout, view.view, settings, stereo, calibrating,
+    lead, rig.quaternion, pumpTravel);
+  view.tracking.pumpTravel = pumpTravel;
   view.aim = mountedAim(view.tracking.weapon, layout, view.view);
   if (p.offhand) {
     const second = offhandHandling.resolve({ weapon: view.tracking.lamp }, layout, view.view, settings, stereo, false, lead);
@@ -556,6 +562,7 @@ function handleEvent(batch) {
     else if (event.type === 'weaponSwitch') setNotice(GUNS[event.weapon].name, 1.25);
     else if (event.type === 'light' && event.empty) setNotice('Battery depleted. Recharging.');
     else if (event.type === 'shot') {
+      if (event.weapon === 'shotgun') shotgunFiredAt = run.time;
       if (event.offhand) offhandHandling.kick(!settings.leftHanded);
       else handling.kick(settings.leftHanded);
       xr.haptic(event.weapon, settings, handling.braced, event.offhand);
@@ -694,7 +701,7 @@ function simulate(t, sample, stereo) {
       fireHeld: sample?.fireHeld, moveX: sample?.moveX, moveZ: sample?.moveZ, walk: sample?.walk } : desktopInput();
     handling.advance(STEP);
     if (run.legendary) offhandHandling.advance(STEP);
-    const aimed = trackedView(stereo, true, sample, STEP);
+    const aimed = trackedView(stereo);
     const input = { ...state, ...queued,
       roomX, roomZ, aim: aimed.aim, lamp: aimed.beam,
       weaponUnavailable: stereo && !aimed.aim, lampUnavailable: stereo && !aimed.beam,
@@ -720,7 +727,7 @@ function simulate(t, sample, stereo) {
     const batch = stepRun(run, input);
     handleEvent(batch);
     if (weapon !== run.player.weapon)
-      handling.updateBrace(run.player.weapon, {}, layouts[run.player.weapon], settings, false, sample?.supportGrip, 0);
+      handling.reset(run.player.weapon, stereo && sample?.supportGrip !== false);
   }
 }
 
@@ -767,9 +774,14 @@ function frame(now, xrFrame) {
   }
   const dt = Math.min(.09, elapsed);
   measure(elapsed, stereo);
+  if (stereo && phase === 'playing' && !run.player.offhand) {
+    const kind = run.player.weapon;
+    const tracking = { weapon: heldPose(sample?.tools.weapon, true), lamp: heldPose(sample?.tools.lamp, true) };
+    handling.updateBrace(kind, tracking, layouts[kind], settings, true, sample?.supportGrip ?? null, elapsed);
+  }
   if (phase === 'playing' && !manualClock && (!stereo || xr.active.visibilityState === 'visible'))
     simulate(previous === phase && (!stereo || sample) ? dt : 0, sample, stereo);
-  const view = trackedView(stereo, false, null, 0, accumulator);
+  const view = trackedView(stereo, accumulator);
   const active = phase === 'playing', inspecting = phase === 'inspect' || phase === 'extracting', p = run.player;
   const laser = active && settings.laserDot;
   aimHit = laser && !p.reload && view.aim ? traceAim(run, view.aim) : null;

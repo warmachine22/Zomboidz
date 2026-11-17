@@ -7,6 +7,7 @@ const up = new THREE.Vector3(0, 1, 0);
 function vec(p) { return new THREE.Vector3(p.x, p.y, p.z); }
 function quat(q) { return new THREE.Quaternion(q.x, q.y, q.z, q.w); }
 function poseOf(pose) { return { position: vec(pose.transform.position), quaternion: quat(pose.transform.orientation) }; }
+const toolPose = source => source && { ...source.grip, pointer: source.aim?.quaternion };
 const button = (gamepad, index) => Boolean(gamepad?.buttons?.[index]?.pressed);
 const axis = (gamepad, index) => gamepad?.axes?.[gamepad.axes.length >= 4 ? index + 2 : index] || 0;
 
@@ -108,13 +109,16 @@ export function createXR(renderer, scene, rig) {
     if (seatedHeight === null) seatedHeight = rawView.position.y;
     baseHeight = clamp(rawView.position.y + (settings.seated ? 1.57 - seatedHeight : 0), .62, 2.25);
     sources = {};
+    const supportHand = settings.leftHanded ? 'right' : 'left';
+    let supportGrip = null;
     for (const s of active.inputSources) {
       if (s.handedness === 'right' || s.handedness === 'left')
         sources[s.handedness] = controller(frame, reference, s);
+      if (s.handedness === supportHand) supportGrip = s.gamepad?.buttons?.[1]?.pressed ?? null;
     }
     const right = sources.right?.gamepad, left = sources.left?.gamepad;
     const gunSource = sources[settings.leftHanded ? 'left' : 'right'];
-    const handed = gunSource?.gamepad, other = settings.leftHanded ? right : left;
+    const handed = gunSource?.gamepad;
     const gp = questButtons(right, left, settings.leftHanded, Boolean(p.offhand));
     const pressed = {};
     for (const key of Object.keys(gp)) pressed[key] = gp[key] && !edges[key];
@@ -139,7 +143,8 @@ export function createXR(renderer, scene, rig) {
     const angleReady = Math.max(Math.abs(ax), Math.abs(ay)) > .68 && !angleHeld;
     angleHeld = Math.max(Math.abs(ax), Math.abs(ay)) > .42;
     current = { ...pressed, fireHeld: gp.fire, yaw, eyeHeight: baseHeight, roomX: delta.x, roomZ: delta.z,
-      moveX, moveZ, walk, tracked, weaponTracked, supportGrip: button(other, 1),
+      moveX, moveZ, walk, tracked, weaponTracked, supportGrip,
+      tools: { weapon: toolPose(gunSource), lamp: toolPose(sources[supportHand]) },
       angleYaw: angleReady && Math.abs(ax) >= Math.abs(ay) ? -Math.sign(ax) : 0,
       anglePitch: angleReady && Math.abs(ay) > Math.abs(ax) ? -Math.sign(ay) : 0,
       missingFor: (performance.now() - recoveredAt) / 1000 };
@@ -151,7 +156,7 @@ export function createXR(renderer, scene, rig) {
     return rawView ? forward.clone().applyQuaternion(rawView.quaternion).applyQuaternion(turn) : forward.clone();
   }
 
-  function sync(p, settings) {
+  function sync(p) {
     if (!rawView) return { tracking: {}, view: null };
     rig.rotation.set(0, -offsetYaw, 0);
     const rotated = rawView.position.clone().applyQuaternion(rig.quaternion);
@@ -161,13 +166,13 @@ export function createXR(renderer, scene, rig) {
       position: rig.localToWorld(local.position.clone()),
       quaternion: rig.quaternion.clone().multiply(local.quaternion),
     });
-    const toolPose = source => {
-      const pose = asWorld(source?.grip);
-      if (pose && source.aim) pose.pointer = rig.quaternion.clone().multiply(source.aim.quaternion);
+    const worldTool = local => {
+      const pose = asWorld(local);
+      if (pose && local.pointer) pose.pointer = rig.quaternion.clone().multiply(local.pointer);
       return pose;
     };
-    const weapon = toolPose(settings.leftHanded ? sources.left : sources.right);
-    const lamp = toolPose(settings.leftHanded ? sources.right : sources.left);
+    const weapon = worldTool(current?.tools.weapon);
+    const lamp = worldTool(current?.tools.lamp);
     return { tracking: { weapon, lamp }, view: asWorld(rawView) };
   }
 

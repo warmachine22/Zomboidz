@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Quaternion, Vector3 } from 'three';
-import { createGunHandling, heldPose, mountedAim } from '../src/held-tools.js';
+import { createGunHandling, heldPose, mountedAim, shotgunPumpTravel } from '../src/held-tools.js';
 import { createRun, stepRun, traceAim } from '../src/simulation.js';
 import { questButtons } from '../src/xr.js';
 
@@ -121,6 +121,96 @@ test('bracing mirrors the support socket, reduces recoil, and reverts when relea
     update(true, support, 'shotgun');
     assert.equal(handling.braced, false, 'swapping clears the brace');
   }
+});
+
+test('both hands steer each long gun through wide sweeps and keep the hand and dock on the recoiling foregrip', () => {
+  for (const kind of ['shotgun', 'carbine', 'smg']) {
+    for (const leftHanded of [false, true]) {
+      const options = { ...settings, leftHanded };
+      const handling = createGunHandling();
+      const socket = layout.support.clone();
+      socket.x *= leftHanded ? 1 : -1;
+      const rest = pose(weapon.position.clone().add(socket));
+      const braceAt = lamp => handling.updateBrace(kind, { weapon, lamp }, layout, options, true, true, .3);
+      braceAt(rest);
+      assert.ok(handling.braced);
+      for (const direction of [new Vector3(.35, 0, -.32), new Vector3(-.38, .23, -.33)]) {
+        const lamp = pose(weapon.position.clone().add(direction));
+        braceAt(lamp);
+        const solved = handling.resolve({ weapon, lamp }, layout, view, options, true);
+        assert.ok(handling.braced);
+        assert.ok(socket.clone().applyQuaternion(solved.weapon.quaternion).angleTo(direction) < .001);
+        assert.ok(mountedAim(solved.weapon, layout, view).ray.angleTo(forward) > .65);
+      }
+
+      handling.kick(leftHanded);
+      const pump = kind === 'shotgun' ? shotgunPumpTravel(.36) : 0;
+      const solved = handling.resolve({ weapon, lamp: rest }, layout, view, options, true, false, 0, undefined, pump);
+      const contact = socket.clone().add(new Vector3(0, 0, pump))
+        .applyQuaternion(solved.weapon.quaternion).add(solved.weapon.position);
+      assert.ok(solved.support.position.distanceTo(contact) < 1e-8);
+      assert.ok(mountedAim(solved.lamp, lamp, view).ray.angleTo(mountedAim(solved.weapon, layout, view).ray) < 1e-7);
+    }
+  }
+});
+
+test('support aim tolerates brief tracking loss, tiny controller separation, and instant snap turns', () => {
+  const handling = createGunHandling();
+  const socket = layout.support.clone(); socket.x *= -1;
+  const rest = pose(weapon.position.clone().add(socket));
+  const extended = pose(weapon.position.clone().add(new Vector3(.28, .16, -.31)));
+  const update = (lamp, pressed = true, dt = .18) =>
+    handling.updateBrace('shotgun', { weapon, lamp }, layout, settings, true, pressed, dt);
+  const resolve = lamp => handling.resolve({ weapon, lamp }, layout, view, settings, true);
+  update(rest);
+  update(extended);
+  const before = resolve(extended);
+  update(pose(weapon.position.clone().add(new Vector3(0, .03, 0))));
+  assert.ok(resolve(rest).weapon.quaternion.angleTo(before.weapon.quaternion) < 1e-7);
+  update(undefined, null, .08);
+  assert.ok(handling.braced);
+  assert.ok(resolve().support.position.distanceTo(before.support.position) < 1e-8);
+  update(extended);
+  assert.ok(handling.braced);
+
+  const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 6);
+  const rotatePose = p => ({ position: p.position.clone().applyQuaternion(turn), quaternion: turn.clone().multiply(p.quaternion) });
+  const original = resolve(extended);
+  const turned = handling.resolve({ weapon: rotatePose(weapon), lamp: rotatePose(extended) },
+    layout, view, settings, true, false, 0, turn);
+  assert.ok(turned.weapon.quaternion.angleTo(turn.clone().multiply(original.weapon.quaternion)) < 1e-7);
+  assert.ok(turned.support.position.distanceTo(original.support.position.clone().applyQuaternion(turn)) < 1e-8);
+
+  update(undefined, true, .08);
+  update(undefined, true, .07);
+  assert.equal(handling.braced, false);
+  update(rest);
+  assert.equal(handling.braced, false);
+  update(rest, false);
+  update(rest);
+  assert.ok(handling.braced);
+  handling.reset('shotgun', true);
+  update(rest);
+  assert.equal(handling.braced, false);
+});
+
+test('a braced shotgun uses the same solved barrel for the laser and the center pellet', () => {
+  const handling = createGunHandling();
+  const near = pose(weapon.position.clone().add(new Vector3(-.04, -.01, -.27)));
+  const far = pose(weapon.position.clone().add(new Vector3(-.32, .15, -.32)));
+  for (const lamp of [near, far])
+    handling.updateBrace('shotgun', { weapon, lamp }, layout, settings, true, true, .3);
+  const aim = mountedAim(handling.resolve({ weapon, lamp: far }, layout, view, settings, true).weapon, layout, view);
+  assert.ok(aim.ray.x < -.5 && aim.ray.y > .2);
+  const run = createRun('braced alignment', { populate: false });
+  Object.assign(run.player, { y: 0, weapon: 'shotgun', ammo: 4 });
+  Object.assign(run.world, { height: () => 0, raycast: (_, __, range) => range > 5 ? { t: 5, kind: 'stone' } : null });
+  const predicted = traceAim(run, aim);
+  const events = stepRun(run, { aim, fire: true });
+  const shot = events.find(event => event.type === 'shot');
+  const impact = events.find(event => event.type === 'impact');
+  assert.ok(new Vector3(shot.ray.x, shot.ray.y, shot.ray.z).distanceTo(aim.ray) < 1e-8);
+  assert.deepEqual([impact.x, impact.y, impact.z], [predicted.point.x, predicted.point.y, predicted.point.z]);
 });
 
 test('the desktop bore, predicted impact, and fired impact use the same ray', () => {

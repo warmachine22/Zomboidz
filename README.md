@@ -21,6 +21,8 @@ The woods go dark beyond the flashlight, landmark lights, and active flares. Mai
 
 Quest Browser needs an HTTPS deployment to enter immersive VR. On the headset, use **Enter VR**, then the weapon trigger to start. The left stick moves and the right stick snap turns. Right A reloads, right B cycles weapons, left X changes the beam, and left Y pauses. Use the weapon grip to pick up gear and the light trigger to toggle the flashlight.
 
+To aim a shotgun, carbine, or SMG with both hands, bring the flashlight hand to the foregrip and squeeze its grip button. Keep squeezing as you steer with the front hand, then release to aim one-handed.
+
 New weapons equip unloaded. Firearms share one reserve, and each weapon keeps its loaded rounds when you switch. An empty weapon starts reloading automatically when spares are available.
 
 Standard and Hard runs start with a loaded flare gun and 19 spare flares. Cycle to it and launch a flare ahead of you to draw nearby zombies toward the landing spot for up to 10 seconds. The optional aim dot marks the expected landing spot. Spare flares collect automatically near ammo caches and from occasional zombie drops.
