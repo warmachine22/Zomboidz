@@ -9,17 +9,35 @@ import { animatedAnchors, attackContact, burstPhase, enemyMotion, interpolateEne
 import { addEnemy, createRun, ENEMIES, hordeTarget, STEP, stepRun } from '../src/simulation.js';
 import { listScores, recordRun } from '../src/records.js';
 import { createWorld } from '../src/world.js';
+import { activeHordeLimit, DIFFICULTIES } from '../src/difficulty.js';
+import { replenishHorde } from '../src/horde.js';
 
-test('Hard ramps faster on the same seed and has shorter ambush intervals', () => {
-  const standard=createRun('rain'), hard=createRun('rain',{difficulty:'hard'});
-  assert.equal(hordeTarget(210,'hard'),32);
-  assert.equal(hordeTarget(390,'hard'),48);
-  assert.equal(hordeTarget(300,'standard'),26);
-  assert.equal(hordeTarget(390,'standard'),32);
-  assert.equal(hordeTarget(660,'standard'),48);
-  assert.deepEqual(hard.enemies.map(e=>[e.spawn.x,e.spawn.z]),standard.enemies.map(e=>[e.spawn.x,e.spawn.z]));
-  assert.ok(hard.nextAmbush < standard.nextAmbush);
-  assert.ok(hard.enemies.every(e=>e.approach.at>=18 && e.approach.at<26));
+test('all difficulty curves vary by seed, stay in their checkpoint ranges, and gain one enemy at a time', () => {
+  for (const [difficulty,rules] of Object.entries(DIFFICULTIES)) {
+    const openings = new Set(), ceilings = new Set();
+    for (const i of Array.from({length:12},(_,i)=>i)) {
+      const run = createRun('curve-'+i,{difficulty});
+      openings.add(run.enemies.length);
+      assert.equal(run.enemies.length,activeHordeLimit(run));
+      const checkpointTimes = [0,180,360,720,rules.late];
+      for (const [index, seconds] of checkpointTimes.entries()) {
+        const [low,high] = rules.crowd[index];
+        const target = hordeTarget(seconds,difficulty,run.crowdRoll);
+        assert.ok(low <= target && target <= high);
+      }
+      let previous = run.enemies.length;
+      for (let time = 1; time <= rules.late; time++) {
+        const target = hordeTarget(time,difficulty,run.crowdRoll);
+        assert.ok(target === previous || target === previous + 1);
+        previous = target;
+      }
+      ceilings.add(previous);
+      assert.equal(hordeTarget(rules.late+500,difficulty,run.crowdRoll),previous);
+    }
+    assert.ok(openings.size > 1 && ceilings.size > 1);
+  }
+  const easy=createRun('rain',{difficulty:'easy'}), normal=createRun('rain'), hard=createRun('rain',{difficulty:'hard'});
+  assert.ok(hard.nextAmbush < normal.nextAmbush && normal.nextAmbush < easy.nextAmbush);
 });
 
 test('more than ten Standard runs retain Hard and legacy scores in their own tables', () => {
@@ -36,6 +54,10 @@ test('more than ten Standard runs retain Hard and legacy scores in their own tab
     assert.equal(listScores('standard').length,10);
     assert.equal(listScores('standard')[0].id,'legacy');
     assert.deepEqual(listScores('hard').map(row=>row.id),['hard']);
+    run.difficulty='easy';
+    recordRun(run,'easy','E');
+    assert.equal(recordRun({...run,arsenal:{wave:20,weapon:'shotgun'}},'practice','P').saved,false);
+    assert.deepEqual(listScores('easy').map(row=>row.id),['easy']);
   } finally {
     Object.defineProperty(globalThis,'localStorage',{configurable:true,value:old});
   }
@@ -75,7 +97,9 @@ test('shrieker loads, accelerates through an animated sprint and only then brake
   const phases = new Set(), sprintCycles = new Set();
   let peak = 0, brakeExit = Infinity;
   for (let i = 0; i < 64; i++) {
+    const { x,z } = enemy;
     stepRun(run);
+    assert.ok(Math.hypot(x-enemy.x,z-enemy.z) / STEP <= run.rules.speedLimit + 1e-8);
     const phase = burstPhase(enemy);
     if (!phase) continue;
     phases.add(phase);
@@ -90,8 +114,49 @@ test('shrieker loads, accelerates through an animated sprint and only then brake
     if (phase === 'Brake') brakeExit = enemy.stride;
   }
   assert.deepEqual([...phases], ['BurstLoad','Sprint','Brake']);
-  assert.ok(sprintCycles.size > 15 && peak > 3);
+  assert.ok(sprintCycles.size > 15 && peak > 2.2 && peak <= run.rules.speedLimit + 1e-8);
   assert.ok(brakeExit < peak * .6);
+});
+
+test('ambush rushes and lunges remain below full movement speed', () => {
+  for (const difficulty of Object.keys(DIFFICULTIES)) {
+    const run = room(difficulty), p = run.player;
+    p.protection = 8;
+    const e = addEnemy(run,'shrieker',p.x,p.z-5.8);
+    e.ambush = { stage:'emerging',hide:{x:e.x,z:e.z},exit:{x:e.x,z:e.z},until:8 };
+    let rushed = false, lunged = false;
+    for (let i = 0; i < 135; i++) {
+      const { x,z } = e;
+      stepRun(run);
+      const speed = Math.hypot(e.x-x,e.z-z)/STEP;
+      assert.ok(speed <= run.rules.speedLimit+1e-8);
+      rushed ||= e.ambush?.stage === 'emerging' && speed > 1.3;
+      lunged ||= e.attackAge !== undefined && speed > 1;
+    }
+    assert.ok(rushed && lunged);
+  }
+});
+
+test('recycling at the cap waits for the difficulty threshold and respects the cooldown', () => {
+  for (const difficulty of Object.keys(DIFFICULTIES)) {
+    const run = room(difficulty), { player:p } = run;
+    run.world.clear = () => false;
+    const first = addEnemy(run,'shambler',p.x-41,p.z);
+    run.time = run.rules.recycleAfter - 1;
+    replenishHorde(run,1,[],addEnemy);
+    assert.equal(Boolean(first.dead),false);
+    run.time++;
+    replenishHorde(run,1,[],addEnemy);
+    assert.equal(first.dead,true);
+    const second = run.enemies.at(-1);
+    Object.assign(second,{ x:p.x-41,z:p.z });
+    run.time += run.rules.recycleInterval - 1;
+    replenishHorde(run,1,[],addEnemy);
+    assert.equal(Boolean(second.dead),false);
+    run.time++;
+    replenishHorde(run,1,[],addEnemy);
+    assert.equal(second.dead,true);
+  }
 });
 
 test('render transforms interpolate the last movement tick and take the short turn across pi', () => {

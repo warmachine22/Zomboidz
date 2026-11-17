@@ -1,5 +1,6 @@
 import { beamSettings, createRun, enemyPose, flarePower, GUNS, isSupply, magazineCapacity, stepRun, visibleTargets } from '../src/simulation.js';
 import { angleDelta, clamp, direction, distance, random } from '../src/world.js';
+import { DIFFICULTIES, difficultyKey } from '../src/difficulty.js';
 
 const rules = {
   stationary: { goal: false, quiet: true, aimError: .031, shootAt: 17, flee: 0 },
@@ -8,8 +9,9 @@ const rules = {
 };
 const kind = process.argv.find(a => a.startsWith('--strategy='))?.split('=')[1];
 if (kind && !(kind in rules)) throw Error('Choose stationary, cautious, or aggressive.');
-const difficulty = process.argv.find(a => a.startsWith('--difficulty='))?.split('=')[1] ?? 'standard';
-if (!['standard','hard'].includes(difficulty)) throw Error('Choose standard or hard.');
+const level = process.argv.find(a => a.startsWith('--difficulty='))?.split('=')[1] ?? 'normal';
+if (level !== 'normal' && !Object.hasOwn(DIFFICULTIES,level)) throw Error('Choose easy, normal, or hard.');
+const difficulty = difficultyKey(level);
 const maxTime = Number(process.argv.find(a => a.startsWith('--seconds='))?.split('=')[1] ?? 540);
 if (!Number.isFinite(maxTime) || maxTime <= 0 || maxTime > 3600) throw Error('Choose 1–3600 seconds.');
 const seeds = process.argv.find(a => a.startsWith('--seeds='))?.split('=')[1].split(',') ??

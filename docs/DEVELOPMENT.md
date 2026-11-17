@@ -24,7 +24,9 @@ The script creates the authored weapons, flashlight, gloves, utility wreck, and 
 
 Run the shambler comparison on the dev server with `?debug&scenario=motion`. Append `&version=before` for the 1.0.3 model and baseline animation, `&view=side` for the close side view, or `&light=moon` to start with the flashlight off. Both versions walk around the same trunk and take scripted hits. The old GLB ships with the development server only.
 
-Run `npm run balance -- --difficulty=standard` and repeat with `--difficulty=hard` to compare the same seeds. The runner reports both crowd and ambush counts.
+Run `npm run balance -- --difficulty=normal` and repeat with `--difficulty=easy` or `--difficulty=hard` to compare the same seeds. The runner reports both crowd and ambush counts.
+
+Run `node scripts/check-search.mjs --routes-only` to walk seeded shed routes with the real collision and movement rules. Omit the flag to exercise combat and radio interaction along those routes. The scripted explorer uses a known route and reports first shed time, sheds reached, deaths, and escapes. Use `?debug&scenario=lantern` locally to review a shed from a distance with the flashlight off. On a physical Quest 3, select Hard and the 20-minute Arsenal Test preset with `?perf=1` and record the active crowd, P95 frame time, and missed frames.
 
 ## Quest release check
 

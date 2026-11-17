@@ -141,7 +141,21 @@ export function createWorld(seed) {
     const rng = random(seed + ':chunk:' + key);
     const left = cx * CHUNK, top = cz * CHUNK;
     const biome = region(left+CHUNK/2,top+CHUNK/2);
-    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [], lights: [], buildings: [], biome };
+    const sector = district(left,top);
+    const belongsHere = ({ x, z }) => x >= left && x < left + CHUNK && z >= top && z < top + CHUNK;
+    const markers = sector.tracks.slice(0,2).map(([west,z]) => {
+      const bend = polylineOffset(z);
+      const x = bend + 126 * Math.ceil((west - 3 - bend) / 126);
+      return { x:x + 4.5, z:z + 2.9 };
+    }).filter(belongsHere);
+    if (cx === -1 || cx === 0) {
+      for (let z = top + 11; z < Math.min(20, top + CHUNK) && z >= -174; z += 24) {
+        const post = { x:polylineOffset(z) - 3.05, z };
+        if (belongsHere(post)) markers.push(post);
+      }
+    }
+    const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [],
+      lights: [], buildings: [], markers, biome };
     const sites = [];
 
     const box = (x, z, w, h, d, base = height(x, z), kind = 'stone', tint) => {
@@ -198,7 +212,7 @@ export function createWorld(seed) {
         cache('rocks', x, z - 3.3, rng() > .5 ? 'pierce' : 'reload', 34);
       }
     };
-    const building = district(left,top).buildings.get(key);
+    const building = sector.buildings.get(key);
     if (building) {
       sites.push({ x:building.x, z:building.z, r:10.8 });
       buildDistrictSite(building,area,height,box,random,(...args)=>site('wreck',...args));

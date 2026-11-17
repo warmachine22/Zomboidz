@@ -1,11 +1,12 @@
-import { BUILD } from './simulation.js';
+import { BUILD, GUNS } from './simulation.js';
 import { gunAngle } from './held-tools.js';
-import { DIFFICULTIES, difficultyKey } from './difficulty.js';
+import { ARSENAL_WAVES, DIFFICULTIES, difficultyKey, MODES } from './difficulty.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
 const defaults = { leftHanded: false, seated: false, reducedFlashes: false, visibility: false,
-  laserDot: false, legendary: false, volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0, difficulty: 'standard' };
+  laserDot: false, mode: 'survival', arsenalWave: 0, arsenalWeapon: 'pistol',
+  volume: .75, initials: 'YOU', gunPitch: 0, gunYaw: 0, difficulty: 'standard' };
 let fallbackScores = [];
 
 function read(key, otherwise) {
@@ -35,6 +36,9 @@ export function loadSettings() {
   settings.gunPitch = gunAngle(settings.gunPitch);
   settings.gunYaw = gunAngle(settings.gunYaw);
   settings.difficulty = difficultyKey(settings.difficulty);
+  if (!Object.hasOwn(MODES, value?.mode)) settings.mode = value?.legendary === true ? 'legendary' : defaults.mode;
+  if (!ARSENAL_WAVES.includes(settings.arsenalWave)) settings.arsenalWave = defaults.arsenalWave;
+  if (!Object.hasOwn(GUNS, settings.arsenalWeapon)) settings.arsenalWeapon = defaults.arsenalWeapon;
   return settings;
 }
 
@@ -69,6 +73,7 @@ function compare(a, b) {
 }
 
 export function recordRun(run, id, label) {
+  if (run.arsenal || run.legendary) return { saved:false, place:0 };
   const entry = {
     id, initials: initials(label), time: Math.floor(run.time * 100) / 100,
     kills: run.player.kills, headshots: run.player.headshots, seed: run.seed, version: BUILD, difficulty:difficultyKey(run.difficulty),

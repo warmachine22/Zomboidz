@@ -2,12 +2,13 @@ import { angleDelta, clamp, createWorld, direction, distance, random, START } fr
 import { animatedAnchors, attackContact, attackDirection, burstPhase, BURST_BRAKE, BURST_LOAD, BURST_RUN,
   enemyMotion, HIT_SEGMENTS, hitRadii, strideLength, updateEnemyFooting } from './enemy-motion.js';
 import { replenishHorde, seedHorde } from './horde.js';
-import { DIFFICULTIES, difficultyKey } from './difficulty.js';
+import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, difficultyKey, pressureTime } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 import { reachableRadio, visitBuildings } from './extraction.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.0.15';
+export const BUILD = '1.0.16';
+export { hordeTarget } from './difficulty.js';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
   shotgun: { name: 'Pump shotgun', capacities: [4, 5, 6, 7], reload: 2.2, interval: .83, range: 34, damage: .91, noise: 57, rounds: 7, spread: .077 },
@@ -16,9 +17,9 @@ export const GUNS = {
   flaregun: { name: 'Flare gun', capacities: [1, 1, 1, 1], reload: 1.35, interval: .42 },
 };
 export const ENEMIES = {
-  shambler: { speed: .985, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
-  shrieker: { speed: 1.62, height: 1.66, width: .23, hp: 2.4, windup: .38, reach: 1.16 },
-  brute: { speed: .83, height: 2, width: .36, hp: 6.6, windup: .83, reach: 1.35 },
+  shambler: { speed: .84, height: 1.77, width: .28, hp: 3.2, windup: .60, reach: 1.19 },
+  shrieker: { speed: 1.36, height: 1.66, width: .23, hp: 2.4, windup: .38, reach: 1.16 },
+  brute: { speed: .72, height: 2, width: .36, hp: 5.9, windup: .83, reach: 1.35 },
 };
 export const UPGRADES = {
   damage: { name: 'Hot loads', icon: '▲', cap: 3, color: '#ff8b70', description: '+15% damage' },
@@ -74,13 +75,6 @@ export function signalFlarePower(age) {
 
 function isFlareTarget(reason) {
   return reason === 'loot flare' || reason === 'signal flare';
-}
-
-export function hordeTarget(time, difficulty = 'standard') {
-  const { opening, middle, maximum } = DIFFICULTIES[difficultyKey(difficulty)];
-  return Math.min(48, 10 + Math.floor(time < middle
-    ? Math.max(0, time - opening) * 22 / (middle - opening)
-    : 22 + (time - middle) * 16 / (maximum - middle)));
 }
 
 export function beamSettings(player, mode = player.beam) {
@@ -218,38 +212,46 @@ function emit(run, type, data = {}) {
   run.events.push({ type, ...data });
 }
 
-export function createRun(seed, { crowdLimit = 48, populate = true, difficulty = 'standard', legendary = false } = {}) {
+export function createRun(seed, { crowdLimit = 48, populate = true, difficulty = 'standard', legendary = false, arsenal = null } = {}) {
   difficulty = difficultyKey(difficulty);
+  if (arsenal) {
+    legendary = false;
+    arsenal = { weapon: Object.hasOwn(GUNS, arsenal.weapon) ? arsenal.weapon : 'pistol',
+      wave: ARSENAL_WAVES.includes(arsenal.wave) ? arsenal.wave : 0 };
+  }
+  const upgrades = Object.fromEntries(Object.entries(UPGRADES).map(([key, upgrade]) => [key, arsenal ? upgrade.cap : 0]));
+  const magazines = arsenal
+    ? Object.fromEntries(Object.entries(GUNS).map(([weapon, gun]) => [weapon, gun.capacities[upgrades.capacity]]))
+    : legendary ? { pistol: LEGENDARY_CAPACITY } : { pistol: GUNS.pistol.capacities[0], flaregun: 1 };
   const world = createWorld(seed);
   const run = {
-    seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit, legendary,
+    seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit, legendary, arsenal,
+    difficulty, rules: DIFFICULTIES[difficulty], crowdRoll: random(seed + ':crowd')(),
     player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
-      weapon: 'pistol', magazines: legendary ? { pistol: LEGENDARY_CAPACITY } : { pistol: GUNS.pistol.capacities[0], flaregun: 1 },
+      weapon: arsenal?.weapon ?? 'pistol', magazines,
       offhand: legendary ? { ammo: LEGENDARY_CAPACITY, reload: null, cooldown: 0, beam: 'wide' } : null,
       get ammo() { return this.magazines[this.weapon]; },
       set ammo(rounds) { this.magazines[this.weapon] = rounds; },
       get equippedReserve() { return this.weapon === 'flaregun' ? this.flares : this.reserve; },
-      flares: legendary ? 0 : 19,
-      reserve: 50, armor: 0, protection: 0, reload: null, cooldown: 0,
-      flashlight: true, battery: 1, beam: 'wide', upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
+      flares: arsenal ? FLARE_RESERVE_MAX : legendary ? 0 : 19,
+      reserve: arsenal ? RESERVE_MAX : 50, armor: 0, protection: 0, reload: null, cooldown: 0,
+      flashlight: true, battery: 1, beam: 'wide', upgrades,
       travelX: 0, travelZ: 0, stepDistance: 0, kills: 0, headshots: 0, noisePeak: 0 },
     enemies: [], loot: [], signalFlares: [], settledLoot: new Set(), events: [], noises: [], corpses: [],
     search: { visits: new Map(), sheds: 0, radio: null },
-    nextId: 1, nextSpawn: 2, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, lastBuildingCheck: -Infinity, dryKills: 0,
+    nextId: 1, nextSpawn: 2, nextRecycle: 0, spawnTurn: 0, nextLoot: 33, lastChunkCheck: -Infinity, lastBuildingCheck: -Infinity, dryKills: 0,
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
     metrics: { shots: 0, dryFire: 0, roundsPicked: 0, upgrades: 0, guarded: 0, lootFlareSeconds: 0,
       pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0,
       spawns: [0,0,0,0], aheadSpawns: 0, directionalSamples:0, coveredSectors:0 },
   };
   updateLandmarks(run);
-  run.difficulty = difficulty;
-  run.rules = DIFFICULTIES[difficulty];
   // A separate starting offset keeps the layout and ordinary opening spawns seed-stable.
   const [firstAmbush, lastAmbush] = run.rules.ambush;
   run.ambushRng = random(seed+':ambush');
-  run.nextAmbush = run.rules.opening+firstAmbush+run.ambushRng()*(lastAmbush-firstAmbush);
+  run.nextAmbush = Math.max(0, run.rules.opening - pressureTime(run)) + firstAmbush+run.ambushRng()*(lastAmbush-firstAmbush);
   run.metrics.ambushes = {reserved:0,emerged:0,hits:0};
-  if (populate) seedHorde(run, Math.min(crowdLimit, hordeTarget(0,difficulty)), addEnemy);
+  if (populate) seedHorde(run, activeHordeLimit(run), addEnemy);
   run.events.length = 0;
   return run;
 }
@@ -435,7 +437,7 @@ export function shoot(run, aim, offhand = false) {
       const current = hits.get(hit.e) || { total: 0, head: false, leg: false, point: hit.point };
       const headshot = hit.zone === 'head';
       current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i *
-        (headshot ? 2.8 : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
+        (headshot ? (hit.e.kind === 'brute' ? 2.2 : 2.8) : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
       current.head ||= headshot;
       current.leg ||= hit.zone === 'leg';
       hits.set(hit.e, current);
@@ -444,7 +446,8 @@ export function shoot(run, aim, offhand = false) {
       emit(run, 'impact', { ...cover.point, surface: cover.surface });
   }
   for (const [enemy, hit] of hits) {
-    enemy.hp -= hit.total;
+    const brute = enemy.kind === 'brute';
+    enemy.hp -= brute ? Math.min(hit.total, ENEMIES.brute.hp * .55) : hit.total;
     enemy.stun = hit.total > 1.1 ? .15 : .07;
     enemy.hitFrom = attackDirection(enemy, center);
     enemy.hitAge = 0;
@@ -455,7 +458,7 @@ export function shoot(run, aim, offhand = false) {
     }
     if (hit.leg) enemy.slow = 1.3;
     emit(run, 'impact', { ...hit.point, surface: 'body' });
-    if (hit.head || enemy.hp <= 0) eliminate(run, enemy, hit.head);
+    if ((hit.head && !brute) || enemy.hp <= 0) eliminate(run, enemy, hit.head);
   }
 }
 
@@ -674,7 +677,7 @@ function attack(run, enemy, gap, dt) {
     const contact = attackContact(enemy.kind);
     if (age < windup) {
       enemy.yaw += clamp(angleDelta(toward, enemy.yaw), -dt * 2.8, dt * 2.8);
-      const power = enemy.kind === 'shrieker' ? 1.64 : enemy.kind === 'brute' ? .76 : 1.48;
+      const power = Math.min(run.rules.speedLimit, enemy.kind === 'shrieker' ? 1.64 : enemy.kind === 'brute' ? .76 : 1.48);
       if (age > windup*.58 && gap > .74 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
         run.world.move(enemy, Math.sin(enemy.yaw)*power*dt,-Math.cos(enemy.yaw)*power*dt,shape.width*.83);
         enemy.y = run.world.height(enemy.x,enemy.z);
@@ -747,12 +750,12 @@ function navigate(run, e, tx, tz, dt) {
     (e.kind === 'shambler' ? .14 : .06) * Math.sin(phase);
   const progress = e.stumble > 0 ? 1 - e.stumble/e.stumbleDuration : 0;
   const stumblePace = progress > 0 ? 1 - .43 * Math.sin(Math.PI*progress) + .16 * Math.sin(2*Math.PI*progress) : 1;
-  const speedTarget = (isBurst ? 3.48 : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
+  const speedTarget = (isBurst ? run.rules.speedLimit : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
   const previous = e.moveSpeed;
-  const targetSpeed = burst === 'BurstLoad' ? .18 : burst === 'Brake' ? speedTarget*.62
+  const targetSpeed = Math.min(run.rules.speedLimit, burst === 'BurstLoad' ? .18 : burst === 'Brake' ? speedTarget*.62
     : e.ambush?.stage === 'emerging' ? Math.max(1.75,speedTarget*1.62)
-    : e.ambush?.stage === 'seeking' ? Math.max(1.25,speedTarget) : speedTarget;
+    : e.ambush?.stage === 'seeking' ? Math.max(1.25,speedTarget) : speedTarget);
   const speed = e.moveSpeed += clamp(targetSpeed - e.moveSpeed, -dt * 5.4, dt * (e.kind === 'brute' ? 2.2 : 4.6));
   if (previous < .13 && speed >= .13) e.startAge = 0;
   const oldX = e.x, oldZ = e.z, radius = cfg.width * .83;
@@ -958,7 +961,7 @@ export function stepRun(run, input = {}, dt = STEP) {
     updateLandmarks(run);
     run.lastChunkCheck = run.time;
   }
-  const cap = Math.min(run.crowdLimit, hordeTarget(run.time,run.difficulty));
+  const cap = activeHordeLimit(run);
   if (run.time - run.lastBuildingCheck >= .40) {
     visitBuildings(run,run.populate ? cap : 0,addEnemy);
     run.lastBuildingCheck = run.time;
@@ -983,7 +986,8 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (run.populate && run.time >= run.nextSpawn) {
     replenishHorde(run, cap, lamps, addEnemy);
-    run.nextSpawn = run.time + run.rules.arrivals * (run.time < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - run.time / 580));
+    const age = pressureTime(run);
+    run.nextSpawn = run.time + run.rules.arrivals * (age < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - age / 580));
   }
   updateSignalFlares(run, dt);
   updateEnemies(run, dt, lamps);

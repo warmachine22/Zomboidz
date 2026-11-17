@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, isSupply, LOOT,
   resolvePlayerBeam, setLoot, signalFlarePower, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
-import { clamp } from './world.js';
+import { CHUNK, clamp } from './world.js';
 import { createAudio } from './audio.js';
 import { createXR } from './xr.js';
 import { formatTime, initials, listScores, loadSettings, rapidSeed, recordRun, saveSettings } from './records.js';
 import { drawDebug } from './debug-map.js';
 import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim,
   shotgunPumpTravel, toolLayouts } from './held-tools.js';
-import { DIFFICULTIES, difficultyKey } from './difficulty.js';
+import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, MODES } from './difficulty.js';
 import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
 
 const $ = id => document.getElementById(id);
@@ -73,7 +73,7 @@ let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
 const text = (id, value) => { $(id).textContent = value; };
-const objective = 'Survive and escape. Search sheds for a radio.';
+const objective = 'Follow the road. Search sheds for an extraction radio.';
 
 function clearInput() {
   held.clear();
@@ -123,12 +123,17 @@ function pointerLock() {
   } catch { useMouseDrag = true; }
 }
 
-function start(seed = rapidSeed(), difficulty = settings.difficulty) {
+function selectedSetup() {
+  return { difficulty:settings.difficulty, legendary:settings.mode === 'legendary',
+    arsenal:settings.mode === 'arsenal' ? { wave:settings.arsenalWave, weapon:settings.arsenalWeapon } : null };
+}
+
+function start(seed = rapidSeed(), setup = selectedSetup()) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
-  const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape'].includes(scenario);
-  run = createRun(encounter ? 'Blackwater' : seed, { crowdLimit: xr.active ? 48 : touch ? 34 : 48,
-    populate: !encounter, difficulty, legendary: settings.legendary });
+  const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape', 'lantern'].includes(scenario);
+  run = createRun(encounter ? 'Blackwater' : seed, { ...setup, crowdLimit: xr.active ? 48 : touch ? 34 : 48,
+    populate: !encounter });
   yaw = pitch = roomX = roomZ = 0;
   if (scenario === 'roadside') {
     addEnemy(run, 'shambler', -.55, 13.6);
@@ -145,6 +150,19 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
     if (!run.legendary) run.player.flashlight = false;
   } else if (scenario === 'shelter') {
     Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: run.legendary });
+  } else if (scenario === 'lantern') {
+    const world = run.world;
+    const site = world.districtSites(0,-1).find(building => building.radio && building.lantern);
+    const light = world.chunk(Math.floor(site.x/CHUNK),Math.floor(site.z/CHUNK)).lights.find(l => l.type === 'lantern');
+    const sign = Math.sign(site.door.z-site.z);
+    const viewpoints = [32,28,22,16,9].flatMap(gap => [0,-6,6,-12,12].map(dx => {
+      const x = site.door.x+dx, z = site.door.z+sign*gap;
+      return { x,z,y:world.height(x,z) };
+    }));
+    const point = viewpoints.find(p => !world.blocks(p.x,p.z,.4) && world.clear({ ...p,y:p.y+1.63 },light))
+      ?? viewpoints.at(-1);
+    yaw = Math.atan2(light.x-point.x,point.z-light.z);
+    Object.assign(run.player,{ ...point,yaw,flashlight:run.legendary });
   } else if (scenario === 'escape') {
     const site = run.world.districtSites(0,-1).find(building => building.radio);
     const x = site.door.x, z = site.door.z + Math.sign(site.door.z-site.z)*1.7;
@@ -181,6 +199,11 @@ function start(seed = rapidSeed(), difficulty = settings.difficulty) {
   updateHUD(true);
 }
 
+function rematch() {
+  const { seed, difficulty, legendary, arsenal } = run;
+  start(seed,{ difficulty, legendary, arsenal });
+}
+
 function pause(reason = 'The run is paused.') {
   if (phase !== 'playing') return;
   pauseReason = reason;
@@ -204,10 +227,17 @@ function showHome() {
   showPanel('home');
 }
 
+function practiceLabel() {
+  if (run.arsenal) return 'Arsenal Test · ' + DIFFICULTIES[run.difficulty].name + ' · Minute ' + run.arsenal.wave;
+  if (run.legendary) return 'Legendary practice';
+  return '';
+}
+
 function resultScore() {
   if (run.status !== 'dead' || motionReplay) return;
-  if (run.legendary) {
-    resultNote = 'Legendary practice · Seed ' + run.seed;
+  const practice = practiceLabel();
+  if (practice) {
+    resultNote = practice + ' · Seed ' + run.seed;
     text('result-storage', resultNote);
     return;
   }
@@ -246,13 +276,13 @@ function fillResults(title, description, escaped) {
   text('result-kills', run.player.kills);
   text('result-heads', run.player.headshots);
   $('look-around').hidden = escaped;
-  $('result-initials').parentElement.hidden = escaped;
+  $('result-initials').parentElement.hidden = escaped || Boolean(practiceLabel());
 }
 
 function inspectEscape() {
   replyUntil = performance.now() + 3850;
   deathAt = 0;
-  resultNote = 'Seed ' + run.seed;
+  resultNote = [practiceLabel(), 'Seed ' + run.seed].filter(Boolean).join(' · ');
   text('radio-reply', RADIO_REPLY);
   text('result-storage', resultNote);
   fillResults('Escaped', RADIO_REPLY, true);
@@ -301,15 +331,37 @@ function showScores() {
   target.append(table);
 }
 
-function setDifficulty(level) {
-  settings.difficulty = difficultyKey(level);
-  $('difficulty').value = settings.difficulty;
+function setRunOption(key, value) {
+  settings[key] = value;
+  for (const [id,option] of [['difficulty','difficulty'], ['game-mode','mode'],
+    ['arsenal-wave','arsenalWave'], ['arsenal-weapon','arsenalWeapon']]) $(id).value = settings[option];
+  $('arsenal-setup').hidden = settings.mode !== 'arsenal';
   panelKey = '';
   saveSettings(settings);
 }
-$('difficulty').value = settings.difficulty;
-$('difficulty').addEventListener('change', event => setDifficulty(event.target.value));
+
+const difficultyOptions = Object.entries(DIFFICULTIES).map(([value,level]) => [value,level.name]);
+const weaponOptions = Object.entries(GUNS).map(([value,gun]) => [value,gun.name]);
+const runOptions = [
+  ['difficulty','difficulty',difficultyOptions], ['game-mode','mode',Object.entries(MODES)],
+  ['arsenal-wave','arsenalWave',ARSENAL_WAVES.map(wave => [wave,wave + ' min'])],
+  ['arsenal-weapon','arsenalWeapon',weaponOptions],
+];
+for (const [id,key,options] of runOptions) {
+  const menu = $(id);
+  menu.replaceChildren(...options.map(([value,label]) => new Option(label,value)));
+  menu.value = settings[key];
+  menu.addEventListener('change', () => setRunOption(key, options[menu.selectedIndex][0]));
+}
+$('arsenal-setup').hidden = settings.mode !== 'arsenal';
+$('score-difficulty').replaceChildren(...difficultyOptions.map(([value,label]) => new Option(label,value)));
 $('score-difficulty').addEventListener('change', showScores);
+
+function cycleRunOption(key) {
+  const [, , options] = runOptions.find(([,option]) => option === key);
+  const index = options.findIndex(([value]) => value === settings[key]);
+  setRunOption(key, options[(index + 1) % options.length][0]);
+}
 
 for (const btn of document.querySelectorAll('[data-panel]')) btn.addEventListener('click', () => showPanel(btn.dataset.panel));
 for (const btn of document.querySelectorAll('[data-back]')) btn.addEventListener('click', () => showPanel('home'));
@@ -319,7 +371,6 @@ for (const field of document.querySelectorAll('[data-setting]')) {
   field.addEventListener('input', () => {
     settings[key] = field.type === 'checkbox' ? field.checked : Number(field.value);
     saveSettings(settings);
-    if (key === 'legendary') panelKey = '';
     if (key === 'volume') audio.setVolume(settings.volume);
   });
 }
@@ -361,7 +412,7 @@ $('result-home').addEventListener('click', showHome);
 $('show-results').addEventListener('click', openResults);
 $('look-around').addEventListener('click', lookAround);
 $('restart').addEventListener('click', () => start());
-$('rematch').addEventListener('click', () => start(run.seed, run.difficulty));
+$('rematch').addEventListener('click', rematch);
 $('vr').addEventListener('click', async () => {
   try {
     const session = xr.enter(state => { if (state !== 'visible') pause('Headset focus was interrupted.'); });
@@ -580,6 +631,8 @@ function updateHUD(force = false) {
   hudAt = run.time + .07;
   const p = run.player, display = Math.ceil(p.battery * 100);
   text('clock', formatTime(run.time));
+  $('arsenal-crowd').hidden = !run.arsenal;
+  if (run.arsenal) text('arsenal-crowd', 'MIN ' + run.arsenal.wave + ' · ' + run.enemies.length + '/' + activeHordeLimit(run) + ' ZOMBIES');
   text('weapon-name', p.offhand ? 'DUAL SERVICE PISTOLS' : GUNS[p.weapon].name.toUpperCase());
   const rounds = count => String(count).padStart(2, '0');
   $('rounds').firstChild.textContent = rounds(p.ammo) + (p.offhand ? ' + ' + rounds(p.offhand.ammo) : '') + ' ';
@@ -634,15 +687,16 @@ function xrUI(sample, trackedView) {
     const cards = {
       menu: {
         title: 'Enter the forest',
-        lines: settings.legendary ? [
-          'Search sheds for a radio and call for extraction.',
-          'Each trigger fires its pistol. A reloads. X pauses.',
-          'B cycles right light. Y cycles left light. Wide, Focus, Off.',
-          'Weapon grip picks up armor. Ammo collects automatically.',
-        ] : ['Search sheds for a radio and call for extraction.',
-          DIFFICULTIES[settings.difficulty].name + ' difficulty · X changes difficulty here.',
-          'A reloads. B cycles weapons and flare gun. Y pauses.',
-          'Weapon grip uses the radio. Light trigger toggles light.'],
+        lines: [
+          MODES[settings.mode] + ' · ' + DIFFICULTIES[settings.difficulty].name,
+          'B changes mode. X changes difficulty.',
+          ...(settings.mode === 'arsenal'
+            ? ['Minute ' + settings.arsenalWave + ' · ' + GUNS[settings.arsenalWeapon].name,
+              'Y changes wave. Weapon grip cycles starting weapon.']
+            : ['Follow roads and search sheds for the extraction radio.',
+              settings.mode === 'legendary' ? 'Dual pistols and always-on lights. Unranked run.'
+                : 'Search the woods. Keep your light and ammo ready.']),
+        ],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
         second: 'A  ·  GUN ANGLE',
       },
@@ -678,7 +732,7 @@ function measure(wall, stereo) {
   perfTimes.sort((a,b)=>a-b);
   const p95Ms = Number((perfTimes[Math.ceil(perfTimes.length*.95)-1]*1000).toFixed(1));
   perfSample = { fps: Number(fps.toFixed(1)), missed: Number(loss.toFixed(3)), p95Ms,
-    maxMs: Math.round(maxFrame * 1000), active: run.enemies.length, limit: run.crowdLimit };
+    maxMs: Math.round(maxFrame * 1000), active: run.enemies.length, limit: activeHordeLimit(run) };
   if (loss > .075 || fps < hz * .91) {
     stableWindows = 0;
     if (quality > 1) presentation.setQuality(--quality);
@@ -747,7 +801,10 @@ function frame(now, xrFrame) {
           else if (sample.interact) updateGunSettings(0, 0);
           else if (sample.anglePitch || sample.angleYaw)
             updateGunSettings(settings.gunPitch + sample.anglePitch, settings.gunYaw + sample.angleYaw);
-        } else if (phase === 'menu' && sample.toggleBeam) setDifficulty(settings.difficulty === 'hard' ? 'standard' : 'hard');
+        } else if (phase === 'menu' && sample.menuDifficulty) cycleRunOption('difficulty');
+        else if (phase === 'menu' && sample.menuMode) cycleRunOption('mode');
+        else if (phase === 'menu' && settings.mode === 'arsenal' && sample.menuWave) cycleRunOption('arsenalWave');
+        else if (phase === 'menu' && settings.mode === 'arsenal' && sample.interact) cycleRunOption('arsenalWeapon');
         else if (sample.reload) { calibrating = true; panelKey = ''; }
         else if (phase === 'menu' && sample.fire && sample.tracked) start();
         else if (phase === 'paused' && sample.fire && sample.weaponTracked) resume();
@@ -758,7 +815,7 @@ function frame(now, xrFrame) {
         if (sample.reload && run.status === 'dead') lookAround();
         else if (performance.now() - deathAt > 950) {
           if (sample.fire) start();
-          else if (sample.interact) start(run.seed, run.difficulty);
+          else if (sample.interact) rematch();
         }
       } else if (phase === 'playing') {
         if (sample.pause) pause();
@@ -823,7 +880,8 @@ setPhase('menu');
 
 if (debugEnabled) {
   window.render_game_to_text = () => JSON.stringify({
-    phase, seed: run.seed, difficulty:run.difficulty, elapsed: Number(run.time.toFixed(2)), player: run.player,
+    phase, seed: run.seed, difficulty:run.difficulty, arsenal:run.arsenal, crowdTarget:activeHordeLimit(run),
+    elapsed: Number(run.time.toFixed(2)), player: run.player,
     enemies: run.enemies.map(({ id, kind, appearance, x, z, reason, route }) => ({ id, kind, appearance, x, z, reason, route })),
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: isSupply(l.kind) ? 0 : flarePower(run.time - l.born) })),
     signalFlares: run.signalFlares.map(({ id, x, y, z, landed, born }) =>

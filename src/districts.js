@@ -18,7 +18,7 @@ export function makeDistrict(seed, cx, cz, chunk, random) {
   const x1 = x0 + chunk * (2 + Math.floor(rng()*2)), x2 = x1 + chunk * (2 + Math.floor(rng()*2));
   const z1 = z0 + chunk * (2 + Math.floor(rng()*2));
   const spine = rng() < .5 ? x0 - 12 : x2 + 12;
-  const west = left + 1, east = x2 + 17;
+  const west = left, east = x2 + 17;
   // The first district sits along the opening road, past the roadside ruin.
   const mirrored = cx === 0 && cz === -1;
   const reflect = z => mirrored ? 2*top + size - z : z;
@@ -28,17 +28,26 @@ export function makeDistrict(seed, cx, cz, chunk, random) {
   const shedOrder = [0,1,2,Math.floor(rng()*3)];
   const order = [shedOrder[0],3,shedOrder[1],shedOrder[2],4,shedOrder[3]];
   if (rng() < .5) order.reverse();
+  const lanternSheds = order.flatMap((layout, i) => layouts[layout].shed ? [i] : []);
+  const firstLantern = lanternSheds[Math.floor(random(seed + ':starter-lantern')() * lanternSheds.length)];
   for (const [row, z] of [z0,z1].entries()) for (const [column, x] of [x0,x1,x2].entries()) {
     const index = row * 3 + column, layout = order[index];
     let palette = Math.floor(rng()*palettes.length);
     while (looks.has(layout + ':' + palette)) palette = (palette + 1) % palettes.length;
     looks.add(layout + ':' + palette);
-    const site = { id: 'district:' + cx + ',' + cz + ':' + index, x, z: reflect(z + (row ? -8 : 8)),
-      turn: Boolean(row) !== mirrored ? 2 : 0, layout, palette };
+    const id = 'district:' + cx + ',' + cz + ':' + index;
+    const turn = Boolean(row) !== mirrored ? 2 : 0, sign = turn === 2 ? -1 : 1;
+    const site = { id, x, z: reflect(z + (row ? -8 : 8)), turn, layout, palette,
+      lantern: (mirrored && index === firstLantern) || random(seed + ':lantern:' + id)() < 1/3 };
     buildings.set(Math.floor(x/chunk) + ',' + Math.floor(site.z/chunk), site);
+    const entranceX = x + doorOffset(layout) * sign;
+    const entranceZ = site.z - (layouts[layout].d / 2 + .25) * sign;
+    tracks.push([entranceX,Math.min(reflect(z),entranceZ),entranceX,Math.max(reflect(z),entranceZ)]);
   }
   return { buildings, tracks };
 }
+
+const doorOffset = layout => layout === 2 ? -.63 : layout === 3 ? .64 : 0;
 
 export function trackDistance(x, z, tracks) {
   let nearest = Infinity;
@@ -62,7 +71,7 @@ export function buildDistrictSite(entry, area, height, box, random, wreck) {
     ...at(x,z), y:base+h/2, rx:w/2, ry:h/2, rz:d/2, kind:'districtTrim', tint:0x615d50,
   });
   const rng = random(entry.id + ':' + entry.x + ':' + entry.palette);
-  const door = entry.layout === 2 ? -.63 : entry.layout === 3 ? .64 : 0;
+  const door = doorOffset(entry.layout);
   const opening = 1.85;
   const frontLeft = door - opening/2 + w/2, frontRight = w/2 - door - opening/2;
   wall(-w/2+frontLeft/2,-d/2,frontLeft,h,.22);
@@ -122,8 +131,12 @@ export function buildDistrictSite(entry, area, height, box, random, wreck) {
     const light = at(-w*.28,-.32);
     area.lights.push({ type:'shelter',...light,y:y+h-.15,ray:{ x:0,y:-.99,z:.1*sign },radius:5.6,angle:.78 });
   }
+  if (entry.lantern) {
+    const light = at(door + 1.18, -d/2 - .72);
+    area.lights.push({ type:'lantern', ...light, y:y+1.84, ray:{ x:0,y:-.83,z:-.558*sign },radius:8,angle:.71 });
+  }
   const site = {
-    id:entry.id, x:entry.x, z:entry.z, layout:entry.layout, palette:entry.palette, name:layout.name,
+    id:entry.id, x:entry.x, z:entry.z, layout:entry.layout, palette:entry.palette, name:layout.name, lantern:entry.lantern,
     door:at(door,-d/2-.25), inside:at(door,-d/2+.57),
     interior:[at(-w*.32,-d*.28),at(w*.32,-d*.27),at(-w*.30,d*.25),at(.15,d*.33)],
     exterior:[at(-w/2-1.4,d/2+2),at(w/2+1.4,d/2+2.7),at(.7,d/2+4.7),

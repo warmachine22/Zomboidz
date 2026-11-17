@@ -19,6 +19,7 @@ test('seeded tracks join districts of six distinct buildings with traversable sh
   const world = createWorld('Blackwater'), same = createWorld('Blackwater'), other = createWorld('Cold Creek');
   const district = world.districtSites(0,-1);
   assert.equal(district.length,6);
+  assert.ok(district.some(site=>site.radio && site.lantern));
   assert.deepEqual(district,same.districtSites(0,-1));
   assert.notDeepEqual(district.map(site=>[site.x,site.z]),other.districtSites(0,-1).map(site=>[site.x,site.z]));
   assert.equal(district.filter(site=>site.radio).length,4);
@@ -45,6 +46,20 @@ test('seeded tracks join districts of six distinct buildings with traversable sh
     }
   }
   assert.equal(looks.size,25);
+});
+
+test('starter shed lanterns stay seeded and emit through the existing fixture list', () => {
+  for (const seed of ['Blackwater','Reed Valley','Rain Line','5']) {
+    const world = createWorld(seed);
+    const district = world.districtSites(0,-1);
+    for (const site of district) {
+      const area = world.chunk(Math.floor(site.x/CHUNK),Math.floor(site.z/CHUNK));
+      assert.equal(area.lights.filter(light=>light.type==='lantern').length,Number(site.lantern));
+      assert.ok(world.roadDistance(site.door.x,site.door.z) < 1);
+    }
+    assert.ok(district.some(site=>site.radio && site.lantern));
+    assert.ok(district.some(site=>!site.lantern));
+  }
 });
 
 test('one seeded radio can appear early and the 30th distinct shed forces placement after missed rolls', () => {

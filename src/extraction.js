@@ -1,4 +1,5 @@
 import { distance, random } from './world.js';
+import { pressureTime } from './difficulty.js';
 
 export const SEARCH_DISTANCE = 12;
 export const RADIO_GUARANTEE = 30;
@@ -39,7 +40,7 @@ function addEncounter(run, site, encounter, rng, cap, addEnemy) {
     if (distance(player,point) < 4 || world.blocks(point.x,point.z,.37) ||
       run.enemies.some(enemy => !enemy.dead && distance(enemy,point) < 1.25) ||
       world.clear(head,{...point,y:ground+1.15}) || world.clear(head,{...point,y:ground+1.76})) continue;
-    const kind = time > run.rules.opening && rng() < .19 ? 'shrieker' : 'shambler';
+    const kind = pressureTime(run) > run.rules.opening && rng() < .19 ? 'shrieker' : 'shambler';
     const enemy = addEnemy(run,kind,point.x,point.z);
     enemy.approach = { ...(inside ? site.inside : site.door), role:'building', at:time, until:time+19 };
     spawned++;

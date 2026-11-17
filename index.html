@@ -20,10 +20,15 @@
     <section class="hero" aria-labelledby="title" id="home">
       <p class="eyebrow">BLACKWATER FOREST</p>
       <h1 id="title">THE LAST<br><span>LIGHT</span></h1>
-      <p class="lede">The woods hear every shot.<br>Find a radio in a shed and call for extraction.</p>
+      <p class="lede">Follow the road into the woods.<br>Find a radio in a shed and call for extraction.</p>
       <label class="difficulty">Difficulty
-        <select id="difficulty"><option value="standard">Standard</option><option value="hard">Hard</option></select>
+        <select id="difficulty"></select>
       </label>
+      <label class="difficulty">Mode <select id="game-mode"></select></label>
+      <div id="arsenal-setup" hidden>
+        <label class="difficulty">Starting wave <select id="arsenal-wave"></select></label>
+        <label class="difficulty">Starting weapon <select id="arsenal-weapon"></select></label>
+      </div>
       <div class="actions">
         <button id="start" class="primary" disabled>Loading the forest…</button>
         <button id="vr" disabled>Enter VR</button>
@@ -71,7 +76,7 @@
       <p class="eyebrow">SURVIVAL RECORDS</p>
       <h2 id="scores-title">Local scores</h2>
       <label class="difficulty">Difficulty
-        <select id="score-difficulty"><option value="standard">Standard</option><option value="hard">Hard</option></select>
+        <select id="score-difficulty"></select>
       </label>
       <div id="score-table"></div>
       <button data-back>Back</button>
@@ -80,7 +85,6 @@
       <p class="eyebrow">FIELD KIT</p>
       <h2 id="settings-title">Settings</h2>
       <div class="preferences">
-        <label><span>Legendary Mode<small>Two 50-round pistols with lights that never run out. Only armor and ammo drop.</small></span><input type="checkbox" data-setting="legendary"></label>
         <label><span>Left-handed tools<small>Weapon in the left hand</small></span><input type="checkbox" data-setting="leftHanded"></label>
         <label><span>Seated VR<small>Calibrate standing eye height from your seated position</small></span><input type="checkbox" data-setting="seated"></label>
         <label><span>Reduced flashes<small>Dim weapon flashes and impact effects</small></span><input type="checkbox" data-setting="reducedFlashes"></label>
@@ -105,7 +109,7 @@
   </main>
   <aside id="hud" hidden aria-label="Run status">
     <div class="hud-top">
-      <div><small>SURVIVED</small><strong id="clock">00:00</strong></div>
+      <div><small>SURVIVED</small><strong id="clock">00:00</strong><small id="arsenal-crowd" hidden></small></div>
       <div class="hud-right"><small id="weapon-name">SERVICE PISTOL</small><strong id="rounds">06 <em>/ 50</em></strong></div>
     </div>
     <div class="hud-bottom">

@@ -44,6 +44,7 @@ h1 span { color: #bdc9a9; }
 .lede { margin-top: 22px; color: #d0d2c3; font-size: clamp(15px, 2vw, 19px); line-height: 1.46; }
 .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 20px; }
 .difficulty { display: inline-flex; align-items: center; gap: 10px; margin-block: 14px 1px; color: #d0d2c3; font-size: 13px; }
+.hero .difficulty { margin-inline-end: 12px; }
 .difficulty select { background: #1a221e; color: #eae7d2; padding: 6px 10px; border: 1px solid #82907a; border-radius: 3px; font: inherit; }
 .hero .actions button { min-width: 130px; }
 .status { font: 11px/1.55 var(--mono); color: var(--muted); min-height: 17px; margin-top: 9px; }
@@ -83,6 +84,7 @@ input[type=range] { width: min(130px, 35%); }
 .hud-right { text-align: right; }
 .hud-top strong { display: block; font: 650 clamp(25px,4vw,43px)/1 var(--display); color: #e7e9da; }
 .hud-top em { font: 500 .52em var(--mono); color: #b8c7bd; }
+#arsenal-crowd { margin-top: 6px; }
 .pips { font: 22px var(--mono); letter-spacing: .14em; color: #aeccd1; }
 #light-meter { width: clamp(105px,19vw,222px); }
 .battery-track { height: 5px; background: #425049; margin-top: 5px; overflow: hidden; border-radius: 1px; }

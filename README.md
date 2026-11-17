@@ -25,9 +25,13 @@ To aim a shotgun, carbine, or SMG with both hands, bring the flashlight hand to 
 
 New weapons equip unloaded. Firearms share one reserve, and each weapon keeps its loaded rounds when you switch. An empty weapon starts reloading automatically when spares are available.
 
-Standard and Hard runs start with a loaded flare gun and 19 spare flares. Cycle to it and launch a flare ahead of you to draw nearby zombies toward the landing spot for up to 10 seconds. The optional aim dot marks the expected landing spot. Spare flares collect automatically near ammo caches and from occasional zombie drops.
+Survival runs start with a loaded flare gun and 19 spare flares. Cycle to it and launch a flare ahead of you to draw nearby zombies toward the landing spot for up to 10 seconds. The optional aim dot marks the expected landing spot. Spare flares collect automatically near ammo caches and from occasional zombie drops.
 
-Enable **Legendary Mode** in Settings before starting a practice run. You start with two 50-round pistols and a light on each pistol. On Quest, right B cycles the right gun's light and left Y cycles the left gun's light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other. Touch gets buttons for each light. The lights never run out of charge.
+Choose **Easy**, **Normal**, or **Hard** on the main menu. Reflective posts mark road junctions, and occasional amber lanterns mark entrances. Search sheds for the radio.
+
+Choose **Arsenal Test** to start an unranked run with all weapons loaded, all upgrades maxed, and a starting wave from minute 0, 5, 10, 15, or 20. On the Quest start panel, B cycles modes, X cycles difficulty, Y cycles the wave in Arsenal Test, and the weapon grip cycles the starting weapon. The clock starts at zero on every wave.
+
+Choose **Legendary** on the main menu to start with two 50-round pistols and a light on each pistol. On Quest, right B cycles the right gun's light and left Y cycles the left gun's light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other. Touch gets buttons for each light. The lights never run out of charge.
 
 The Laser dot setting enables both aiming dots. Armor and ammo are the only pickups. On Quest, each trigger fires its pistol and right A tops up both from the shared reserve. Desktop and touch fire both pistols together. Legendary runs are kept out of the local scoreboards.
 

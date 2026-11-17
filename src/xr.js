@@ -20,6 +20,7 @@ export function questButtons(right, left, leftHanded, dual = false) {
     toggleLight: !dual && button(light, 0), offhandFire: dual && button(light, 0),
     toggleBeam: !dual && button(left, 4), pause: button(left, dual ? 4 : 5),
     cyclePrimaryBeam: dual && button(weapon, 5), cycleOffhandBeam: dual && button(light, 5),
+    menuDifficulty: button(left, 4), menuMode: button(right, 5), menuWave: button(left, 5),
   };
 }
 

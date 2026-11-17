@@ -4,6 +4,7 @@ import { addEnemy, createRun, ENEMIES, enemyPose, flarePower, GUNS, hordeTarget,
   setLoot, shoot, signalFlarePower, stepRun, STEP, traceAim, visibleTargets } from '../src/simulation.js';
 import { animatedAnchors } from '../src/enemy-motion.js';
 import { hordeSectors, OPENING_SECONDS } from '../src/horde.js';
+import { activeHordeLimit } from '../src/difficulty.js';
 import { createWorld, distance, START } from '../src/world.js';
 
 function advance(run, seconds, input = {}) {
@@ -608,9 +609,6 @@ test('terrain repeats by seed and never reactivates an already looted cache', ()
   Object.assign(run.player, { x: item.x, z: item.z });
   advance(run, 1);
   assert.ok(!run.loot.some(d => d.id === item.id));
-  assert.equal(hordeTarget(0), 10);
-  assert.equal(hordeTarget(390), 32);
-  assert.equal(hordeTarget(660), 48);
 });
 
 function aimFrom(origin, target) {
@@ -637,7 +635,7 @@ test('pistol and laser share a first hit on an animated enemy at close and clear
   }
 });
 
-test('a shot through the outer skull registers and kills any of the three zombies in one hit', () => {
+test('outer skull hits stay lethal on ordinary zombies and damage a brute', () => {
   for (const kind of ['shambler','shrieker','brute']) {
     const run=room(), p=run.player;
     const enemy=addEnemy(run,kind,p.x,p.z-7);
@@ -649,8 +647,46 @@ test('a shot through the outer skull registers and kills any of the three zombie
     const aim=aimFrom({...edge,z:p.z},edge);
     assert.equal(traceAim(run,aim)?.zone,'head',kind);
     shoot(run,aim);
-    assert.equal(enemy.dead,true,kind);
-    assert.equal(p.headshots,1,kind);
+    assert.equal(Boolean(enemy.dead),kind !== 'brute',kind);
+    assert.ok(enemy.hp < ENEMIES[kind].hp);
+    assert.equal(p.headshots,kind === 'brute' ? 0 : 1,kind);
+  }
+});
+
+test('a brute takes three pistol headshots, five pistol torso hits or two carbine headshots', () => {
+  for (const [gun,zone,count] of [['pistol','head',3],['pistol','torso',5],['carbine','head',2],['shotgun','head',2]]) {
+    const run = room(), p = run.player;
+    p.magazines[gun] = GUNS[gun].capacities[0];
+    p.weapon = gun;
+    const enemy = addEnemy(run,'brute',p.x,p.z-(gun === 'shotgun' ? 2 : 7));
+    const target = enemyPose(enemy)[zone];
+    const aim = aimFrom({...target,z:p.z},target);
+    assert.equal(traceAim(run,aim)?.zone,zone === 'torso' ? 'body' : zone);
+    for (let shot = 1; shot <= count; shot++) {
+      p.cooldown = 0;
+      shoot(run,aim);
+      assert.equal(Boolean(enemy.dead),shot === count,gun + ' ' + zone + ' ' + shot);
+    }
+  }
+});
+
+test('Arsenal Test loads all weapons at their max tier and seeds the chosen wave on a fresh clock', () => {
+  for (const wave of [5,20]) {
+    const run = createRun('Blackwater',{difficulty:'hard',arsenal:{weapon:'shotgun',wave}});
+    assert.equal(run.time,0);
+    assert.equal(run.player.weapon,'shotgun');
+    assert.deepEqual(run.player.magazines,{pistol:50,shotgun:7,smg:36,carbine:28,flaregun:1});
+    assert.equal(run.player.reserve,125);
+    assert.equal(run.player.flares,49);
+    assert.deepEqual(run.player.upgrades,{damage:3,pierce:2,reload:3,battery:3,lens:3,capacity:3});
+    const expected = hordeTarget(wave*60,'hard',run.crowdRoll);
+    assert.equal(run.enemies.length,expected);
+    assert.ok(run.enemies.every(e=>e.approach.at>=.7 && e.approach.at<=8));
+    assert.equal(run.nextLoot,33);
+    assert.equal(run.player.protection,0);
+    const limited = createRun(run.seed,{difficulty:run.difficulty,arsenal:run.arsenal,crowdLimit:8});
+    assert.equal(limited.enemies.length,8);
+    assert.deepEqual(limited.player.magazines,run.player.magazines);
   }
 });
 
@@ -684,11 +720,11 @@ test('a tracked gun pushed through cover still hits the near side at the laser d
   assert.equal(p.ammo,5);
 });
 
-test('the opening seeds every sector behind cover before scripted convergence', () => {
+test('the opening spreads its small crowd across sectors behind cover before convergence', () => {
   for (const seed of ['Blackwater','Cold Creek','Split Pine','Rain Line']) {
     const run = createRun(seed), { player:p, world } = run;
-    assert.equal(run.enemies.length,10);
-    assert.ok(hordeSectors(run).every(count => count > 0));
+    assert.equal(run.enemies.length,activeHordeLimit(run));
+    assert.ok(hordeSectors(run).filter(Boolean).length >= 3);
     const view = { x:p.x,y:p.y+p.eyeHeight,z:p.z };
     for (const e of run.enemies) {
       assert.ok(distance(p,e) >= 25);

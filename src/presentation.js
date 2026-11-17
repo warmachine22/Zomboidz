@@ -28,6 +28,7 @@ const rockGeometry = new THREE.IcosahedronGeometry(1, 1);
 const forest = new THREE.Group();
 const headlampLens = new THREE.MeshBasicMaterial({ color:0xffe1a6, toneMapped:false });
 const shelterLens = new THREE.MeshBasicMaterial({ color:0xf6ad68, toneMapped:false });
+const lanternLens = new THREE.MeshBasicMaterial({ color:0xffb35c, toneMapped:false });
 const laserColors = { head:0xffcf65, cover:0xf3f7ff };
 const rockPos = rockGeometry.attributes.position;
 for (let i = 0; i < rockPos.count; i++) {
@@ -56,7 +57,7 @@ const surfaces = {
   mortar: new THREE.MeshStandardMaterial({ map: image('stone'), color: 0x66645b, roughness: .98 }),
   trim: new THREE.MeshStandardMaterial({ map: image('bark'), color: 0x3c4038, roughness: .97 }),
   canvas: new THREE.MeshStandardMaterial({ color:0x555744, roughness:.98, side:THREE.DoubleSide }),
-  reflectors: new THREE.MeshStandardMaterial({ color: 0xaaa589, emissive: 0x221e13, emissiveIntensity: .35, roughness: .85 }),
+  reflectors: new THREE.MeshStandardMaterial({ color: 0xbbb69b, emissive: 0x4c4530, emissiveIntensity: .56, roughness: .85 }),
 };
 surfaces.stone.map.repeat.set(1.55, 1.55);
 surfaces.boards.map.repeat.set(2.2, .6);
@@ -202,11 +203,11 @@ function terrain(world, area) {
 }
 
 function turf(target, road, shade) {
-  const border = clamp((road - 1.4) / 1.85, 0, 1);
-  target.setRGB(.51 + border * .04, .51 - border * .007, .51 - border * .21).multiplyScalar(shade);
+  const verge = clamp((road - 1.65) / 1.7, 0, 1);
+  target.setRGB(.76 - verge * .27, .74 - verge * .28, .68 - verge * .39).multiplyScalar(shade);
 }
 
-function makeChunk(world, area, art) {
+function makeChunk(world, area, art, lanternGlow) {
   const group = new THREE.Group();
   group.add(terrain(world, area));
   const treeCount = area.trees.length;
@@ -327,15 +328,12 @@ function makeChunk(world, area, art) {
       place(mesh, i, ...o, new THREE.Color(tint, tint * .98, tint * .93));
     }
   }
-  // A weathered roadside delineator marks the opening route.
-  if (area.cx === 0 && area.cz === 0) {
-    const y = world.height(-2.8, 11);
-    const sign = new THREE.Group();
-    for (const [sx, sy, sz, dy, mat] of [[.13, 1.38, .10, .65, surfaces.trim], [.19,.22,.037,1.18,surfaces.reflectors]]) {
-      const p = new THREE.Mesh(baseBox, mat);
-      p.scale.set(sx, sy, sz); p.position.set(-2.8, y + dy, 11); sign.add(p);
-    }
-    group.add(sign);
+  const posts = instance(group, baseBox, surfaces.trim, area.markers.length);
+  const reflectors = instance(group, baseBox, surfaces.reflectors, area.markers.length);
+  for (const [i, { x,z }] of area.markers.entries()) {
+    const y = world.height(x,z);
+    place(posts,i,x,y+.61,z,.12,1.25,.11,0);
+    place(reflectors,i,x,y+1.12,z,.19,.21,.145,0);
   }
   for (const light of area.lights) {
     if (light.type === 'wreck') {
@@ -343,6 +341,21 @@ function makeChunk(world, area, art) {
       lens.position.set(light.x, light.y, light.z-.054);
       lens.scale.set(.246,.126,.022);
       group.add(lens);
+    } else if (light.type === 'lantern') {
+      const base = world.height(light.x,light.z), stem = light.y - .17 - base;
+      for (const [dy,width,height] of [[-stem/2-.17,.09,stem],[-.17,.29,.075],[.15,.29,.065]]) {
+        const frame = new THREE.Mesh(baseBox, surfaces.trim);
+        frame.position.set(light.x,light.y+dy,light.z);
+        frame.scale.set(width,height,width);
+        group.add(frame);
+      }
+      const lens = new THREE.Mesh(baseBox, lanternLens);
+      lens.position.set(light.x,light.y,light.z);
+      lens.scale.set(.225,.27,.225);
+      const halo = new THREE.Sprite(lanternGlow);
+      halo.position.copy(lens.position);
+      halo.scale.setScalar(.78);
+      group.add(lens,halo);
     } else {
       const fixture = new THREE.Mesh(baseBox, surfaces.trim);
       fixture.position.set(light.x,light.y+.082,light.z);
@@ -537,6 +550,8 @@ export function createPresentation(scene, art, layouts) {
   attackerMarker.visible = false;
   scene.add(attackerMarker);
   const glow = radialTexture(), burst = radialTexture(true);
+  const lanternGlow = new THREE.SpriteMaterial({ map:glow, color:0xff952e, opacity:.57,
+    depthWrite:false, transparent:true, blending:THREE.AdditiveBlending, toneMapped:false });
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
   spark.visible = false; scene.add(spark);
@@ -641,7 +656,7 @@ export function createPresentation(scene, art, layouts) {
     for (let z = cz - 1; z <= cz + 1; z++) for (let x = cx - 1; x <= cx + 1; x++) {
       const area = world.chunk(x, z);
       if (chunks.has(area.key)) continue;
-      const view = makeChunk(world, area, art);
+      const view = makeChunk(world, area, art, lanternGlow);
       canopyLighting.shade(view);
       view.userData.lights = area.lights;
       chunks.set(area.key, view); localForest.add(view);
@@ -770,7 +785,7 @@ export function createPresentation(scene, art, layouts) {
       if (source === light.userData.source && !terrainChanged) continue;
       const headlight = source.type === 'wreck';
       light.userData.source = source;
-      light.intensity = headlight ? 370 : 54;
+      light.intensity = headlight ? 370 : source.type === 'lantern' ? 73 : 54;
       light.position.set(source.x,source.y,source.z);
       light.target.position.copy(light.position).add(v3(source.ray.x,source.ray.y,source.ray.z));
       light.angle = source.angle;

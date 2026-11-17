@@ -1,5 +1,5 @@
 import { angleDelta, clamp, direction, distance } from './world.js';
-import { DIFFICULTIES } from './difficulty.js';
+import { DIFFICULTIES, pressureTime } from './difficulty.js';
 
 const PI = Math.PI;
 const QUADRANT = PI / 2;
@@ -77,7 +77,8 @@ function spawn(run, sector, bearing, opening, beams, addEnemy, replace = null, s
   const point = entrance(run, bearing, opening, beams, sector, sectorOf);
   if (!point) return false;
   const roll = run.rng();
-  const elapsed = run.time * DIFFICULTIES.standard.middle / run.rules.middle;
+  const age = pressureTime(run);
+  const elapsed = age * DIFFICULTIES.standard.late / run.rules.late;
   const brute = clamp((elapsed - 47) / 570, 0, .23);
   const shrieker = clamp((elapsed - 23) / 400 + .05, .04, .26);
   const enemy = addEnemy(run, roll < brute ? 'brute' : roll < brute + shrieker ? 'shrieker' : 'shambler', point.x, point.z);
@@ -87,10 +88,13 @@ function spawn(run, sector, bearing, opening, beams, addEnemy, replace = null, s
   const offset = Math.abs(angleDelta(heading(run.player,point),movement));
   const ahead = moving && offset < QUADRANT*.56;
   const intercept = moving && !opening && offset < 1.25;
+  const delayed = opening && age < run.rules.opening;
+  const startsAt = delayed ? run.time + run.rules.opening - age + run.rng()*8
+    : run.time + (opening ? .7 + run.rng()*7.3 : intercept ? .17 + run.rng()*.56 : .35 + run.rng()*1.1);
   enemy.approach = {
     ...waypoint(run, point, intercept),
-    at: opening ? run.rules.opening + run.rng()*8 : run.time + (intercept ? .17 + run.rng()*.56 : .35 + run.rng()*1.1),
-    until: opening ? run.rules.opening + 41 : run.time + (intercept ? 14 : 29),
+    at: startsAt,
+    until: delayed ? run.time + run.rules.opening - age + 41 : run.time + (intercept ? 14 : 29),
     role: intercept ? 'cutoff' : 'arrival',
   };
   const cardinal = quadrant(run.player, point);
@@ -111,7 +115,8 @@ export function seedHorde(run, cap, addEnemy) {
 export function replenishHorde(run, cap, beams, addEnemy) {
   const { player, world, time } = run;
   const moving = Math.hypot(player.travelX, player.travelZ) >= .82;
-  const opening = time < run.rules.opening;
+  const age = pressureTime(run);
+  const opening = age < run.rules.opening;
   const head = eye(world, player, player.eyeHeight);
   run.travelBearing = moving ? Math.atan2(player.travelX, -player.travelZ) : null;
   const live = run.enemies.filter(e => !e.dead).length;
@@ -124,9 +129,17 @@ export function replenishHorde(run, cap, beams, addEnemy) {
     return;
   }
   const atCap = live >= cap;
+  if (live > cap) {
+    // Retire a distant hidden enemy when the headset lowers its budget.
+    const excess = run.enemies.find(e => !e.dead && !e.ambush && e.attackAge === undefined &&
+      distance(player,e)>35 && hidden(world,head,e,beams));
+    if (excess) excess.dead = true;
+    return;
+  }
+  if (atCap && (age < run.rules.recycleAfter || time < run.nextRecycle)) return;
   const fullness = Array(8).fill(0);
   const pressure = Array(8).fill(0);
-  const border = run.time > run.rules.middle ? 35 : 32;
+  const border = age > 360 ? 35 : 32;
   for (const enemy of run.enemies) {
     if (enemy.dead) continue;
     const gap = distance(player,enemy);
@@ -159,6 +172,9 @@ export function replenishHorde(run, cap, beams, addEnemy) {
     if (atCap && !replacement) continue;
     const ahead = moving && Math.abs(angleDelta(sector*OCTANT,run.travelBearing)) < OCTANT*.5;
     const bearing = ahead ? run.travelBearing : sector*OCTANT;
-    if (spawn(run,sector,bearing,false,beams,addEnemy,replacement,octant)) return;
+    if (spawn(run,sector,bearing,false,beams,addEnemy,replacement,octant)) {
+      if (replacement) run.nextRecycle = time + run.rules.recycleInterval;
+      return;
+    }
   }
 }
