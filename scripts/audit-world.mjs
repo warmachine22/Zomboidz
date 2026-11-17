@@ -159,6 +159,7 @@ function fixedInputAudit() {
 function landmarkAudit() {
   const seedCount = 48;
   const biomes = {}, counts = { buildings:0,sheds:0,wrecks:0,campsites:0,lanterns:0,litWrecks:0,buildingWrecks:0 };
+  const dressing = { carcasses:0,people:0,vehicles:0,motorcycles:0,logBarriers:0,rocks:0,triangles:0,colliders:0 };
   const layoutLooks = new Set(), variants = new Map();
   const passes = { sheds:0,wrecks:0,campsites:0 };
   const tree = { count:0,min:Infinity,max:0,thickest:0 };
@@ -196,6 +197,17 @@ function landmarkAudit() {
         }
         if (prop.kind === 'firepit') { counts.campsites++; landmarks.campsites.push(prop); }
       }
+      if (tile.decor) {
+        const d = tile.decor;
+        dressing.carcasses += d.remains.filter(r => ['deer', 'bear', 'fox', 'rabbit'].includes(r.kind)).length;
+        dressing.people += d.remains.filter(r => r.kind.startsWith('person')).length;
+        dressing.vehicles += d.vehicles.filter(v => ['sedan', 'pickup', 'van'].includes(v.kind)).length;
+        dressing.motorcycles += d.vehicles.filter(v => v.kind.startsWith('moto')).length;
+        dressing.logBarriers += d.logs.filter(l => l.barrier).length;
+        dressing.rocks += d.rocks.length;
+        dressing.triangles += d.triangles;
+        dressing.colliders += d.colliders;
+      }
     }
     for (let lane = 0; lane < 12; lane++) {
       const offset = (lane+.5)*CHUNK;
@@ -205,8 +217,10 @@ function landmarkAudit() {
       }
     }
   }
-  return { seedCount, tiles:seedCount*144, areaKm2:seedCount*(size/1000)**2, counts, biomes, tree,
-    uniqueBuildingLooks:layoutLooks.size, layouts:Object.fromEntries(variants),
+  const tiles = seedCount * 144;
+  return { seedCount, tiles, areaKm2:seedCount*(size/1000)**2, counts,
+    dressing: { ...dressing, avgTriangles: Math.round(dressing.triangles / tiles), avgColliders: +(dressing.colliders / tiles).toFixed(2) },
+    biomes, tree, uniqueBuildingLooks:layoutLooks.size, layouts:Object.fromEntries(variants),
     passesWithin35m:passes, corridorKm:seedCount*24*size/1000 };
 }
 

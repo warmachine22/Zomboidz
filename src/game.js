@@ -12,12 +12,15 @@ import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, 
   shotgunPumpTravel, toolLayouts } from './held-tools.js';
 import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, MODES } from './difficulty.js';
 import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
+import { setDressingEnabled } from './dressing.js';
 
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
 const developer = typeof __DEVELOPMENT__ !== 'undefined' && __DEVELOPMENT__;
 const debugEnabled = developer && qs.has('debug');
 const showPerformance = qs.has('perf');
+// ?dressing=off disables the 1.1.0 scenery for A/B comparison and instant diagnosis on the live URL.
+if (qs.get('dressing') === 'off') setDressingEnabled(false);
 const touch = matchMedia('(pointer: coarse)').matches;
 const settings = loadSettings();
 const held = new Set(), queued = {};
@@ -132,7 +135,7 @@ function selectedSetup() {
 function start(seed = rapidSeed(), setup = selectedSetup()) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
-  const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape', 'lantern'].includes(scenario);
+  const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape', 'lantern', 'dressing'].includes(scenario);
   run = createRun(encounter ? 'Blackwater' : seed, { ...setup, crowdLimit: xr.active ? 48 : touch ? 34 : 48,
     populate: !encounter });
   yaw = pitch = roomX = roomZ = 0;
@@ -149,6 +152,30 @@ function start(seed = rapidSeed(), setup = selectedSetup()) {
     const drop = setLoot(run, 'carbine', 2.55, 41);
     if (drop) drop.born = -26;
     if (!run.legendary) run.player.flashlight = false;
+  } else if (scenario === 'dressing') {
+    // ?debug&scenario=dressing&kind=deer|bear|fox|rabbit|personSlumped|personLying|vehicle|log
+    // Stands 5 m from the nearest example of the requested scenery, flashlight on, facing it.
+    const world = run.world, want = qs.get('kind') || 'deer';
+    let best = null;
+    for (let cz = -8; cz <= 8; cz++) for (let cx = -8; cx <= 8; cx++) {
+      const d = world.chunk(cx, cz).decor;
+      const list = want === 'vehicle' ? d.vehicles.filter(v => ['sedan', 'pickup', 'van'].includes(v.kind))
+        : want === 'log' ? d.logs.filter(l => l.barrier) : d.remains.filter(r => r.kind === want);
+      for (const o of list) {
+        const score = Math.hypot(o.x, o.z - 20);
+        if (!best || score < best.score) best = { o, score };
+      }
+    }
+    if (best) {
+      const { o } = best;
+      for (let a = 0; a < 16; a++) {
+        const angle = a * Math.PI / 8 + .55, x = o.x + Math.cos(angle) * 5, z = o.z + Math.sin(angle) * 5;
+        if (world.blocks(x, z, .4) && a < 15) continue;
+        yaw = Math.atan2(o.x - x, z - o.z);
+        Object.assign(run.player, { x, z, y: world.height(x, z), yaw, flashlight: true });
+        break;
+      }
+    }
   } else if (scenario === 'shelter') {
     Object.assign(run.player, { x: 11.9, z: -12.8, y: run.world.height(11.9, -12.8), flashlight: run.legendary });
   } else if (scenario === 'lantern') {
@@ -638,6 +665,13 @@ function handleEvent(batch) {
   }
 }
 
+function perfReport() {
+  if (!showPerformance || !perfSample) return '';
+  return perfSample.fps + ' FPS · P95 ' + perfSample.p95Ms + ' ms · ' + Math.round(perfSample.missed * 100)
+    + '% missed · ' + perfSample.active + '/' + perfSample.limit
+    + ' · chunk ' + presentation.stats.maxMs.toFixed(1) + ' ms';
+}
+
 function updateHUD(force = false) {
   if (!force && run.time < hudAt) return;
   hudAt = run.time + .07;
@@ -655,7 +689,7 @@ function updateHUD(force = false) {
   $('charge').style.transform = 'scaleX(' + p.battery + ')';
   text('armor', '◆'.repeat(p.armor) + '◇'.repeat(3 - p.armor));
   $('armor').setAttribute('aria-label', p.armor + ' armor charges');
-  text('notice', run.time < noticeUntil ? notice : '');
+  text('notice', run.time < noticeUntil ? notice : perfReport());
   $('offer').hidden = !run.offer;
   const radio = run.offer?.kind === 'radio';
   if (radio) text('offer', touch ? 'CALL EXTRACTION' : 'E TO CALL EXTRACTION');
@@ -685,11 +719,7 @@ function xrUI(sample, trackedView) {
   if (phase === 'playing') {
     xr.hidePanel();
     const target = run.offer?.kind === 'radio' ? 'GRIP  ·  CALL EXTRACTION' : run.offer && 'GRIP  ·  ' + LOOT[run.offer.kind].name;
-    const frameReport = showPerformance && perfSample
-      ? perfSample.fps + ' FPS · P95 ' + perfSample.p95Ms + ' ms · ' + Math.round(perfSample.missed * 100)
-        + '% missed · ' + perfSample.active + '/' + perfSample.limit
-      : '';
-    xr.drawPrompt(target || (run.time < noticeUntil ? notice : frameReport), trackedView.view);
+    xr.drawPrompt(target || (run.time < noticeUntil ? notice : perfReport()), trackedView.view);
     return;
   }
   xr.drawPrompt('', trackedView.view);
@@ -868,6 +898,7 @@ function frame(now, xrFrame) {
     audio.listener(view.view.position, direction0.clone().applyQuaternion(view.view.quaternion),
       vertical.clone().applyQuaternion(view.view.quaternion), run);
   }
+  audio.setBuzz(phase === 'playing' ? presentation.state.buzz : null);
   if (phase === 'playing' && !stereo) {
     const point = view.aim.origin.clone().addScaledVector(view.aim.ray, 27).project(camera);
     $('crosshair').style.left = (point.x + 1) * 50 + '%';
@@ -898,7 +929,7 @@ if (debugEnabled) {
     loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: isSupply(l.kind) ? 0 : flarePower(run.time - l.born) })),
     signalFlares: run.signalFlares.map(({ id, x, y, z, landed, born }) =>
       ({ id, x, y, z, landed, power: landed ? signalFlarePower(run.time - born) : null })),
-    offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample,
+    offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample, streaming: presentation.stats,
     laser: aimHit ? { zone:aimHit.zone, point:aimHit.point } : null,
     offhandLaser: offhandAimHit ? { zone:offhandAimHit.zone, point:offhandAimHit.point } : null,
     flashlight: run.beam, offhandFlashlight: run.offhandBeam,
