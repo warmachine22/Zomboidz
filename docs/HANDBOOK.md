@@ -1,6 +1,6 @@
 # Zomboidz — The Last Light project handbook
 
-This handbook describes **2.0.0**, the Blackwater plateau release. See [development and playtesting](DEVELOPMENT.md) for commands, [environment dressing](ENVIRONMENT_DRESSING.md) for scenery, and [release history](../progress.md) for earlier versions. [Play the production build](https://zombiez.vercel.app/).
+This handbook describes **2.1.0**, the Blackwater ambush update. See [development and playtesting](DEVELOPMENT.md) for commands, [environment dressing](ENVIRONMENT_DRESSING.md) for scenery, and [release history](../progress.md) for earlier versions. [Play the production build](https://zombiez.vercel.app/).
 
 ## Run flow
 
@@ -65,27 +65,27 @@ The seed chooses five distinct shelters and assigns one unique component to each
 
 | Difficulty | World population | Nearby active ceiling | Sight | Shambler | Shrieker | Brute |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Easy | 90 | 8 | 6 m | 1.95 m/s | 2.85 m/s | 1.55 m/s |
-| Normal | 125 | 10 | 8 m | 2.20 m/s | 3.10 m/s | 1.80 m/s |
-| Hard | 150 | 12 | 10 m | 2.40 m/s | 3.35 m/s | 2.00 m/s |
+| Easy | 406 | 8 | 6 m | 1.95 m/s | 2.85 m/s | 1.55 m/s |
+| Normal | 589 | 10 | 8 m | 2.20 m/s | 3.10 m/s | 1.80 m/s |
+| Hard | 693 | 12 | 10 m | 2.40 m/s | 3.35 m/s | 2.00 m/s |
 
-The limits are chase speeds. Full player movement is 2.72 m/s and quiet movement is 1.30 m/s. A fresh enemy takes **3 head / 5 torso** pistol hits for a shambler, **2 / 4** for a shrieker, and **6 / 10** for a brute. Arms and legs take less damage. One trigger pull cannot take more than 55% of any fresh enemy's health. **Settings → Zombie tuning** can edit each preset's population, chase speeds, and shot counts. Reset Defaults restores ranking for that preset.
+The table shows ordinary chase speeds. A close ambush briefly raises them to at least 3.46 m/s for a shambler, 3.80 m/s for a shrieker, or 3.22 m/s for a brute. Full player movement is 2.72 m/s and quiet movement is 1.30 m/s. A fresh enemy takes **3 head / 5 torso** pistol hits for a shambler, **2 / 4** for a shrieker, and **6 / 10** for a brute. Arms and legs take less damage. One trigger pull can take at most 55% of starting health. **Settings → Zombie tuning** can edit each preset's population, chase speeds, and shot counts. Reset Defaults restores ranking for that preset.
 
-Each shelter has an indoor guard at default settings and most add a second nearby on Normal or Hard. Nearby residents hold cover, idle, or patrol. They follow doorway routes and return to their post after losing the last cue for eight seconds. Distant residents retain health and death state while inactive. The active ceiling is local and can fall with device performance.
+An idle ambusher occupies a large tree at 20%, 30%, or 35% of the 1,580 large trees on Easy, Normal, or Hard. The seed selects posts, including posts near eligible starts and along roads. Every shelter room gets a guard, plus one, two, or three outside. The active window queries spatial buckets and keeps enemies already fighting active. Inactive residents preserve health and death state. The device can lower the active ceiling if headset timing slips.
 
-Sight uses a forward 120° cone and checks cover. At arm's length the player can still be noticed. Quiet steps can be heard at up to 3 m and faster steps at up to 7 m, with cover and road surfaces reducing reach. Beam exposure, gunfire, and launched flares can draw attention. A surviving first rear hit on an unaware zombie triggers a cry and a 0.75-second reaction window. Follow-up shots do not extend it.
+Sight checks a forward 120° cone, cover and a short sightline around a hiding tree. Hidden tree ambushers hold their position when they hear footsteps. When a nearby player passes into sight, the zombie gives a directional cry, holds briefly, and makes a short sprint with a moving grab. Gunshots are audible 16–20 m in the open by weapon. Cover cuts that range to 55%. A cry can alert enemies within 11 m and share the last seen location. In a group, one enemy attacks directly and up to two choose a side approach and look for tree cover. When the last cue goes stale, enemies check nearby positions and then return home.
 
-Shamblers limp, shriekers drop into a sustained sprint, and brutes load heavier strikes. The existing original rigs and clips share animation timing with hit anchors and contact checks. Near sprints track fixed-step poses more closely. Blood spray starts at the ray impact and a short mark follows the nearby animated bone.
+Shamblers limp, shriekers drop into a sustained sprint, and brutes load heavier strikes. The rigs share animation timing with hit anchors and contact checks. Blood spray starts at the ray impact. Short-lived emitters follow the struck bone and shed falling droplets. A killing headshot bursts and hides the head, even when the corpse falls. Blood particles share one instanced mesh and have a hard count limit.
 
 ## Code ownership and verification
 
 | Files | Responsibility |
 | --- | --- |
 | `src/game.js`, `src/xr.js`, `src/held-tools.js` | Frontend phases, control mappings, tracking, bracing, aiming, and recoil |
-| `src/simulation.js`, `src/campaign.js`, `src/difficulty.js` | 30 Hz rules, hit resolution, resident AI and life cycle, inventory, and extraction |
+| `src/simulation.js`, `src/campaign.js`, `src/tactics.js`, `src/difficulty.js` | 30 Hz rules, hit resolution, resident life cycle, group pursuit, inventory, and extraction |
 | `src/world.js`, `src/plateau.js`, `src/dressing.js` | Authored layout and shelter geometry, streaming, collision, raycasts, and dressing |
 | `src/enemy-motion.js`, `src/enemy-rigs.js` | Shared posed hits, foot locks, contacts, and generated rig data |
-| `src/presentation.js`, `src/night-lighting.js`, `src/kit.js`, `src/ambient-life.js`, `src/audio.js` | Three.js rendering, light budgets, scenery, and spatial audio |
+| `src/presentation.js`, `src/impact-effects.js`, `src/night-lighting.js`, `src/kit.js`, `src/ambient-life.js`, `src/audio.js` | Three.js rendering, pooled impact effects, light budgets, scenery, and spatial audio |
 | `src/records.js`, `src/field-map.js`, `src/debug-map.js` | Browser storage, shared field map, and developer overlay |
 | `src/districts.js`, `src/extraction.js`, `src/horde.js`, `src/ambush.js` | Classic behavior for historical regression tests and diagnostic scenes |
 

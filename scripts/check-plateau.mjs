@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { addEnemy, callExtraction, createRun, enemyPose, STEP, stepRun, traceAim } from '../src/simulation.js';
+import { addEnemy, BUILD, callExtraction, createRun, enemyPose, STEP, stepRun, traceAim } from '../src/simulation.js';
 import { createWorld, distance, random } from '../src/world.js';
 import { findPath } from './check-search.mjs';
 
@@ -138,7 +138,7 @@ function encounter(seed,crafted,quiet) {
     stepRun(run,{fire,aim,walk:quiet,yaw:Math.atan2(dx,-dz),moveX:dx*factor,moveZ:dz*factor});
     if (first===null && distance(p,site.door)<.45) first=round(run.time);
   }
-  return {seed,strategy:quiet?'cautious':'moving',version:crafted?'2.0.0':'Classic',hostiles:crafted?4:10,
+  return {seed,strategy:quiet?'cautious':'moving',version:crafted?BUILD:'Classic',hostiles:crafted?4:10,
     shots:run.metrics.shots,roundsLeft:p.ammo+p.reserve,armorSpent:Math.max(0,1-p.armor),
     kills:p.kills,firstDoor:first,seconds:round(run.time),
     result:run.status==='dead'?'dead':waypoint===waypoints.length?'reached':'timed out'};

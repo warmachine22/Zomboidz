@@ -71,6 +71,15 @@ export function shelterLamp(site) {
   return {x:site.x+1.38*site.sign,z:site.z-(site.d/2+.77)*site.sign};
 }
 
+export function nearestPlateauTrack(x,z) {
+  let best=null, gap=Infinity;
+  for (const track of tracks) {
+    const at=projection(x,z,track), d=(x-at.x)**2+(z-at.z)**2;
+    if (d<gap) { best=at; gap=d; }
+  }
+  return best;
+}
+
 export function plateauRoad(x,z) {
   let best=Infinity;
   for (const [ax,az,bx,bz] of tracks) {

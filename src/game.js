@@ -11,7 +11,7 @@ import { fillHelp } from './help.js';
 import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim,
   shotgunPumpTravel, toolLayouts } from './held-tools.js';
 import { activeHordeLimit, DIFFICULTIES } from './difficulty.js';
-import { defaultTuning, normalizeTuning, SPECIES, TUNING_FIELDS } from './campaign.js';
+import { defaultTuning, MAX_RESIDENTS, normalizeTuning, SPECIES, TUNING_FIELDS } from './campaign.js';
 import { drawFieldMap } from './field-map.js';
 import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
 import { setDressingEnabled } from './dressing.js';
@@ -50,6 +50,7 @@ canvas.tabIndex = -1;
 const xr = createXR(renderer, scene, rig);
 
 const motionReplay = debugEnabled && qs.get('scenario') === 'motion';
+const impactReplay = debugEnabled && qs.get('scenario') === 'plateau-impact';
 const art = await loadArt(motionReplay && qs.get('version') === 'before');
 const layouts = toolLayouts(art);
 const presentation = createPresentation(scene, art, layouts);
@@ -140,7 +141,7 @@ function start(seed = rapidSeed(), setup = selectedSetup()) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
   const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape', 'lantern', 'dressing'].includes(scenario);
-  const plateauCheck = scenario==='plateau-call' || scenario==='plateau-shelter';
+  const plateauCheck = scenario==='plateau-call' || scenario==='plateau-shelter' || impactReplay;
   run = createRun(encounter ? 'Blackwater' : seed, { ...setup, crowdLimit: xr.active ? 48 : touch ? 34 : 48,
     crafted:setup.crafted && !encounter, populate:!encounter && !plateauCheck });
   run.practice=encounter||plateauCheck;
@@ -151,7 +152,16 @@ function start(seed = rapidSeed(), setup = selectedSetup()) {
       Math.hypot(b.door.x-p.x,b.door.z-p.z)?a:b);
     yaw=p.yaw=Math.atan2(next.junction.x-p.x,p.z-next.junction.z);
   }
-  if (plateauCheck) {
+  if (impactReplay) {
+    const p=run.player, world=run.world;
+    Object.assign(p,{x:352,z:101,y:world.height(352,101)});
+    const e=addEnemy(run,'shambler',352,97.5);
+    e.yaw=e.previousTransform.yaw=Math.PI;
+    e.nextThink=Infinity;
+    e.hiding=true;
+    yaw=p.yaw=0;
+    pitch=.028;
+  } else if (plateauCheck) {
     const {site,part}=run.campaign.caches.find(cache=>cache.part!==undefined);
     const at=scenario==='plateau-call'?site.part:{x:site.door.x,z:site.door.z-site.sign*5.4};
     const p=run.player;
@@ -452,7 +462,7 @@ function renderTuning() {
     container.append(row);
   }
   updateTuningStatus();
-  field(root,'Plateau population',()=>tuning.population,{min:0,max:150,step:1},value=>tuning.population=value);
+  field(root,'Plateau population',()=>tuning.population,{min:0,max:MAX_RESIDENTS,step:1},value=>tuning.population=value);
   for (const kind of SPECIES) {
     const group=document.createElement('fieldset'), legend=document.createElement('legend');
     legend.textContent=kind[0].toUpperCase()+kind.slice(1);
@@ -721,7 +731,7 @@ function desktopInput() {
 
 function handleEvent(batch) {
   audio.events(batch, run);
-  presentation.events(batch);
+  presentation.events(batch,settings.reducedFlashes);
   for (const event of batch) {
     if (event.type === 'dry') setNotice(event.reason, 1.25);
     else if (event.type === 'pickup') setNotice(event.message);
@@ -894,6 +904,11 @@ function simulate(t, sample, stereo) {
         input.aim = { origin, ray:{x:at.x-origin.x,y:at.y-origin.y,z:at.z-origin.z} };
         input.fire = true;
       }
+    }
+    if (impactReplay && run.enemies[0] && !stereo && input.fire) {
+      const at=enemyPose(run.enemies[0])[qs.get('zone')==='body'?'torso':'head'];
+      const origin=aimed.aim.origin;
+      input.aim={...aimed.aim,ray:{x:at.x-origin.x,y:at.y-origin.y,z:at.z-origin.z}};
     }
     roomX = roomZ = 0;
     for (const key of Object.keys(queued)) delete queued[key];

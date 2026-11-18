@@ -5,10 +5,11 @@ import { replenishHorde, seedHorde } from './horde.js';
 import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, difficultyKey, pressureTime } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 import { reachableRadio, visitBuildings } from './extraction.js';
-import { createCampaign, insideShelter, RADIO_PARTS, rearHit, residentPerception, shelterRoute, syncResidents } from './campaign.js';
+import { createCampaign, insideShelter, RADIO_PARTS, rearHit, residentPerception, syncResidents } from './campaign.js';
+import { pursuitRoute, updatePursuitRoles } from './tactics.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '2.0.0';
+export const BUILD = '2.1.0';
 export { hordeTarget } from './difficulty.js';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
@@ -22,6 +23,8 @@ export const ENEMIES = {
   shrieker: { speed: 1.36, height: 1.66, width: .23, hp: 2.4, windup: .38, reach: 1.16 },
   brute: { speed: .72, height: 2, width: .36, hp: 5.9, windup: .83, reach: 1.35 },
 };
+const locallyAudible = {pistol:17,shotgun:20,smg:16,carbine:19};
+const rushSpeed = {shambler:3.46,shrieker:3.80,brute:3.22};
 export const UPGRADES = {
   damage: { name: 'Hot loads', icon: '▲', cap: 3, color: '#ff8b70', description: '+15% damage' },
   pierce: { name: 'Piercing rounds', icon: '»', cap: 2, color: '#ffb36c', description: '+1 target per shot' },
@@ -184,13 +187,13 @@ function traceRay(world, origin, ray, range, targets) {
   const limit = solid?.t ?? range;
   const hits = [];
   for (const { e, points, radii } of targets) {
-    let best = limit, zone = null;
+    let best = limit, zone = null, anchors;
     for (const [i, [a,b,tag]] of HIT_SEGMENTS.entries()) {
       const radius = tag === 'head' ? radii[i] * 1.21 + .007 : radii[i];
       const t = rayCapsule(origin, ray, points[a], points[b], radius);
-      if (t < best) { best = t; zone = tag; }
+      if (t < best) { best = t; zone = tag; anchors=[a,b]; }
     }
-    if (zone) hits.push({ e, t:best, zone, point:rayPoint(origin,ray,best) });
+    if (zone) hits.push({ e, t:best, zone, anchors, point:rayPoint(origin,ray,best) });
   }
   hits.sort((a,b) => a.t-b.t);
   return { hits, cover: solid && { zone:'cover', surface:solid.kind, point:rayPoint(origin,ray,solid.t) } };
@@ -249,7 +252,7 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
     nextAttack: 0, nextSwarmTick: 0, death: null, populate, notice: '',
     metrics: { shots: 0, dryFire: 0, roundsPicked: 0, upgrades: 0, guarded: 0, lootFlareSeconds: 0,
       pressureSeconds: 0, damage: {}, pickups: {}, maxCrowd: 0, peakPursuit: 0, peakDiversion: 0,
-      spawns: [0,0,0,0], aheadSpawns: 0, directionalSamples:0, coveredSectors:0 },
+      spawns: [0,0,0,0], aheadSpawns: 0, directionalSamples:0, coveredSectors:0, coverRoutes:0 },
   };
   updateLandmarks(run);
   // A separate starting offset keeps the layout and ordinary opening spawns seed-stable.
@@ -347,14 +350,15 @@ function majorDrop(run) {
   }
 }
 
-function noise(run, kind, origin, radius, span) {
-  run.noises.push({ kind, origin: { ...origin }, radius, born: run.time, span });
+function noise(run, kind, origin, radius, span, report) {
+  run.noises.push({ kind, origin: { ...origin }, radius, born: run.time, span, report });
   if (run.noises.length > 34) run.noises.shift();
 }
 
 function eliminate(run, e, headshot) {
   const p = run.player;
   e.dead = true;
+  e.headLost=Boolean(run.campaign && headshot);
   p.kills++;
   if (headshot) p.headshots++;
   run.corpses.push({ ...e, headshot, diedAt: run.time, fallAge: 0,
@@ -438,7 +442,7 @@ export function shoot(run, aim, offhand = false) {
   }
   p.noisePeak = run.time + .28;
   run.metrics.shots++;
-  noise(run, 'gunshot', flashOrigin, gun.noise, 2.8);
+  noise(run,'gunshot',flashOrigin,run.campaign?locallyAudible[p.weapon]:gun.noise,run.campaign?1.55:2.8);
   emit(run, 'shot', { ...flashOrigin, ray: center, weapon: p.weapon, blocked: Boolean(blocked), offhand });
   if (!state.ammo) startReload(run, offhand);
   if (blocked) {
@@ -455,11 +459,12 @@ export function shoot(run, aim, offhand = false) {
     const penetrates = 1 + (p.weapon === 'shotgun' && shot !== 0 ? 0 : p.upgrades.pierce);
     for (let i = 0; i < Math.min(penetrates, candidates.length); i++) {
       const hit = candidates[i];
-      const current = hits.get(hit.e) || { total: 0, head: false, leg: false, point: hit.point, zone:hit.zone };
+      const current = hits.get(hit.e) || {total:0,head:false,leg:false,primary:{...hit,ray}};
       const headshot = hit.zone === 'head';
       current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i *
         (headshot ? (hit.e.headMultiplier ?? (hit.e.kind === 'brute' ? 2.2 : 2.8))
           : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
+      if (headshot && !current.head) current.primary={...hit,ray};
       current.head ||= headshot;
       current.leg ||= hit.zone === 'leg';
       hits.set(hit.e, current);
@@ -483,8 +488,11 @@ export function shoot(run, aim, offhand = false) {
       enemy.interruptUntil=run.time+1.5;
     }
     if (hit.leg) enemy.slow = 1.3;
-    emit(run, 'impact', { ...hit.point, surface:'body', enemyId:enemy.id, zone:hit.zone, ray:center });
-    if ((!run.campaign && hit.head && !brute) || enemy.hp <= 0) {
+    const lethal=(!run.campaign && hit.head && !brute) || enemy.hp<=0;
+    const {point,zone,ray,anchors}=hit.primary;
+    emit(run,'impact',{...point,surface:'body',enemyId:enemy.id,zone,ray,anchors,
+      rupture:Boolean(run.campaign && lethal && hit.head)});
+    if (lethal) {
       eliminate(run,enemy,hit.head);
     } else if (run.campaign && !(enemy.alertUntil>run.time)) {
       enemy.alertUntil=run.time+8;
@@ -701,6 +709,7 @@ function voiceCadence(run, enemy, gap) {
   // Leave a margin on exit so hovering at the threshold doesn't retrigger.
   if (gap > 12.65) enemy.voiceBand = 2;
   else if (gap > 5.65 && enemy.voiceBand === 0) enemy.voiceBand = 1;
+  if (run.campaign && enemy.hiding && !enemy.target && gap>8) return;
   if (gap > 21 || time < enemy.lastVoice + .48 || time < enemy.nextVoice) return;
   enemyVoice(run, enemy, 'voice');
   enemy.lastVoice = time;
@@ -721,8 +730,9 @@ function attack(run, enemy, gap, dt) {
     const contact = attackContact(enemy.kind);
     if (age < windup) {
       enemy.yaw += clamp(angleDelta(toward, enemy.yaw), -dt * 2.8, dt * 2.8);
-      const power = Math.min(run.rules.speedLimit, enemy.kind === 'shrieker' ? 1.64 : enemy.kind === 'brute' ? .76 : 1.48);
-      if (age > windup*.58 && gap > .74 && Math.abs(angleDelta(toward, enemy.yaw)) < .52) {
+      const power=enemy.rushAttack?rushSpeed[enemy.kind]*.94 :
+        Math.min(run.rules.speedLimit,enemy.kind==='shrieker'?1.64:enemy.kind==='brute'?.76:1.48);
+      if ((enemy.rushAttack || age>windup*.58) && gap>.74 && Math.abs(angleDelta(toward,enemy.yaw))<.52) {
         run.world.move(enemy, Math.sin(enemy.yaw)*power*dt,-Math.cos(enemy.yaw)*power*dt,shape.width*.83);
         enemy.y = run.world.height(enemy.x,enemy.z);
       }
@@ -755,12 +765,14 @@ function attack(run, enemy, gap, dt) {
     return true;
   }
   const triggerReach = shape.reach + (enemy.kind === 'shrieker' ? .54 : .36);
-  if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
+  if (enemy.recover<=0 && !(enemy.attackAfter>run.time) && run.nextAttack<=run.time && canReach(triggerReach)) {
     enemy.attackFrom = enemyMotion(enemy, shape.windup).filter(clip => clip[2] > 0);
     enemy.burstStart = enemy.burst = enemy.brakeUntil = 0;
-    enemy.attackClip = enemy.ambush?.stage === 'emerging' || enemy.leapUntil>run.time ? 'Ambush' : 'Attack';
+    enemy.rushAttack=Boolean(run.campaign && enemy.rushUntil>run.time && enemy.leapUntil>run.time);
+    enemy.attackClip = enemy.ambush?.stage==='emerging' || enemy.rushAttack ? 'Ambush' : 'Attack';
     enemy.leapUntil=0;
-    enemy.attackWindup = enemy.attackClip === 'Ambush' ? Math.max(.46, shape.windup) : shape.windup;
+    enemy.attackWindup=enemy.rushAttack?clamp(shape.windup*.72,.42,.56):
+      enemy.attackClip==='Ambush'?Math.max(.46,shape.windup):shape.windup;
     enemy.attackAge = 0;
     enemy.windup = enemy.attackWindup;
     enemy.moveSpeed = enemy.stride = 0;
@@ -796,9 +808,10 @@ function navigate(run, e, tx, tz, dt) {
   const progress = e.stumble > 0 ? 1 - e.stumble/e.stumbleDuration : 0;
   const stumblePace = progress > 0 ? 1 - .43 * Math.sin(Math.PI*progress) + .16 * Math.sin(2*Math.PI*progress) : 1;
   const chaseSpeed = run.campaign?.tuning.enemies[e.kind].speed;
-  const speedLimit = chaseSpeed ?? run.rules.speedLimit;
+  const rushing=chaseSpeed && e.rushUntil>time && e.target?.chase;
+  const speedLimit = rushing ? Math.max(chaseSpeed,rushSpeed[e.kind]) : chaseSpeed ?? run.rules.speedLimit;
   const speedTarget = (chaseSpeed ? (e.target?.id === 'player' || e.target?.chase ? speedLimit : speedLimit*.35) *
-    (isBurst || e.kind==='shrieker' ? 1 : stepPace*stumblePace)
+    (isBurst || rushing || e.kind==='shrieker' ? 1 : stepPace*stumblePace)
     : (isBurst ? speedLimit : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64)) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
   const previous = e.moveSpeed;
@@ -819,14 +832,14 @@ function navigate(run, e, tx, tz, dt) {
   const moved = Math.hypot(e.x - oldX, e.z - oldZ);
   e.stuck = moved < .001 ? e.stuck + dt : Math.max(0, e.stuck - dt * 3);
   if (e.stuck > 1.1) { e.turnSide *= -1; e.roam += 1.6; e.stuck = 0; }
-  if (moved > .012 && !burst && time > e.nextStumble) {
+  if (moved > .012 && !burst && !rushing && time > e.nextStumble) {
     e.stumbleDuration = (e.kind === 'brute' ? .92 : e.kind === 'shrieker' ? .49 : .75) * (1.17 - .19*e.pace);
     e.stumble = e.stumbleDuration;
     e.nextStumble = time + 3.7 + run.rng()*6.5;
   }
   e.stride = moved / dt;
   const sprintStride = 1.95 * cfg.height / ENEMIES.shambler.height;
-  const stride = isBurst || burst === 'Brake' ? sprintStride : strideLength(e.kind);
+  const stride = isBurst || burst==='Brake' ? sprintStride : strideLength(e.kind)*(rushing?1.35:1);
   e.gait += moved * Math.PI * 2 / stride;
   e.y = world.height(e.x, e.z);
   updateEnemyFooting(world,e,cfg.windup,distance(run.player,e));
@@ -839,14 +852,21 @@ function updateEnemies(run, dt, lamps) {
     flareAssignments(run);
     run.nextSwarmTick = time + .26;
   }
+  if (run.campaign) updatePursuitRoles(run);
   let pursuing = 0, diverted = 0;
   for (const e of run.enemies) {
     if (e.dead) continue;
     const gap = distance(e, p);
     if (gap > 68 && !run.campaign) { e.dead = true; continue; }
     if (time >= e.nextThink) {
-      if (run.campaign) residentPerception(run,e,gap,lamps);
-      else perception(run, e, gap, lamps);
+      if (run.campaign) {
+        if (residentPerception(run,e,gap,lamps)) {
+          enemyVoice(run,e,'shriek');
+          e.lastVoice=time;
+          noise(run,'zombie call',eye(world,e,1.28),11,.68,e.target);
+          run.metrics.ambushes.emerged++;
+        }
+      } else perception(run,e,gap,lamps);
       e.nextThink = time + (gap < 24 ? .20 : .48) + run.rng() * .08;
     }
     if (e.target?.chase) pursuing++;
@@ -859,7 +879,12 @@ function updateEnemies(run, dt, lamps) {
     e.startAge += dt;
     e.hitAge += dt;
     e.turnRate = 0;
-    if (run.campaign && e.reactionUntil>time) {
+    if (run.campaign && (e.reactionUntil>time || e.warningUntil>time)) {
+      if (e.warningUntil>time && e.target) {
+        const facing=Math.atan2(e.target.x-e.x,e.z-e.target.z);
+        e.yaw+=clamp(angleDelta(facing,e.yaw),-dt*3.2,dt*3.2);
+        e.moveSpeed=e.stride=0;
+      }
       voiceCadence(run,e,gap);
       continue;
     }
@@ -886,7 +911,7 @@ function updateEnemies(run, dt, lamps) {
       continue;
     }
     if (e.kind === 'shrieker' && e.target?.chase && gap > (run.campaign?1.9:3.4) &&
-        gap < (run.campaign?20:13) && time > e.nextBurst && e.stun <= 0) {
+        gap < (run.campaign?20:13) && time>e.nextBurst && !(e.rushUntil>time) && e.stun<=0) {
       e.burstStart = time + BURST_LOAD;
       e.burst = e.burstStart + (run.campaign ? 8 : BURST_RUN);
       e.brakeUntil = e.burst + BURST_BRAKE;
@@ -899,7 +924,8 @@ function updateEnemies(run, dt, lamps) {
       if (!t?.chase) e.recover=Math.max(0,e.recover-dt);
       if (!t?.chase) e.burstStart=e.burst=e.brakeUntil=0;
       if (!t && e.home && !e.hiding && time>=e.patrolAt) {
-        const point=e.resident.site.patrol[1];
+        const point=e.resident?.site.patrol?.[1];
+        if (!point) continue;
         if (!e.patrolling && !world.blocks(point.x,point.z,.38)) e.patrolling=true;
         if (!e.patrolling || distance(e,point)<.75 || time-e.patrolAt>13) {
           e.patrolling=false;
@@ -909,7 +935,7 @@ function updateEnemies(run, dt, lamps) {
           continue;
         }
       }
-      e.route=t && shelterRoute(world,e,t);
+      e.route=t && pursuitRoute(run,e,t);
       if (e.route && distance(e,e.route)>(e.route===t && t.chase?.72:.26)) {
         navigate(run,e,e.route.x,e.route.z,dt);
       } else {

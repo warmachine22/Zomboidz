@@ -1,7 +1,7 @@
 import { BUILD, GUNS } from './simulation.js';
 import { gunAngle } from './held-tools.js';
 import { ARSENAL_WAVES, DIFFICULTIES, difficultyKey, MODES } from './difficulty.js';
-import { normalizeTuning } from './campaign.js';
+import { defaultTuning, normalizeTuning } from './campaign.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
@@ -40,8 +40,14 @@ export function loadSettings() {
   if (!Object.hasOwn(MODES, value?.mode)) settings.mode = value?.legendary === true ? 'legendary' : defaults.mode;
   if (!ARSENAL_WAVES.includes(settings.arsenalWave)) settings.arsenalWave = defaults.arsenalWave;
   if (!Object.hasOwn(GUNS, settings.arsenalWeapon)) settings.arsenalWeapon = defaults.arsenalWeapon;
-  settings.zombieTuning=Object.fromEntries(Object.keys(DIFFICULTIES)
-    .map(level=>[level,normalizeTuning(level,value?.zombieTuning?.[level])]));
+  settings.populationRevision=1;
+  settings.zombieTuning=Object.fromEntries(Object.keys(DIFFICULTIES).map(level=>{
+    const source=value?.zombieTuning?.[level];
+    const oldDefault={easy:90,standard:125,hard:150}[level];
+    const tuning=!value?.populationRevision && source?.population===oldDefault
+      ? {...source,population:defaultTuning(level).population} : source;
+    return [level,normalizeTuning(level,tuning)];
+  }));
   return settings;
 }
 

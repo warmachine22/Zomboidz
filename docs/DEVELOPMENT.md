@@ -14,6 +14,10 @@ Plateau terrain uses fixed authoring coordinates and a fixed scenery seed. The r
 
 Use `?debug&scenario=plateau-shelter` to stand outside a plateau entrance, or `?debug&scenario=plateau-call` to pick up the final part and call from the field map. Both fixtures are unranked. **F2** opens the developer overlay when `?debug=1` is enabled. **M** opens the player map.
 
+Use `?debug&scenario=plateau-impact` for a stationary shambler with aimed test shots. Fire three times to exercise the fatal head effect. Append `&zone=body` to compare torso wounds. Run `node scripts/check-ambushes.mjs` to compare openings, indoor crowd, covered flanks, and fixed-step cost on 12 starter routes. Pass `--baseline=PATH_TO_SIMULATION_JS` for a same-machine comparison. The test protects the player so every route can reach the shelter.
+
+Run `node scripts/build-tree-posts.mjs` after changing plateau tree generation, collision, or shelter footprints. It enumerates the large trees and records valid cover posts in `src/tree-posts.js`. The fixture avoids creating hundreds of actors or walking terrain at startup. The active-area technique draws on Valve's AI presentation. The small set of pursuit roles was informed by Jeff Orkin's F.E.A.R. talk. [Valve AI systems](https://cdn.cloudflare.steamstatic.com/apps/valve/2009/ai_systems_of_l4d_mike_booth.pdf) · [F.E.A.R. AI presentation](https://gdcvault.com/play/1013459/Three-States-and-a-Plan)
+
 ## Art and audio
 
 To regenerate the original GLBs, run Blender 4.5 LTS in the background.
@@ -39,7 +43,7 @@ To refresh the Help artwork after changing models or structures, open `/assets/d
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.
 2. Compare paths and nearby silhouettes with the flashlight off and on. Try firing and reloading while moving. Compare normal and reduced flashes near cover. Cross a road to an active flare and observe how the horde divides.
 3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
-4. Use `?perf=1` and Meta’s performance tools on Hard with the flashlight on. Test a busy road junction and the nearest shelter in close combat. Record FPS, 95th-percentile frame interval, missed frames, and actual active crowd. Aim for a 15-minute sample at 72 Hz. Hard has 150 residents across the map and up to 12 active nearby before device adjustments.
+4. Use `?perf=1` and Meta’s performance tools on Hard with the flashlight on. Test a busy road junction and a shelter in close combat. Record FPS, 95th-percentile frame interval, missed frames, and actual active crowd. Aim for a 15-minute sample at 72 Hz. Hard has 693 residents across the map and up to 12 active nearby before device adjustments.
 5. Stand with the flashlight off and check approach direction by sound. Compare open ground with a zombie behind an interior wall. Press the left stick to open the map and verify that it pauses movement and enemies. After collecting all five parts, use the weapon trigger from the map to call.
 
 Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.

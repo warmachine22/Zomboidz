@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addEnemy, callExtraction, createRun, enemyPose, GUNS, shoot, STEP, stepRun, traceAim, UPGRADES } from '../src/simulation.js';
-import { defaultTuning } from '../src/campaign.js';
+import { defaultTuning, residentPerception } from '../src/campaign.js';
 import { activeHordeLimit } from '../src/difficulty.js';
 import { distance } from '../src/world.js';
 import { listScores, recordRun } from '../src/records.js';
+import { pursuitRoute, updatePursuitRoles } from '../src/tactics.js';
+import { LARGE_TREE_COUNT } from '../src/tree-posts.js';
 
 function focusRoom(seed='plateau-room', options={}) {
   const run=createRun(seed,{crafted:true,populate:false,...options});
@@ -16,11 +18,19 @@ function focusRoom(seed='plateau-room', options={}) {
 const aimFrom=(origin,at)=>({origin,ray:{x:at.x-origin.x,y:at.y-origin.y,z:at.z-origin.z}});
 
 test('plateau presets have a fixed population and a device-limited nearby crowd',()=>{
-  for (const [difficulty,residents,cap] of [['easy',90,8],['standard',125,10],['hard',150,12]]) {
+  for (const [difficulty,treeShare,guards,cap] of [['easy',.20,90,8],['standard',.30,115,10],['hard',.35,140,12]]) {
     const run=createRun('population',{difficulty,crafted:true});
-    assert.equal(run.campaign.residents.length,residents);
-    const indoor=run.world.map.residents.slice(0,25);
-    assert.ok(indoor.every(site=>run.campaign.residents.some(record=>record.site===site)));
+    const records=run.campaign.residents.map(r=>r.site);
+    const trees=records.filter(site=>site.tree);
+    assert.equal(trees.length,Math.round(LARGE_TREE_COUNT*treeShare));
+    assert.equal(new Set(trees.map(site=>site.id)).size,trees.length);
+    assert.equal(records.length,trees.length+guards);
+    for (const shelter of run.world.map.shelters) {
+      const posts=records.filter(site=>site.shelter===shelter);
+      assert.equal(posts.filter(site=>site.room!==null).length,shelter.rooms);
+      assert.equal(posts.filter(site=>site.room===null).length,(guards-65)/25);
+      assert.ok(posts.every(p=>!run.world.blocks(p.x,p.z,.36)),shelter.name);
+    }
     assert.ok(run.enemies.length<=cap);
     assert.equal(activeHordeLimit(run),cap);
     run.time=1800;
@@ -86,8 +96,10 @@ test('base pistol kill counts agree with visible hit zones and exact impact poin
         const {x,y,z,enemyId}=run.events.filter(e=>e.type==='impact').at(-1);
         assert.deepEqual({x,y,z},trace.point);
         assert.equal(enemyId,e.id);
+        assert.equal(Boolean(run.events.filter(e=>e.type==='impact').at(-1).rupture),zone==='head' && shot===count);
         assert.equal(Boolean(e.dead),shot===count,kind+' '+zone+' '+shot);
       }
+      assert.equal(run.corpses.at(-1).headLost,zone==='head');
     }
   }
 });
@@ -169,6 +181,72 @@ test('resident health and deaths persist when the player streams out and back',(
   assert.equal(living.hp,condition);
   assert.ok(!run.enemies.includes(fallen));
   assert.ok(fallen.resident.enemy.dead);
+});
+
+test('shots attract nearby zombies only, with reduced reach through cover',()=>{
+  const run=focusRoom(), p=run.player;
+  const close=addEnemy(run,'shambler',p.x+15,p.z), far=addEnemy(run,'shambler',p.x+22,p.z);
+  const hidden=addEnemy(run,'shambler',p.x-12,p.z);
+  run.world.clear=(a,b,ground)=>ground!==false || a.x>=p.x;
+  shoot(run,{origin:{x:p.x,y:1.5,z:p.z},ray:{x:0,y:0,z:-1}});
+  for (const e of run.enemies) {
+    e.yaw=Math.PI/2;
+    residentPerception(run,e,distance(p,e));
+  }
+  assert.equal(close.target?.reason,'gunshot');
+  assert.equal(far.target,null);
+  assert.equal(hidden.target,null);
+});
+
+test('gunfire outside does not pull a back-room guard away from its room',()=>{
+  const run=focusRoom(), p=run.player, site=run.world.map.shelters[0];
+  const guard=addEnemy(run,'shambler',site.part.x,site.part.z);
+  Object.defineProperty(guard,'resident',{value:{site:{shelter:site,room:1}}});
+  run.world.clear=(a,b,sense)=>sense===false;
+  Object.assign(p,{x:site.x-site.w/2-1,z:site.part.z});
+  run.noises=[{kind:'gunshot',origin:{x:p.x,y:1.4,z:p.z},radius:17,born:0,span:1.55}];
+  residentPerception(run,guard,distance(p,guard));
+  assert.equal(guard.target,null);
+  run.noises[0].origin={...site.ammo,y:1.4};
+  residentPerception(run,guard,distance(p,guard));
+  assert.equal(guard.target?.reason,'gunshot');
+});
+
+test('a hidden shambler warns before rushing a player who passes, and can catch them',()=>{
+  const run=focusRoom(), p=run.player;
+  const e=addEnemy(run,'shambler',p.x,p.z-2.1);
+  const home={x:e.x,z:e.z};
+  e.home=home;e.hiding=true;e.yaw=Math.PI;e.nextThink=0;
+  Object.defineProperty(e,'resident',{value:{site:{x:e.x,z:e.z,tree:{x:e.x,z:e.z-.95,r:.68}}}});
+  // This actor exists in a flat fixture rather than a streamed population.
+  run.campaign.nextCheck=Infinity;
+  let warned=null, burst=0;
+  for (let i=0;i<210 && run.status==='playing';i++) {
+    const previous={x:e.x,z:e.z};
+    const events=stepRun(run,{yaw:Math.PI,moveZ:1});
+    if (events.some(event=>event.type==='shriek' && event.id===e.id)) warned??=run.time;
+    if (warned!==null && run.time<e.warningUntil) assert.equal(distance(e,home),0);
+    if (distance(previous,e)/STEP>2.72) burst++;
+  }
+  assert.ok(warned!==null);
+  assert.ok(burst>12);
+  assert.equal(run.status,'dead');
+  assert.ok(run.time-warned>1.1);
+});
+
+test('pursuit keeps a direct attacker and chooses a traversable covered flank',()=>{
+  const run=focusRoom(), p=run.player;
+  const leader=addEnemy(run,'shambler',p.x,p.z+4), flank=addEnemy(run,'shambler',p.x-5,p.z+8);
+  const tree={x:p.x-5,z:p.z+1,r:.75};
+  run.world.around=()=>[{trees:[tree]}];
+  run.world.clear=(a)=>a.x!==p.x || a.z!==p.z;
+  for (const e of [leader,flank]) e.target={x:p.x,z:p.z,chase:true,id:'player'};
+  updatePursuitRoles(run);
+  assert.equal(leader.flankRole,0);
+  assert.notEqual(flank.flankRole,0);
+  const route=pursuitRoute(run,flank,flank.target);
+  assert.equal(route.covered,true);
+  assert.equal(flank.reason,'flanking behind a tree');
 });
 
 test('custom settings preserve rematch parameters but do not rank on the plateau or classic boards',()=>{

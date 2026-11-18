@@ -60,6 +60,6 @@ export function drawDebug(canvas, text, run) {
   const f = direction(p.yaw);
   circle(p.x, p.z, .85, '#dcebbb');
   line(p.x, p.z, p.x+f.x*3, p.z+f.z*3, '#dcebbb');
-  text.textContent = 'Seed ' + run.seed + ' · crowd ' + run.enemies.length + '/' + Math.min(run.crowdLimit, hordeTarget(run.time))
+  text.textContent = 'Seed ' + run.seed + ' · crowd ' + run.enemies.length + '/' + Math.min(run.crowdLimit, run.campaign?.active??hordeTarget(run.time))
     + '\nGreen roaming · red pursuing · amber diverted\nM closes this view';
 }

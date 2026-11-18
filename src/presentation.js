@@ -9,6 +9,7 @@ import { beamTexture, createCanopyLighting, moonDirection } from './night-lighti
 import { bake, grassGeometry, kit, shrubGeometry } from './kit.js';
 import { DRESSING, fireflyField, isSnag } from './dressing.js';
 import { createAmbientLife } from './ambient-life.js';
+import { createImpactEffects } from './impact-effects.js';
 import { shelterLamp } from './plateau.js';
 
 const textures = new THREE.TextureLoader();
@@ -743,8 +744,7 @@ export function createPresentation(scene, art, layouts) {
     other: new THREE.MeshStandardMaterial({ color: 0xb09b7e }),
     casing: new THREE.MeshStandardMaterial({ color: 0x988257, roughness: .4, metalness: .5 }),
   };
-  const bloodMarks=[], bloodPool=[];
-  const smear=new THREE.SphereGeometry(.043,7,5);
+  const impactEffects=createImpactEffects(scene);
   const flashTuning = {
     pistol: { power: 240, size: 1, duration: .090 },
     shotgun: { power: 350, size: 1.35, duration: .100 },
@@ -763,7 +763,7 @@ export function createPresentation(scene, art, layouts) {
     for (const group of distant.values()) discardChunk(group);
     distant.clear();
     for (const sprite of lanternMarkers.splice(0)) sprite.removeFromParent();
-    for (const mark of bloodMarks.splice(0)) recycleBlood(mark);
+    impactEffects.reset();
     for (const visual of enemyMeshes.values()) releaseEnemy(visual);
     enemyMeshes.clear();
     for (const view of pickups.values()) discardLoot(view);
@@ -911,6 +911,7 @@ export function createPresentation(scene, art, layouts) {
     scene.add(root);
     const currentPose = source === art[model] ? solvedEnemyPose({kind, gait:0}, ENEMIES[kind].windup) : null;
     const bones = currentPose?.rig.bones.map(name => character.getObjectByName(name));
+    const anchorBones=currentPose?.rig.anchors.map(anchor=>bones[anchor[0]]);
     const targets = bones?.map(() => ({ position: new THREE.Vector3(), rotation: new THREE.Quaternion() }));
     const mixer = bones ? null : new THREE.AnimationMixer(character);
     const actions = {};
@@ -918,12 +919,13 @@ export function createPresentation(scene, art, layouts) {
       actions[clip.name] = mixer.clipAction(clip).play();
       actions[clip.name].setEffectiveWeight(clip.name === 'Walk' ? 1 : 0);
     }
-    return { root, character, bones, targets, mixer, model, actions, deadAt: -1, age: 0 };
+    return {root,character,bones,anchorBones,head:character.getObjectByName('Head'),
+      neck:character.getObjectByName('Neck'),targets,mixer,model,actions,deadAt:-1,age:0};
   }
 
   function releaseEnemy(v) {
-    for (let i=bloodMarks.length-1;i>=0;i--) if (bloodMarks[i].actor===v)
-      recycleBlood(bloodMarks.splice(i,1)[0]);
+    impactEffects.release(v);
+    v.head?.scale.setScalar(1);
     v.root.visible = false;
     v.character.rotation.set(0, Math.PI, 0);
     v.character.position.set(0, 0, 0);
@@ -940,6 +942,7 @@ export function createPresentation(scene, art, layouts) {
       let v = enemyMeshes.get(e.id);
       if (!v) { v = borrowEnemy(e.kind, e.appearance ?? e.kind); enemyMeshes.set(e.id, v); }
       const d = distance(e, run.player), dead = e.diedAt !== undefined;
+      if (e.headLost && v.head && v.head.scale.x>.05) v.head.scale.setScalar(.025);
       v.root.rotation.y = -interpolateEnemyTransform(e, alpha, v.root.position);
       if (dead && !v.bones) {
         const time = run.time - e.diedAt, rate = e.kind === 'brute' ? 1.2 : e.kind === 'shrieker' ? 2.05 : 1.48;
@@ -951,7 +954,8 @@ export function createPresentation(scene, art, layouts) {
         continue;
       }
       if (!v.bones) v.age += dt;
-      const skip = d < 13 || (d < 26 && burstPhase(e)) || e.attackAge !== undefined || dead
+      const idleGuard=run.campaign && !dead && e.attackAge===undefined && d>7 && !e.target?.chase && e.stride<.2;
+      const skip = idleGuard ? (d>18?8:4) : d < 13 || (d < 26 && burstPhase(e)) || e.attackAge !== undefined || dead
         ? 1 : d < 24 ? (quality === 1 ? 4 : 2) : (quality === 1 ? 7 : 4);
       const gun = GUNS[run.player.weapon];
       const initial = v.bones ? !v.poseSignature : v.age === dt;
@@ -1142,27 +1146,6 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
-  function recycleBlood(mark) {
-    mark.mesh.visible=false;
-    mark.mesh.removeFromParent();
-    bloodPool.push(mark.mesh);
-  }
-
-  function wound(event) {
-    const actor=enemyMeshes.get(event.enemyId);
-    if (!actor || bloodMarks.length>=26) return;
-    const at=v3(event.x,event.y,event.z);
-    actor.root.updateMatrixWorld(true);
-    const bone=actor.bones?.reduce((nearest,next)=>next.getWorldPosition(v3()).distanceToSquared(at)<
-      nearest.getWorldPosition(v3()).distanceToSquared(at)?next:nearest) ?? actor.root;
-    const mesh=bloodPool.pop()??new THREE.Mesh(smear,effectMaterials.body);
-    mesh.position.copy(bone.worldToLocal(at));
-    mesh.scale.set(1,.69,.68);
-    mesh.visible=true;
-    bone.add(mesh);
-    bloodMarks.push({mesh,actor,until:currentRun.time+2.6});
-  }
-
   function debris(event, weapon = '') {
     const body=event.surface==='body';
     const amount = weapon ? 1 : body && quality>1 ? 8 : quality > 1 ? 6 : 3;
@@ -1182,15 +1165,16 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
-  function events(batch) {
+  function events(batch,reduced=false) {
     for (const event of batch) {
       if (event.type === 'shot') {
         flashes[Number(Boolean(event.offhand))].shot = { ...event, elapsed: 0, fresh: true };
         if (quality > 1 && event.weapon !== 'flaregun') debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
       if (event.type === 'impact') {
-        debris(event);
-        if (event.enemyId && currentRun?.campaign) wound(event);
+        if (event.enemyId && currentRun?.campaign)
+          impactEffects.impact(event,enemyMeshes.get(event.enemyId),currentRun.world,quality,reduced);
+        else debris(event);
       }
     }
   }
@@ -1403,8 +1387,7 @@ export function createPresentation(scene, art, layouts) {
         effect.mesh.visible = false; impactPool.push(effect.mesh); effects.splice(i, 1);
       }
     }
-    for (let i=bloodMarks.length-1;i>=0;i--) if (bloodMarks[i].until<run.time)
-      recycleBlood(bloodMarks.splice(i,1)[0]);
+    if (!frozen) impactEffects.update(dt,quality);
   }
 
   return { update, events, reset, stats: streaming, state: presentationState, pickupImage: kind => iconTextures[kind].image.toDataURL(),   setQuality(value) {
