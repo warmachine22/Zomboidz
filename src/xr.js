@@ -19,6 +19,7 @@ export function questButtons(right, left, leftHanded, dual = false) {
     reload: button(right, 4), cycleWeapon: !dual && button(right, 5),
     toggleLight: !dual && button(light, 0), offhandFire: dual && button(light, 0),
     toggleBeam: !dual && button(left, 4), pause: button(left, dual ? 4 : 5),
+    map: button(left,3),
     cyclePrimaryBeam: dual && button(weapon, 5), cycleOffhandBeam: dual && button(light, 5),
     menuDifficulty: button(left, 4), menuMode: button(right, 5), menuWave: button(left, 5),
   };
@@ -177,7 +178,7 @@ export function createXR(renderer, scene, rig) {
     return { tracking: { weapon, lamp }, view: asWorld(rawView) };
   }
 
-  function drawPanel(page, view, { title, lines = [], hint, second }) {
+  function drawPanel(page, view, { title, lines = [], hint, second, draw }) {
     if (!view) return;
     if (!panel.visible || page !== domMode) {
       const facing = heading(); facing.y = 0; facing.normalize();
@@ -190,6 +191,11 @@ export function createXR(renderer, scene, rig) {
     ctx.clearRect(0, 0, 1024, 597);
     ctx.fillStyle = '#141f1eef'; ctx.fillRect(0, 0, 1024, 597);
     ctx.strokeStyle = '#a0aa8d'; ctx.lineWidth = 4; ctx.strokeRect(22, 22, 980, 553);
+    if (draw) {
+      draw(ctx);
+      map.needsUpdate=true;
+      return;
+    }
     ctx.fillStyle = '#bdc8a8'; ctx.font = '27px monospace'; ctx.fillText('ZOMBOIDZ   /   THE LAST LIGHT', 70, 89);
     ctx.fillStyle = '#ede8d6'; ctx.font = 'bold 78px sans-serif'; ctx.fillText(title, 64, 198, 885);
     ctx.font = '34px sans-serif';

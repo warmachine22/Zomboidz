@@ -1,10 +1,10 @@
 # Zomboidz — The Last Light
 
-An endless first-person zombie survival game for Meta Quest 3 Browser and desktop, with on-screen controls for touch. Survive Blackwater Forest with a service pistol, 50 spare rounds, a flare gun, a flashlight, and whatever you can scavenge. Gunshots, footsteps, and visible light draw the horde. A fresh rare drop burns like a flare and may draw a few walkers away from you.
+Survive Blackwater's forest plateau and search 25 shelters for five radio parts. Zomboidz runs on Meta Quest 3 Browser, desktop first person, and touch. Start with a Service pistol, 50 spare rounds, a flare gun, and a rechargeable flashlight. Resident zombies react to gunshots, footsteps, visible light, and launched flares.
 
 [Play the current release](https://zombiez.vercel.app/). Refresh the page to load the latest release.
 
-Survive and escape by following roads and tracks to search sheds. When you find the working radio, approach it and press **E**, use the **weapon grip** in VR, or tap **Call** on touch. The reply confirms extraction and ends the run with your escape time.
+Follow roads and tracks to shelters. Search their rooms for radio parts, weapons, upgrades, and armor. Open the field map with **M**, a **left-stick click** on Quest, or the **Map** button on touch. Once the radio is ready, call from the map. On Quest use the weapon trigger to transmit.
 
 Open **Help** from the main menu for in-game images of sheds, the radio, and each zombie type, plus a guide to pickup icons.
 
@@ -29,13 +29,7 @@ New weapons equip unloaded. Firearms share one reserve, and each weapon keeps it
 
 Survival runs start with a loaded flare gun and 19 spare flares. Cycle to it and launch a flare ahead of you to draw nearby zombies toward the landing spot for up to 10 seconds. The optional aim dot marks the expected landing spot. Spare flares collect automatically near ammo caches and from occasional zombie drops.
 
-Choose **Easy**, **Normal**, or **Hard** on the main menu. Reflective posts mark road junctions, and occasional amber lanterns mark entrances. Search sheds for the radio.
-
-Choose **Arsenal Test** to start an unranked run with all weapons loaded, all upgrades maxed, and a starting wave from minute 0, 5, 10, 15, or 20. On the Quest start panel, B cycles modes, X cycles difficulty, Y cycles the wave in Arsenal Test, and the weapon grip cycles the starting weapon. The clock starts at zero on every wave.
-
-Choose **Legendary** on the main menu to start with two 50-round pistols and a light on each pistol. On Quest, right B cycles the right gun's light and left Y cycles the left gun's light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other. Touch gets buttons for each light. The lights never run out of charge.
-
-The Laser dot setting enables both aiming dots. Armor and ammo are the only pickups. On Quest, each trigger fires its pistol and right A tops up both from the shared reserve. Desktop and touch fire both pistols together. Legendary runs are kept out of the local scoreboards.
+Choose **Easy**, **Normal**, or **Hard**. Reflective posts mark junctions and amber lanterns mark every entrance. **Settings → Zombie tuning** lets you adjust the selected preset's population, chase speeds, and durability. Edited presets are unranked. Default presets have separate local scoreboards and older scores are in **Classic archive**.
 
 After a fatal hit, the scene freezes and labels the zombie that struck you. On Quest, turn your head or snap turn and aim your flashlight as usual. Press right A to switch between the scene and results. On desktop or touch, drag to look and select **Results** when you’re ready.
 
@@ -43,12 +37,12 @@ After a fatal hit, the scene freezes and labels the zombie that struck you. On Q
 
 ```sh
 npm test
-node scripts/balance.mjs --seconds=540
+node scripts/check-plateau.mjs
 npm run build
 ```
 
-The balance runner compares stationary, cautious, and aggressive strategies across the same seeds. Pass `--seeds=Blackwater,Cold Creek`, `--strategy=cautious`, or `--json` to narrow a run or export metrics. In the development build, add `?debug=1&seed=Blackwater` and press **M** for the top-down view. Use `?debug=1&scenario=roadside` to show all three enemy types and two fresh loot flares near the opening.
+The plateau audit checks collision routes, an extraction with no zombies, and paired combat scenarios. In the development build add `?debug=1&seed=Blackwater` and press **F2** for the developer overlay. Use `?debug=1&scenario=plateau-call` to pick up a final part and exercise the map extraction flow.
 
 Deploy the generated `dist/` directory over HTTPS. Add `?perf=1` to the deployed URL to view Quest frame timing and active crowd size during live play. The session must be tested on a physical Quest 3 to verify aiming alignment, spatial audio, comfort, and the 72 Hz target.
 
-Scores live in the browser on the device that played. Each completed run can be replayed with the same seed or a new forest. See the [project handbook](docs/HANDBOOK.md), [development notes](docs/DEVELOPMENT.md), and [asset credits](CREDITS.md).
+Scores live in the browser on the device that played. Rematches keep the same seed and difficulty settings. See the [project handbook](docs/HANDBOOK.md), [development notes](docs/DEVELOPMENT.md), and [asset credits](CREDITS.md).

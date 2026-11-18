@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { addEnemy, BUILD, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, isSupply, LOOT,
+import { addEnemy, BUILD, callExtraction, createRun, enemyPose, flarePower, GUNS, inspectFlashlights, isSupply, LOOT,
   resolvePlayerBeam, setLoot, signalFlarePower, STEP, stepRun, traceAim } from './simulation.js';
 import { createPresentation, loadArt } from './presentation.js';
 import { CHUNK, clamp } from './world.js';
@@ -10,7 +10,9 @@ import { drawDebug } from './debug-map.js';
 import { fillHelp } from './help.js';
 import { createGunHandling, gunAngle, heldPose, legendaryBeamLabel, mountedAim, pistolLampAim,
   shotgunPumpTravel, toolLayouts } from './held-tools.js';
-import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, MODES } from './difficulty.js';
+import { activeHordeLimit, DIFFICULTIES } from './difficulty.js';
+import { defaultTuning, normalizeTuning, SPECIES, TUNING_FIELDS } from './campaign.js';
+import { drawFieldMap } from './field-map.js';
 import { RADIO_GUARANTEE, RADIO_REPLY } from './extraction.js';
 import { setDressingEnabled } from './dressing.js';
 
@@ -26,7 +28,7 @@ const settings = loadSettings();
 const held = new Set(), queued = {};
 const audio = createAudio();
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(69, innerWidth / innerHeight, .044, 95);
+const camera = new THREE.PerspectiveCamera(69, innerWidth / innerHeight, .044, 156);
 camera.rotation.order = 'YXZ';
 const rig = new THREE.Group();
 rig.add(camera); scene.add(rig);
@@ -77,7 +79,7 @@ let calibrating = false;
 const direction0 = new THREE.Vector3(0, 0, -1);
 const vertical = new THREE.Vector3(0, 1, 0);
 const text = (id, value) => { $(id).textContent = value; };
-const objective = 'Follow the road. Search sheds for an extraction radio.';
+const objective = 'Search shelters for five radio parts. Open the field map to track them.';
 
 function clearInput() {
   held.clear();
@@ -91,8 +93,10 @@ function clearInput() {
 function setPhase(next) {
   phase = next;
   calibrating = false;
-  handling.reset(run.player.weapon, !!xr.active);
-  offhandHandling.reset('pistol');
+  if (phase!=='map') {
+    handling.reset(run.player.weapon, !!xr.active);
+    offhandHandling.reset('pistol');
+  }
   panelKey = '';
   const running = phase === 'playing', inspecting = phase === 'inspect', isXR = !!xr.active;
   document.body.classList.toggle('running', running);
@@ -104,6 +108,7 @@ function setPhase(next) {
   $('death-view').hidden = !inspecting || isXR;
   $('radio-reply').hidden = phase !== 'extracting' || isXR;
   $('pause').hidden = phase !== 'paused';
+  $('field-map').hidden = phase !== 'map' || isXR;
   $('results').hidden = phase !== 'results';
   $('debug').hidden = !running || !debugVisible || isXR;
   clearInput();
@@ -128,18 +133,33 @@ function pointerLock() {
 }
 
 function selectedSetup() {
-  return { difficulty:settings.difficulty, legendary:settings.mode === 'legendary',
-    arsenal:settings.mode === 'arsenal' ? { wave:settings.arsenalWave, weapon:settings.arsenalWeapon } : null };
+  return {difficulty:settings.difficulty,crafted:true,tuning:settings.zombieTuning[settings.difficulty]};
 }
 
 function start(seed = rapidSeed(), setup = selectedSetup()) {
   useMouseDrag = false;
   const scenario = debugEnabled ? qs.get('scenario') : '';
   const encounter = ['roadside', 'night', 'shelter', 'motion', 'escape', 'lantern', 'dressing'].includes(scenario);
+  const plateauCheck = scenario==='plateau-call' || scenario==='plateau-shelter';
   run = createRun(encounter ? 'Blackwater' : seed, { ...setup, crowdLimit: xr.active ? 48 : touch ? 34 : 48,
-    populate: !encounter });
+    crafted:setup.crafted && !encounter, populate:!encounter && !plateauCheck });
+  run.practice=encounter||plateauCheck;
   yaw = pitch = roomX = roomZ = 0;
-  if (scenario === 'roadside') {
+  if (run.campaign) {
+    const p=run.player;
+    const next=run.world.map.shelters.reduce((a,b)=>Math.hypot(a.door.x-p.x,a.door.z-p.z)<
+      Math.hypot(b.door.x-p.x,b.door.z-p.z)?a:b);
+    yaw=p.yaw=Math.atan2(next.junction.x-p.x,p.z-next.junction.z);
+  }
+  if (plateauCheck) {
+    const {site,part}=run.campaign.caches.find(cache=>cache.part!==undefined);
+    const at=scenario==='plateau-call'?site.part:{x:site.door.x,z:site.door.z-site.sign*5.4};
+    const p=run.player;
+    Object.assign(p,at,{y:run.world.height(at.x,at.z)});
+    yaw=site.sign===1?Math.PI:0;
+    if (scenario==='plateau-call')
+      for (const {part:other} of run.campaign.caches) if (other!==part && other!==undefined) run.campaign.parts.add(other);
+  } else if (scenario === 'roadside') {
     addEnemy(run, 'shambler', -.55, 13.6);
     addEnemy(run, 'shrieker', 1.7, 10.2);
     addEnemy(run, 'brute', -.6, 8.4);
@@ -228,8 +248,8 @@ function start(seed = rapidSeed(), setup = selectedSetup()) {
 }
 
 function rematch() {
-  const { seed, difficulty, legendary, arsenal } = run;
-  start(seed,{ difficulty, legendary, arsenal });
+  const { seed, difficulty, legendary, arsenal, campaign } = run;
+  start(seed,{difficulty,legendary,arsenal,crafted:!!campaign,tuning:campaign?.tuning});
 }
 
 function pause(reason = 'The run is paused.') {
@@ -241,10 +261,28 @@ function pause(reason = 'The run is paused.') {
 }
 
 function resume() {
-  if (phase !== 'paused') return;
+  if (phase !== 'paused' && phase!=='map') return;
   setPhase('playing');
   void audio.unlock();
   pointerLock();
+}
+
+function openFieldMap() {
+  if (phase!=='playing' || !run.campaign) return;
+  setPhase('map');
+  if (document.pointerLockElement===canvas) document.exitPointerLock();
+  if (xr.active) return;
+  const chart=$('field-chart'), count=run.campaign.parts.size;
+  const ctx=chart.getContext('2d');
+  ctx.clearRect(0,0,chart.width,chart.height);
+  drawFieldMap(ctx,run,0,0,720,496);
+  $('call-extraction').hidden=count<5;
+  text('map-status',count===5?'Radio assembled. Ready to call.':'Radio parts '+count+'/5');
+  $('close-map').focus();
+}
+
+function transmit() {
+  if (phase==='map' && callExtraction(run)) handleEvent(run.events);
 }
 
 function showHome() {
@@ -256,13 +294,15 @@ function showHome() {
 }
 
 function practiceLabel() {
+  if (run.practice) return 'Development encounter';
+  if (run.campaign?.ranked===false) return 'Custom tuning · Unranked';
   if (run.arsenal) return 'Arsenal Test · ' + DIFFICULTIES[run.difficulty].name + ' · Minute ' + run.arsenal.wave;
   if (run.legendary) return 'Legendary practice';
   return '';
 }
 
 function resultScore() {
-  if (run.status !== 'dead' || motionReplay) return;
+  if (!(run.status==='dead' || (run.campaign && run.status==='escaped')) || motionReplay) return;
   const practice = practiceLabel();
   if (practice) {
     resultNote = practice + ' · Seed ' + run.seed;
@@ -304,7 +344,7 @@ function fillResults(title, description, escaped) {
   text('result-kills', run.player.kills);
   text('result-heads', run.player.headshots);
   $('look-around').hidden = escaped;
-  $('result-initials').parentElement.hidden = escaped || Boolean(practiceLabel());
+  $('result-initials').parentElement.hidden = (escaped && !run.campaign) || Boolean(practiceLabel());
 }
 
 function inspectEscape() {
@@ -314,6 +354,8 @@ function inspectEscape() {
   text('radio-reply', RADIO_REPLY);
   text('result-storage', resultNote);
   fillResults('Escaped', RADIO_REPLY, true);
+  $('result-initials').value=settings.initials;
+  resultScore();
   setPhase('extracting');
   if (document.pointerLockElement === canvas) document.exitPointerLock();
 }
@@ -345,10 +387,11 @@ function showPanel(id) {
     $('score-difficulty').value = settings.difficulty;
     showScores();
   }
+  if (id==='settings') renderTuning();
 }
 
 function showScores() {
-  const target = $('score-table'), items = listScores($('score-difficulty').value);
+  const target = $('score-table'), items = listScores($('score-difficulty').value,$('score-ruleset').value);
   target.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('p');
@@ -359,48 +402,74 @@ function showScores() {
   const table = document.createElement('table');
   table.className = 'records';
   const headings = table.createTHead().insertRow();
-  for (const name of ['#', 'Player', 'Time', 'Kills', 'Headshots']) {
+  for (const name of ['#', 'Player', 'Result', 'Time', 'Kills', 'Headshots']) {
     const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = name; headings.append(cell);
   }
   const body = table.createTBody();
   for (const [i, row] of items.entries()) {
     const tr = body.insertRow();
-    for (const part of [i + 1, row.initials, formatTime(row.time), row.kills, row.headshots]) tr.insertCell().textContent = part;
+    for (const part of [i + 1,row.initials,row.escaped?'Escaped':'Survived',formatTime(row.time),row.kills,row.headshots])
+      tr.insertCell().textContent=part;
   }
   target.append(table);
 }
 
-function setRunOption(key, value) {
-  settings[key] = value;
-  for (const [id,option] of [['difficulty','difficulty'], ['game-mode','mode'],
-    ['arsenal-wave','arsenalWave'], ['arsenal-weapon','arsenalWeapon']]) $(id).value = settings[option];
-  $('arsenal-setup').hidden = settings.mode !== 'arsenal';
+function setDifficulty(value) {
+  settings.difficulty=value;
+  $('difficulty').value=value;
   panelKey = '';
   saveSettings(settings);
 }
 
 const difficultyOptions = Object.entries(DIFFICULTIES).map(([value,level]) => [value,level.name]);
-const weaponOptions = Object.entries(GUNS).map(([value,gun]) => [value,gun.name]);
-const runOptions = [
-  ['difficulty','difficulty',difficultyOptions], ['game-mode','mode',Object.entries(MODES)],
-  ['arsenal-wave','arsenalWave',ARSENAL_WAVES.map(wave => [wave,wave + ' min'])],
-  ['arsenal-weapon','arsenalWeapon',weaponOptions],
-];
-for (const [id,key,options] of runOptions) {
-  const menu = $(id);
-  menu.replaceChildren(...options.map(([value,label]) => new Option(label,value)));
-  menu.value = settings[key];
-  menu.addEventListener('change', () => setRunOption(key, options[menu.selectedIndex][0]));
-}
-$('arsenal-setup').hidden = settings.mode !== 'arsenal';
+$('difficulty').replaceChildren(...difficultyOptions.map(([value,label])=>new Option(label,value)));
+$('difficulty').value=settings.difficulty;
+$('difficulty').addEventListener('change',event=>setDifficulty(event.target.value));
 $('score-difficulty').replaceChildren(...difficultyOptions.map(([value,label]) => new Option(label,value)));
 $('score-difficulty').addEventListener('change', showScores);
+$('score-ruleset').addEventListener('change',showScores);
 
-function cycleRunOption(key) {
-  const [, , options] = runOptions.find(([,option]) => option === key);
-  const index = options.findIndex(([value]) => value === settings[key]);
-  setRunOption(key, options[(index + 1) % options.length][0]);
+function customTuning() {
+  return JSON.stringify(settings.zombieTuning[settings.difficulty])!==JSON.stringify(defaultTuning(settings.difficulty));
 }
+
+function renderTuning() {
+  const level=settings.difficulty, tuning=settings.zombieTuning[level], root=$('tuning-fields');
+  root.replaceChildren();
+  function field(container,label,read,{min,max,step},apply) {
+    const row=document.createElement('label'), name=document.createElement('span'), input=document.createElement('input');
+    name.textContent=label;
+    Object.assign(input,{type:'number',value:read(),min,max,step});
+    input.addEventListener('change',()=>{
+      if (Number.isFinite(input.valueAsNumber)) apply(input.valueAsNumber);
+      settings.zombieTuning[level]=normalizeTuning(level,tuning);
+      saveSettings(settings);
+      Object.assign(tuning,settings.zombieTuning[level]);
+      input.value=read();
+      updateTuningStatus();
+    });
+    row.append(name,input);
+    container.append(row);
+  }
+  updateTuningStatus();
+  field(root,'Plateau population',()=>tuning.population,{min:0,max:150,step:1},value=>tuning.population=value);
+  for (const kind of SPECIES) {
+    const group=document.createElement('fieldset'), legend=document.createElement('legend');
+    legend.textContent=kind[0].toUpperCase()+kind.slice(1);
+    group.append(legend);
+    for (const [key,spec] of Object.entries(TUNING_FIELDS))
+      field(group,spec.label,()=>tuning.enemies[kind][key],spec,value=>tuning.enemies[kind][key]=value);
+    root.append(group);
+  }
+}
+function updateTuningStatus() {
+  text('tuning-status',DIFFICULTIES[settings.difficulty].name+' · '+(customTuning()?'Custom and unranked':'Default and ranked'));
+}
+$('tuning-reset').addEventListener('click',()=>{
+  settings.zombieTuning[settings.difficulty]=defaultTuning(settings.difficulty);
+  saveSettings(settings);
+  renderTuning();
+});
 
 for (const btn of document.querySelectorAll('[data-panel]')) btn.addEventListener('click', () => showPanel(btn.dataset.panel));
 for (const btn of document.querySelectorAll('[data-back]')) btn.addEventListener('click', () => showPanel('home'));
@@ -446,6 +515,8 @@ $('result-initials').addEventListener('change', event => {
 });
 $('start').addEventListener('click', () => start(debugEnabled && qs.get('seed') || undefined));
 $('resume').addEventListener('click', resume);
+$('close-map').addEventListener('click',resume);
+$('call-extraction').addEventListener('click',transmit);
 $('quit').addEventListener('click', showHome);
 $('result-home').addEventListener('click', showHome);
 $('show-results').addEventListener('click', openResults);
@@ -482,7 +553,11 @@ document.addEventListener('keydown', event => {
     if (keyboard[event.code] && !event.repeat) queued[keyboard[event.code]] = true;
     if (event.code === 'Escape') pause();
     if (event.code === 'Space' || event.code === 'Tab') event.preventDefault();
-    if (debugEnabled && event.code === 'KeyM' && !event.repeat) {
+    if (event.code==='KeyM' && !event.repeat) {
+      event.preventDefault();
+      openFieldMap();
+    }
+    if (debugEnabled && event.code === 'F2' && !event.repeat) {
       debugVisible = !debugVisible;
       $('debug').hidden = !debugVisible;
     }
@@ -493,7 +568,8 @@ document.addEventListener('keydown', event => {
     } else if (event.code === 'KeyF' || event.code === 'KeyQ') {
       inspectFlashlights(run, { [keyboard[event.code]]: true });
     }
-  } else if (phase === 'paused' && event.code === 'Escape') resume();
+  } else if (phase==='map' && !event.repeat && (event.code==='KeyM' || event.code==='Escape')) resume();
+  else if (phase === 'paused' && event.code === 'Escape') resume();
   else if (phase === 'results' && event.code === 'Enter' && event.target.tagName !== 'BUTTON') start();
 });
 document.addEventListener('keyup', e => held.delete(e.code));
@@ -572,6 +648,7 @@ for (const btn of document.querySelectorAll('[data-touch]')) {
     const action = btn.dataset.touch;
     if (phase === 'inspect') inspectFlashlights(run, { [action]: true });
     else if (action === 'pause') pause();
+    else if (action==='map') openFieldMap();
     else queued[action] = true;
   });
 }
@@ -677,8 +754,8 @@ function updateHUD(force = false) {
   hudAt = run.time + .07;
   const p = run.player, display = Math.ceil(p.battery * 100);
   text('clock', formatTime(run.time));
-  $('arsenal-crowd').hidden = !run.arsenal;
-  if (run.arsenal) text('arsenal-crowd', 'MIN ' + run.arsenal.wave + ' · ' + run.enemies.length + '/' + activeHordeLimit(run) + ' ZOMBIES');
+  $('radio-parts').hidden=!run.campaign;
+  if (run.campaign) text('radio-parts','RADIO '+run.campaign.parts.size+'/5'+(run.campaign.parts.size===5?' · CALL FROM MAP':''));
   text('weapon-name', p.offhand ? 'DUAL SERVICE PISTOLS' : GUNS[p.weapon].name.toUpperCase());
   const rounds = count => String(count).padStart(2, '0');
   $('rounds').firstChild.textContent = rounds(p.ammo) + (p.offhand ? ' + ' + rounds(p.offhand.ammo) : '') + ' ';
@@ -730,20 +807,20 @@ function xrUI(sample, trackedView) {
       menu: {
         title: 'Enter the forest',
         lines: [
-          MODES[settings.mode] + ' · ' + DIFFICULTIES[settings.difficulty].name,
-          'B changes mode. X changes difficulty.',
-          ...(settings.mode === 'arsenal'
-            ? ['Minute ' + settings.arsenalWave + ' · ' + GUNS[settings.arsenalWeapon].name,
-              'Y changes wave. Weapon grip cycles starting weapon.']
-            : ['Follow roads and search sheds for the extraction radio.',
-              settings.mode === 'legendary' ? 'Dual pistols and always-on lights. Unranked run.'
-                : 'Search the woods. Keep your light and ammo ready.']),
+          DIFFICULTIES[settings.difficulty].name+(customTuning()?' · Custom tuning':'')+'     X changes difficulty',
+          'Find five radio parts in shelters.',
+          'Click the left stick to open your field map.',
         ],
         hint: sample.tracked ? 'WEAPON TRIGGER  ·  START' : 'CONNECT BOTH CONTROLLERS',
         second: 'A  ·  GUN ANGLE',
       },
       paused: { title: 'Paused', lines: [pauseReason],
         hint: sample.weaponTracked ? 'TRIGGER  ·  RESUME' : 'CONNECT WEAPON CONTROLLER', second: 'A  ·  GUN ANGLE' },
+      map: {draw(ctx) {
+        drawFieldMap(ctx,run,82,56,870,449);
+        ctx.fillStyle='#d8e5cb'; ctx.font='bold 23px monospace';
+        ctx.fillText('LEFT STICK CLICK  ·  RETURN'+(run.campaign.parts.size===5?'        TRIGGER  ·  CALL EXTRACTION':''),82,549,870);
+      }},
       angle: { title: 'Gun Angle', lines: [
         'Aim at this panel to see where the barrel points.',
         'Weapon stick adjusts pitch and yaw by 1°.',
@@ -778,10 +855,11 @@ function measure(wall, stereo) {
   if (loss > .075 || fps < hz * .91) {
     stableWindows = 0;
     if (quality > 1) presentation.setQuality(--quality);
+    else if (run.campaign) run.crowdLimit=Math.max(5,activeHordeLimit(run)-1);
     else run.crowdLimit = Math.max(11, Math.min(run.crowdLimit - 4, run.enemies.length + 2));
   } else if (loss < .023 && fps >= hz * .96) {
     if (++stableWindows > 4) {
-      run.crowdLimit = Math.min(48, run.crowdLimit + 2);
+      run.crowdLimit = Math.min(run.campaign?.active??48, run.crowdLimit + 2);
       stableWindows = 0;
     }
   } else stableWindows = 0;
@@ -843,13 +921,16 @@ function frame(now, xrFrame) {
           else if (sample.interact) updateGunSettings(0, 0);
           else if (sample.anglePitch || sample.angleYaw)
             updateGunSettings(settings.gunPitch + sample.anglePitch, settings.gunYaw + sample.angleYaw);
-        } else if (phase === 'menu' && sample.menuDifficulty) cycleRunOption('difficulty');
-        else if (phase === 'menu' && sample.menuMode) cycleRunOption('mode');
-        else if (phase === 'menu' && settings.mode === 'arsenal' && sample.menuWave) cycleRunOption('arsenalWave');
-        else if (phase === 'menu' && settings.mode === 'arsenal' && sample.interact) cycleRunOption('arsenalWeapon');
+        } else if (phase === 'menu' && sample.menuDifficulty) {
+          const index=difficultyOptions.findIndex(([key])=>key===settings.difficulty);
+          setDifficulty(difficultyOptions[(index+1)%difficultyOptions.length][0]);
+        }
         else if (sample.reload) { calibrating = true; panelKey = ''; }
         else if (phase === 'menu' && sample.fire && sample.tracked) start();
         else if (phase === 'paused' && sample.fire && sample.weaponTracked) resume();
+      } else if (phase==='map') {
+        if (sample.map || sample.pause) resume();
+        else if (sample.fire) transmit();
       } else if (phase === 'inspect') {
         if (sample.reload) openResults();
         else inspectFlashlights(run, sample);
@@ -861,6 +942,7 @@ function frame(now, xrFrame) {
         }
       } else if (phase === 'playing') {
         if (sample.pause) pause();
+        else if (sample.map) openFieldMap();
         else if (!sample.weaponTracked && sample.missingFor > .5) pause('Weapon controller tracking was lost.');
         else {
           for (const key of ['reload', 'cycleWeapon', 'fire', 'offhandFire', 'toggleLight', 'toggleBeam',
@@ -925,8 +1007,9 @@ if (debugEnabled) {
   window.render_game_to_text = () => JSON.stringify({
     phase, seed: run.seed, difficulty:run.difficulty, arsenal:run.arsenal, crowdTarget:activeHordeLimit(run),
     elapsed: Number(run.time.toFixed(2)), player: run.player,
+    campaign:run.campaign && {parts:[...run.campaign.parts],visited:[...run.campaign.visited],population:run.campaign.residents.length},
     enemies: run.enemies.map(({ id, kind, appearance, x, z, reason, route }) => ({ id, kind, appearance, x, z, reason, route })),
-    loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: isSupply(l.kind) ? 0 : flarePower(run.time - l.born) })),
+    loot: run.loot.filter(l => !l.lost).map(l => ({ ...l, power: l.shelter || isSupply(l.kind) ? 0 : flarePower(run.time - l.born) })),
     signalFlares: run.signalFlares.map(({ id, x, y, z, landed, born }) =>
       ({ id, x, y, z, landed, power: landed ? signalFlarePower(run.time - born) : null })),
     offer: run.offer?.kind, death: run.death, metrics: run.metrics, perf: perfSample, streaming: presentation.stats,

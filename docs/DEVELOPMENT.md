@@ -10,9 +10,9 @@ The public alias `zombiez.vercel.app` is assigned to the routing deployment in `
 
 The shared fixed-step simulation owns damage, timers, aim rays, sound and light sensing, spawn choices, loot, and survival results. It runs headlessly with the same joint math used by the renderer. RequestAnimationFrame collects keyboard, touch, or WebXR input and renders state with Three.js. The top-down overlay reads the same runtime state and displays reasons for target switches and ambush behavior.
 
-Terrain chunks are keyed by seed and world coordinates. The renderer streams a 3×3 ring, while simulation maintains a bounded geometry cache and a set of collected landmarks. Shots and perception share terrain and cover queries. Importing the older alpha snapshot is only useful for restoring an older release.
+Plateau terrain uses fixed authoring coordinates and a fixed scenery seed. The run seed chooses start, resident distribution, and gear and part placement. The renderer streams a heading-biased high-detail ring plus a simplified distant layer. The simulation keeps a bounded geometry cache. Shots and perception share terrain and cover queries.
 
-Use `?debug&scenario=escape` on the development server to enter a seeded district beside a shed and exercise the guaranteed radio placement. The regular hunt rolls once per eligible shed within 12 metres and forces placement on the 30th distinct shed if the earlier rolls miss. On Quest, use `?perf=1` during a late run to compare a district with the earlier open-forest build. Record frame time, missed frames, and active enemies together.
+Use `?debug&scenario=plateau-shelter` to stand outside a plateau entrance, or `?debug&scenario=plateau-call` to pick up the final part and call from the field map. Both fixtures are unranked. **F2** opens the developer overlay when `?debug=1` is enabled. **M** opens the player map.
 
 ## Art and audio
 
@@ -26,11 +26,11 @@ The script creates the authored weapons, flashlight, gloves, utility wreck, and 
 
 Run the shambler comparison on the dev server with `?debug&scenario=motion`. Append `&version=before` for the 1.0.3 model and baseline animation, `&view=side` for the close side view, or `&light=moon` to start with the flashlight off. Both versions walk around the same trunk and take scripted hits. The old GLB ships with the development server only.
 
-Run `npm run balance -- --difficulty=normal` and repeat with `--difficulty=easy` or `--difficulty=hard` to compare the same seeds. The runner reports both crowd and ambush counts.
+Run `node scripts/check-plateau.mjs` for collision paths, a zombie-free extraction, and six paired four-versus-ten encounters in both moving and cautious strategies. Use `--routes-only` or `--combat-only` to narrow the check.
 
-Run `node scripts/check-search.mjs --routes-only` to walk seeded shed routes with the real collision and movement rules. Omit the flag to exercise combat and radio interaction along those routes. The scripted explorer uses a known route and reports first shed time, sheds reached, deaths, and escapes. Use `?debug&scenario=lantern` locally to review a shed from a distance with the flashlight off. On a physical Quest 3, select Hard and the 20-minute Arsenal Test preset with `?perf=1` and record the active crowd, P95 frame time, and missed frames.
+The Classic runners `npm run balance` and `node scripts/check-search.mjs` stay available for older seeded worlds, wave tuning, and radio placement. The previous [zombie-free world audit](WORLD_AUDIT.md) records 1.0.16 behavior.
 
-The [zombie-free world audit](WORLD_AUDIT.md) records extraction times, directional shed coverage, radio probabilities, and the frequency of wrecks and campsites. Run `node scripts/audit-world.mjs` to repeat all four checks.
+The 2.0.0 route audit connected all five regions, checked 15 starts, and walked the rooms of all 25 shelters. At full movespeed, the closest connected shelter took 8.6–24.6 seconds from spawn and neighboring shelters took 28.2–48.0 seconds. On 12 seeds, a known route without enemies searched 17–25 shelters for all five parts. It averaged 20.5 minutes of movement, and one complete fixed-step walk reached extraction in 20.1 minutes. These timings exclude exploration mistakes and fights.
 
 To refresh the Help artwork after changing models or structures, open `/assets/dev/guide.html` on the dev server. Choose a subject, select **Save WebP**, and replace the matching image in `assets/guide`. The capture page uses the actual game scene and a brighter fill for legibility. The Help pickup pictures come from the in-game icon textures.
 
@@ -39,8 +39,8 @@ To refresh the Help artwork after changing models or structures, open `/assets/d
 1. Open the HTTPS build on a Quest 3. With Gun Angle at zero, check relaxed-wrist aim and compare the laser to the sights. Brace each weapon, toggle the docked flashlight, and release. Repeat with the weapon in each hand. Test seated and standing play and snap turn.
 2. Compare paths and nearby silhouettes with the flashlight off and on. Try firing and reloading while moving. Compare normal and reduced flashes near cover. Cross a road to an active flare and observe how the horde divides.
 3. Open a system overlay and briefly put down a controller. The run should pause on loss of headset focus or sustained tracking loss and resume on an intentional input.
-4. Use `?perf=1` and Meta’s performance tools with the flashlight on, starting with Hard and Arsenal Test at minute 20. The headset HUD shows FPS, 95th-percentile frame interval, missed frames, and active crowd versus its current target. Record these together through late-wave combat and note how long the run lasts. Aim for a sustained 15-minute sample at 72 Hz on Quest 3. Hard late runs target 42–45 enemies depending on the seed and available device budget.
-5. Stand still with the flashlight off. Have a second person confirm the approach direction of a zombie before calling it out, then turn your head and check that the sound stays with the zombie. Compare an approach in open ground with a zombie behind a wall. Check both the headset speakers and headphones if available.
+4. Use `?perf=1` and Meta’s performance tools on Hard with the flashlight on. Test a busy road junction and the nearest shelter in close combat. Record FPS, 95th-percentile frame interval, missed frames, and actual active crowd. Aim for a 15-minute sample at 72 Hz. Hard has 150 residents across the map and up to 12 active nearby before device adjustments.
+5. Stand with the flashlight off and check approach direction by sound. Compare open ground with a zombie behind an interior wall. Press the left stick to open the map and verify that it pauses movement and enemies. After collecting all five parts, use the weapon trigger from the map to call.
 
 Local rendering, browser emulation, and simulations cannot measure headset comfort or spatial audio localization.
 

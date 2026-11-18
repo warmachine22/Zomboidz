@@ -20,15 +20,10 @@
     <section class="hero" aria-labelledby="title" id="home">
       <p class="eyebrow">BLACKWATER FOREST</p>
       <h1 id="title">THE LAST<br><span>LIGHT</span></h1>
-      <p class="lede">Follow the road into the woods.<br>Find a radio in a shed and call for extraction.</p>
+      <p class="lede">Survive the plateau.<br>Find five radio parts in shelters and call for extraction.</p>
       <label class="difficulty">Difficulty
         <select id="difficulty"></select>
       </label>
-      <label class="difficulty">Mode <select id="game-mode"></select></label>
-      <div id="arsenal-setup" hidden>
-        <label class="difficulty">Starting wave <select id="arsenal-wave"></select></label>
-        <label class="difficulty">Starting weapon <select id="arsenal-weapon"></select></label>
-      </div>
       <div class="actions">
         <button id="start" class="primary" disabled>Loading the forest…</button>
         <button id="vr" disabled>Enter VR</button>
@@ -55,43 +50,43 @@
       </div>
       <section id="help-escape" class="help-section">
         <h3>Survive &amp; escape</h3>
-        <p>Survive the growing horde while you search for a working radio. Follow the road and take dirt tracks to sheds. Reflective posts mark turns, and some entrances have amber lanterns. Inside, look for a green display and antenna on a crate. When the extraction prompt appears, press <strong>E</strong> on desktop, squeeze the <strong>weapon grip</strong> in VR, or tap <strong>Call</strong> on touch. Calling for help ends the run with your escape time.</p>
+        <p>Search shelters for five radio parts. Reflective posts mark dirt tracks, and every shelter has an amber entrance lantern. Check the back rooms for gear and radio components. Open your field map to see the parts you’ve collected and the shelters you’ve entered. Once all five are in your inventory, call for extraction from the map.</p>
         <div class="help-photos">
           <figure>
-            <img data-guide-photo="workshop" width="960" height="600" alt="In-game workshop shed with a wide doorway, a peaked roof, and a wrecked vehicle beside it">
-            <figcaption><strong>Workshop shed</strong><span>Look for a wide doorway under a peaked roof.</span></figcaption>
+            <img data-guide-photo="workshop" width="960" height="600" alt="Ranger Quarters with a lantern beside its porch">
+            <figcaption><strong>Ranger Quarters</strong><span>Look for the amber lantern under the porch roof.</span></figcaption>
           </figure>
           <figure>
-            <img data-guide-photo="lean-to" width="960" height="600" alt="In-game lean-to shed with a sloping roof and an offset doorway">
-            <figcaption><strong>Lean-to shed</strong><span>Look for a sloped roof and a doorway off to one side.</span></figcaption>
+            <img data-guide-photo="lean-to" width="960" height="600" alt="Survey Hut with an amber lantern and a sign over the front door">
+            <figcaption><strong>Survey Hut</strong><span>The sign above the door helps identify the shelter on a return visit.</span></figcaption>
           </figure>
           <figure>
             <img data-guide-photo="radio" width="960" height="600" alt="In-game extraction radio with a long antenna and green display, resting on a crate">
-            <figcaption><strong>Extraction radio</strong><span>Step close and call for help when prompted.</span></figcaption>
+            <figcaption><strong>Assembled radio</strong><span>Call from the field map once you’ve found all five parts.</span></figcaption>
           </figure>
         </div>
-        <p>Keep spare rounds on hand and switch the flashlight off to recharge it. Zombies react to footsteps, gunshots, and visible light. Fire a flare away from your route to distract part of the horde. A single hit is fatal without armor.</p>
+        <p>Switch the flashlight off to recharge it. Walk quietly behind a zombie to avoid its field of view. Gunshots can alert nearby enemies, and a flare fired away from your route can draw them off. A single hit is fatal without armor.</p>
       </section>
       <section id="help-enemies" class="help-section">
         <h3>Zombies</h3>
         <div class="help-photos">
           <figure>
             <img data-guide-photo="shambler" width="960" height="600" loading="lazy" alt="Two shambler variants wearing torn work clothes and leaning as they walk">
-            <figcaption><strong>Shambler</strong><span>A limping walker with an uneven reach. Groups can close in from different sides. One headshot kills it.</span></figcaption>
+            <figcaption><strong>Shambler</strong><span>A limping walker with an uneven reach. Three Service pistol headshots or five torso hits.</span></figcaption>
           </figure>
           <figure>
             <img data-guide-photo="shrieker" width="960" height="600" loading="lazy" alt="Two shrieker variants with narrow bodies and forward-leaning poses">
-            <figcaption><strong>Shrieker</strong><span>Listen for its warning cry before a short sprint. One headshot kills it.</span></figcaption>
+            <figcaption><strong>Shrieker</strong><span>Its warning cry precedes a sprint that can overtake you. Two Service pistol headshots or four torso hits.</span></figcaption>
           </figure>
           <figure>
             <img data-guide-photo="brute" width="960" height="600" loading="lazy" alt="Two broad-shouldered brute variants in heavy, torn clothing">
-            <figcaption><strong>Brute</strong><span>Slow, heavy strikes. A fresh brute takes three Service pistol headshots or five torso hits with base ammo.</span></figcaption>
+            <figcaption><strong>Brute</strong><span>Slow, heavy strikes. Six Service pistol headshots or ten torso hits.</span></figcaption>
           </figure>
         </div>
       </section>
       <section id="help-pickups" class="help-section">
         <h3>Pickups</h3>
-        <p>Walk close to collect ammo and upgrades. Confirm a weapon or better armor with the same button you use for the radio. Special gear glows briefly and can draw zombies while it fades.</p>
+        <p>Ammo is available both outside and inside. Search shelters for weapons, armor, upgrades, and radio parts. Walk close to collect ammo, upgrades, and parts. Press the equip control to take a weapon or better armor.</p>
         <div id="help-inventory"></div>
       </section>
       <button data-back>Back to menu</button>
@@ -107,6 +102,7 @@
           <dt>Light / Beam</dt><dd>F / Q</dd>
           <dt>Pick up / Cycle to flare gun</dt><dd>E / Tab</dd>
           <dt>Pause</dt><dd>Esc</dd>
+          <dt>Field map</dt><dd>M</dd>
         </dl></div>
         <div><h3>Quest</h3><dl>
           <dt>Move / Turn</dt><dd>Left stick / right stick</dd>
@@ -116,16 +112,17 @@
           <dt>Pick up gear</dt><dd>Weapon grip near a pickup</dd>
           <dt>Two-handed aim</dt><dd>Grab the foregrip with the light-hand grip and hold</dd>
           <dt>Pause</dt><dd>Left Y</dd>
+          <dt>Field map</dt><dd>Click left stick</dd>
         </dl></div>
         <div><h3>Touch</h3><dl>
           <dt>Move / Look</dt><dd>Left stick / drag right side</dd>
           <dt>Fire / Reload / Equip</dt><dd>On-screen buttons</dd>
           <dt>Cycle weapons</dt><dd>Cycle button</dd>
           <dt>Light / Beam</dt><dd>Light / Beam buttons</dd>
+          <dt>Field map</dt><dd>Map button</dd>
         </dl></div>
       </div>
-      <p class="note">Legendary Mode uses right B and left Y to cycle each light through Wide, Focus, and Off. Left X pauses. On desktop, Q cycles the main light and F cycles the other.</p>
-      <p class="note">Each weapon keeps its loaded rounds. Empty weapons reload automatically when spare ammo is available. Rare loot glows and attracts zombies as it fades.</p>
+      <p class="note">Each weapon keeps its loaded rounds. Empty weapons reload automatically when spare ammo is available. Opening the field map pauses the run.</p>
       <button data-back>Back</button>
     </section>
     <section class="sheet" id="scores" hidden aria-labelledby="scores-title">
@@ -134,6 +131,7 @@
       <label class="difficulty">Difficulty
         <select id="score-difficulty"></select>
       </label>
+      <label class="difficulty">Scoreboard <select id="score-ruleset"><option value="plateau">Plateau</option><option value="classic">Classic archive</option></select></label>
       <div id="score-table"></div>
       <button data-back>Back</button>
     </section>
@@ -159,13 +157,19 @@
         </div>
         <button id="gun-angle-reset" type="button">Reset to Default</button>
       </details>
+      <details class="gun-settings">
+        <summary>Zombie tuning</summary>
+        <p class="note" id="tuning-status"></p>
+        <div class="preferences" id="tuning-fields"></div>
+        <button id="tuning-reset" type="button">Reset Defaults</button>
+      </details>
       <button data-back>Done</button>
     </section>
-    <footer class="menu-footer"><span>ENDLESS SURVIVAL</span><span>HEADPHONES RECOMMENDED</span></footer>
+    <footer class="menu-footer"><span>SURVIVE &amp; ESCAPE</span><span>HEADPHONES RECOMMENDED</span></footer>
   </main>
   <aside id="hud" hidden aria-label="Run status">
     <div class="hud-top">
-      <div><small>SURVIVED</small><strong id="clock">00:00</strong><small id="arsenal-crowd" hidden></small></div>
+      <div><small>SURVIVED</small><strong id="clock">00:00</strong><small id="radio-parts" hidden></small></div>
       <div class="hud-right"><small id="weapon-name">SERVICE PISTOL</small><strong id="rounds">06 <em>/ 50</em></strong></div>
     </div>
     <div class="hud-bottom">
@@ -186,7 +190,7 @@
     <div id="look-pad"></div>
     <div id="stick" aria-label="Move"><i></i></div>
     <div class="touch-utilities">
-      <button id="touch-cycle" data-touch="cycleWeapon" disabled>Cycle</button><button id="touch-light" data-touch="toggleLight">Light</button><button id="touch-beam" data-touch="toggleBeam">Beam</button><button data-touch="pause">Pause</button>
+      <button id="touch-cycle" data-touch="cycleWeapon" disabled>Cycle</button><button id="touch-light" data-touch="toggleLight">Light</button><button id="touch-beam" data-touch="toggleBeam">Beam</button><button data-touch="map">Map</button><button data-touch="pause">Pause</button>
     </div>
     <div class="touch-main">
       <button id="touch-interact" data-touch="interact">Equip</button><button data-touch="reload">Reload</button><button id="touch-fire">Fire</button>
@@ -198,6 +202,14 @@
       <h2 id="pause-title">Paused</h2>
       <p class="note" id="pause-note">The run is paused.</p>
       <div class="actions"><button class="primary" id="resume">Resume</button><button id="quit">End run</button></div>
+    </div>
+  </section>
+  <section id="field-map" class="overlay" hidden aria-labelledby="field-map-title">
+    <div class="card map-card">
+      <h2 id="field-map-title">Field map</h2>
+      <canvas id="field-chart" width="720" height="500" aria-label="Plateau roads, your location, and entered shelters"></canvas>
+      <p class="note" id="map-status" role="status"></p>
+      <div class="actions"><button id="close-map">Return to game</button><button id="call-extraction" class="primary" hidden>Call extraction</button></div>
     </div>
   </section>
   <section id="results" class="overlay" hidden aria-labelledby="results-title">
@@ -213,7 +225,7 @@
       <label class="result-initials">Score initials <input id="result-initials" maxlength="3" autocomplete="off" spellcheck="false"></label>
       <p id="result-storage" class="note" role="status"></p>
       <div class="actions">
-        <button class="primary" id="restart">New forest</button><button id="rematch">Same seed</button>
+        <button class="primary" id="restart">New run</button><button id="rematch">Same seed</button>
         <button id="look-around">Look around</button><button id="result-home">Main menu</button>
       </div>
     </div>

@@ -13,6 +13,7 @@ const descriptions = {
   battery: 'Adds eight seconds of flashlight runtime per tier.',
   lens: 'Adds three metres of flashlight reach per tier.',
   capacity: 'Increases every firearm’s magazine capacity. The next reload fills the new space from your reserve.',
+  radioPart: 'Collect five different components from shelters, then call for extraction from your field map.',
 };
 
 const groups = [
@@ -20,6 +21,7 @@ const groups = [
   { title:'Armor', kinds:Object.keys(LOOT).filter(kind=>kind.startsWith('armor')) },
   { title:'Weapons', kinds:Object.keys(GUNS).filter(kind=>Object.hasOwn(LOOT,kind)) },
   { title:'Run upgrades', kinds:Object.keys(UPGRADES) },
+  { title:'Extraction', kinds:['radioPart'] },
 ];
 
 function describe(kind) {

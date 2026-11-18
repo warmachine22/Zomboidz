@@ -5,9 +5,10 @@ import { replenishHorde, seedHorde } from './horde.js';
 import { activeHordeLimit, ARSENAL_WAVES, DIFFICULTIES, difficultyKey, pressureTime } from './difficulty.js';
 import { ambushDecision, reserveAmbush } from './ambush.js';
 import { reachableRadio, visitBuildings } from './extraction.js';
+import { createCampaign, insideShelter, RADIO_PARTS, rearHit, residentPerception, shelterRoute, syncResidents } from './campaign.js';
 
 export const STEP = 1 / 30;
-export const BUILD = '1.1.0';
+export const BUILD = '2.0.0';
 export { hordeTarget } from './difficulty.js';
 export const GUNS = {
   pistol: { name: 'Service pistol', capacities: [6, 12, 24, 50], reload: 1.5, interval: .31, range: 65, damage: 1.24, noise: 44, rounds: 1, spread: 0 },
@@ -40,6 +41,7 @@ export const LOOT = {
   armor1: { name: 'Padded vest', icon: 'Ⅰ', color: '#9cb9ce' },
   armor2: { name: 'Protective vest', icon: 'Ⅱ', color: '#abc5e0' },
   armor3: { name: 'Heavy plates', icon: 'Ⅲ', color: '#bbd6ec' },
+  radioPart: { name:'Radio component', icon:'⌁', color:'#f0c074' },
 };
 const POINT = { x: 0, y: 0, z: -1 };
 const ARMS = .29;
@@ -212,8 +214,10 @@ function emit(run, type, data = {}) {
   run.events.push({ type, ...data });
 }
 
-export function createRun(seed, { crowdLimit = 48, populate = true, difficulty = 'standard', legendary = false, arsenal = null } = {}) {
+export function createRun(seed, { crowdLimit = 48, populate = true, difficulty = 'standard', legendary = false, arsenal = null,
+  crafted = false, tuning } = {}) {
   difficulty = difficultyKey(difficulty);
+  if (crafted) { legendary = false; arsenal = null; }
   if (arsenal) {
     legendary = false;
     arsenal = { weapon: Object.hasOwn(GUNS, arsenal.weapon) ? arsenal.weapon : 'pistol',
@@ -223,11 +227,13 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
   const magazines = arsenal
     ? Object.fromEntries(Object.entries(GUNS).map(([weapon, gun]) => [weapon, gun.capacities[upgrades.capacity]]))
     : legendary ? { pistol: LEGENDARY_CAPACITY } : { pistol: GUNS.pistol.capacities[0], flaregun: 1 };
-  const world = createWorld(seed);
+  const world = createWorld(seed,{plateau:crafted});
+  const campaign = crafted ? createCampaign(seed,world,difficulty,tuning,populate) : null;
+  const start = campaign?.start ?? START;
   const run = {
     seed, world, rng: random(seed + ':run'), time: 0, status: 'playing', crowdLimit, legendary, arsenal,
-    difficulty, rules: DIFFICULTIES[difficulty], crowdRoll: random(seed + ':crowd')(),
-    player: { ...START, y: world.height(START.x, START.z), eyeHeight: 1.63, yaw: 0,
+    difficulty, rules: DIFFICULTIES[difficulty], crowdRoll: random(seed + ':crowd')(), campaign,
+    player: { ...start, y: world.height(start.x,start.z), eyeHeight: 1.63, yaw: 0,
       weapon: arsenal?.weapon ?? 'pistol', magazines,
       offhand: legendary ? { ammo: LEGENDARY_CAPACITY, reload: null, cooldown: 0, beam: 'wide' } : null,
       get ammo() { return this.magazines[this.weapon]; },
@@ -251,7 +257,8 @@ export function createRun(seed, { crowdLimit = 48, populate = true, difficulty =
   run.ambushRng = random(seed+':ambush');
   run.nextAmbush = Math.max(0, run.rules.opening - pressureTime(run)) + firstAmbush+run.ambushRng()*(lastAmbush-firstAmbush);
   run.metrics.ambushes = {reserved:0,emerged:0,hits:0};
-  if (populate) seedHorde(run, activeHordeLimit(run), addEnemy);
+  if (campaign) syncResidents(run,addEnemy,activeHordeLimit(run));
+  else if (populate) seedHorde(run, activeHordeLimit(run), addEnemy);
   run.events.length = 0;
   return run;
 }
@@ -270,30 +277,44 @@ export function addEnemy(run, kind, x, z) {
     stumble: 0, stumbleDuration: 0, nextStumble: run.time + 2 + index % 7,
     moveSpeed: 0, poseTime: run.time, hitAge: Infinity, startAge: Infinity, turnRate: 0,
   };
+  if (run.campaign) {
+    const tuning = run.campaign.tuning.enemies[kind];
+    enemy.maxHp = enemy.hp = (tuning.body-.25)*GUNS.pistol.damage;
+    enemy.headMultiplier=(tuning.body-.25)/(tuning.head-.25);
+  }
   enemy.appearance = enemy.voiceVariation < .5 ? kind : kind + '-alt';
   enemy.previousTransform = { x, y: enemy.y, z, yaw: enemy.yaw };
   run.enemies.push(enemy);
   return enemy;
 }
 
-export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0) {
+export function setLoot(run, kind, x, z, id = 'drop:' + run.nextId++, amount = 0, shelter) {
   if (run.legendary && kind !== 'ammo' && !kind.startsWith('armor')) return null;
   if (run.settledLoot.has(id)) return null;
   const y = run.world.height(x, z);
-  const loot = { id, kind, x, z, y, born: run.time, amount, landmark: !id.startsWith('drop:') };
+  const loot = { id, kind, x, z, y, born: run.time, amount, shelter, landmark: !id.startsWith('drop:') };
   run.loot.push(loot);
-  if (!isSupply(kind)) emit(run, 'flare', { x, y: y + .4, z, kind });
+  if (!isSupply(kind) && !shelter) emit(run, 'flare', { x, y: y + .4, z, kind });
   return loot;
 }
 
 function updateLandmarks(run) {
   const known = new Set(run.loot.map(l => l.id));
   const { player: p, world } = run;
+  if (run.campaign) for (const {site,gear,part} of run.campaign.caches) {
+    if (distance(p,site)>32) continue;
+    for (const [suffix,kind,at,amount] of [
+      ['ammo','ammo',site.ammo,20], ['gear',gear,site.gear,0], ['part','radioPart',site.part,part],
+    ]) {
+      const id=site.id+':'+suffix;
+      if (amount!==undefined && !known.has(id)) setLoot(run,kind,at.x,at.z,id,amount,site.id);
+    }
+  }
   for (const area of world.around(p.x, p.z, 60)) {
     for (const site of area.loot) {
       if (run.time >= site.unlock && distance(p, site) < 35 && !known.has(site.id))
         setLoot(run, site.kind, site.x, site.z, site.id, site.kind === 'ammo' ? 16 : 0);
-      if (run.legendary || site.kind !== 'ammo' || run.time < site.unlock || distance(p, site) >= 35) continue;
+      if (run.campaign || run.legendary || site.kind !== 'ammo' || run.time < site.unlock || distance(p, site) >= 35) continue;
       const id = site.id + ':flares';
       if (!known.has(id) && !run.settledLoot.has(id) && random(run.seed + ':' + id)() < .36)
         setLoot(run, 'flareAmmo', site.x, site.z, id, 4);
@@ -344,7 +365,7 @@ function eliminate(run, e, headshot) {
   if (run.rng() < .37 || run.dryKills >= 3) {
     setLoot(run, 'ammo', e.x, e.z, undefined, e.kind === 'brute' ? 12 : 5 + Math.floor(run.rng() * 3));
     run.dryKills = 0;
-  } else if (run.rng() < .09 || (e.kind === 'brute' && run.rng() < .25)) {
+  } else if (!run.campaign && (run.rng() < .09 || (e.kind === 'brute' && run.rng() < .25))) {
     const eligible = run.legendary ? [] : Object.keys(UPGRADES).filter(k => p.upgrades[k] < UPGRADES[k].cap);
     eligible.push(run.time < 110 ? 'armor1' : run.time < 260 ? 'armor2' : 'armor3');
     setLoot(run, eligible[Math.floor(run.rng() * eligible.length)], e.x, e.z);
@@ -434,10 +455,11 @@ export function shoot(run, aim, offhand = false) {
     const penetrates = 1 + (p.weapon === 'shotgun' && shot !== 0 ? 0 : p.upgrades.pierce);
     for (let i = 0; i < Math.min(penetrates, candidates.length); i++) {
       const hit = candidates[i];
-      const current = hits.get(hit.e) || { total: 0, head: false, leg: false, point: hit.point };
+      const current = hits.get(hit.e) || { total: 0, head: false, leg: false, point: hit.point, zone:hit.zone };
       const headshot = hit.zone === 'head';
       current.total += gun.damage * (1 + p.upgrades.damage * .15) * .57 ** i *
-        (headshot ? (hit.e.kind === 'brute' ? 2.2 : 2.8) : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
+        (headshot ? (hit.e.headMultiplier ?? (hit.e.kind === 'brute' ? 2.2 : 2.8))
+          : hit.zone === 'leg' || hit.zone === 'arm' ? .68 : 1);
       current.head ||= headshot;
       current.leg ||= hit.zone === 'leg';
       hits.set(hit.e, current);
@@ -447,18 +469,34 @@ export function shoot(run, aim, offhand = false) {
   }
   for (const [enemy, hit] of hits) {
     const brute = enemy.kind === 'brute';
-    enemy.hp -= brute ? Math.min(hit.total, ENEMIES.brute.hp * .55) : hit.total;
+    const maxDamage = enemy.maxHp ? enemy.maxHp*.55 : brute ? ENEMIES.brute.hp*.55 : Infinity;
+    enemy.hp -= Math.min(hit.total,maxDamage);
     enemy.stun = hit.total > 1.1 ? .15 : .07;
     enemy.hitFrom = attackDirection(enemy, center);
     enemy.hitAge = 0;
-    if (enemy.attackAge !== undefined && enemy.windup > 0 && (hit.head || hit.total > 1.1)) {
+    if (enemy.attackAge !== undefined && enemy.windup > 0 &&
+        (run.campaign ? hit.head && enemy.attackAge<enemy.attackWindup*.48 && !(enemy.interruptUntil>run.time)
+          : hit.head || hit.total>1.1)) {
       enemy.attackAge = undefined;
       enemy.windup = 0;
       enemy.recover = .40;
+      enemy.interruptUntil=run.time+1.5;
     }
     if (hit.leg) enemy.slow = 1.3;
-    emit(run, 'impact', { ...hit.point, surface: 'body' });
-    if ((hit.head && !brute) || enemy.hp <= 0) eliminate(run, enemy, hit.head);
+    emit(run, 'impact', { ...hit.point, surface:'body', enemyId:enemy.id, zone:hit.zone, ray:center });
+    if ((!run.campaign && hit.head && !brute) || enemy.hp <= 0) {
+      eliminate(run,enemy,hit.head);
+    } else if (run.campaign && !(enemy.alertUntil>run.time)) {
+      enemy.alertUntil=run.time+8;
+      enemy.memory={x:o.x,z:o.z,reason:'gunshot',id:'gunshot',chase:true};
+      if (rearHit(enemy,o)) {
+        enemy.reactionUntil=run.time+.75;
+        enemy.moveSpeed=enemy.stride=0;
+        enemy.footing=enemy.plantLocks=null;
+        enemyVoice(run,enemy,'shriek');
+        enemy.lastVoice=run.time;
+      }
+    }
   }
 }
 
@@ -479,13 +517,19 @@ function takeLoot(run, confirm) {
   run.offer = null;
   for (const l of nearby) {
     const k = l.kind;
+    if (l.shelter && !insideShelter(p,run.world.map.shelters.find(s=>s.id===l.shelter))) continue;
     if (Object.hasOwn(p.magazines, k) || (k.startsWith('armor') && Number(k.at(-1)) <= p.armor)) continue;
     if (!run.world.clear(eye(run.world, p, .6), { ...l, y: l.y + .44 })) continue;
     if (k in GUNS || k.startsWith('armor')) {
       run.offer ??= l;
       continue;
     }
-    if (k === 'ammo') {
+    if (k === 'radioPart') {
+      run.campaign.parts.add(l.amount);
+      const count=run.campaign.parts.size;
+      take(run,l,count===RADIO_PARTS.length ? 'Radio complete · Open the map to call' :
+        RADIO_PARTS[l.amount]+' · '+count+'/'+RADIO_PARTS.length);
+    } else if (k === 'ammo') {
       const got = Math.max(0, Math.min(RESERVE_MAX - p.reserve, l.amount || 7));
       if (!got) continue;
       p.reserve += got;
@@ -543,7 +587,7 @@ function flareAssignments(run) {
   const lootBudget = Math.max(1, Math.round(run.enemies.length * .27));
   const signalBudget = Math.max(1, Math.round(run.enemies.length * .52));
   const signals = run.signalFlares.filter(flare => flare.landed).sort((a, b) => b.born - a.born);
-  const loot = run.loot.filter(item => !item.lost && !isSupply(item.kind) && run.time - item.born < 25);
+  const loot = run.loot.filter(item => !item.lost && !item.shelter && !isSupply(item.kind) && run.time - item.born < 25);
   loot.sort((a, b) => b.born - a.born || distance(a, p) - distance(b, p));
   for (const item of [...signals, ...loot]) {
     const signal = item.landed === true;
@@ -714,7 +758,8 @@ function attack(run, enemy, gap, dt) {
   if (enemy.recover <= 0 && run.nextAttack <= run.time && canReach(triggerReach)) {
     enemy.attackFrom = enemyMotion(enemy, shape.windup).filter(clip => clip[2] > 0);
     enemy.burstStart = enemy.burst = enemy.brakeUntil = 0;
-    enemy.attackClip = enemy.ambush?.stage === 'emerging' ? 'Ambush' : 'Attack';
+    enemy.attackClip = enemy.ambush?.stage === 'emerging' || enemy.leapUntil>run.time ? 'Ambush' : 'Attack';
+    enemy.leapUntil=0;
     enemy.attackWindup = enemy.attackClip === 'Ambush' ? Math.max(.46, shape.windup) : shape.windup;
     enemy.attackAge = 0;
     enemy.windup = enemy.attackWindup;
@@ -750,10 +795,14 @@ function navigate(run, e, tx, tz, dt) {
     (e.kind === 'shambler' ? .14 : .06) * Math.sin(phase);
   const progress = e.stumble > 0 ? 1 - e.stumble/e.stumbleDuration : 0;
   const stumblePace = progress > 0 ? 1 - .43 * Math.sin(Math.PI*progress) + .16 * Math.sin(2*Math.PI*progress) : 1;
-  const speedTarget = (isBurst ? run.rules.speedLimit : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64) *
+  const chaseSpeed = run.campaign?.tuning.enemies[e.kind].speed;
+  const speedLimit = chaseSpeed ?? run.rules.speedLimit;
+  const speedTarget = (chaseSpeed ? (e.target?.id === 'player' || e.target?.chase ? speedLimit : speedLimit*.35) *
+    (isBurst || e.kind==='shrieker' ? 1 : stepPace*stumblePace)
+    : (isBurst ? speedLimit : cfg.speed * e.pace * stepPace * stumblePace) * (e.target ? 1 : .64)) *
     (e.slow > 0 ? .54 : 1) * (e.stun > 0 ? .42 : 1) * (e.recover > .32 ? .35 : 1);
   const previous = e.moveSpeed;
-  const targetSpeed = Math.min(run.rules.speedLimit, burst === 'BurstLoad' ? .18 : burst === 'Brake' ? speedTarget*.62
+  const targetSpeed = Math.min(speedLimit, burst === 'BurstLoad' ? .18 : burst === 'Brake' ? speedTarget*.62
     : e.ambush?.stage === 'emerging' ? Math.max(1.75,speedTarget*1.62)
     : e.ambush?.stage === 'seeking' ? Math.max(1.25,speedTarget) : speedTarget);
   const speed = e.moveSpeed += clamp(targetSpeed - e.moveSpeed, -dt * 5.4, dt * (e.kind === 'brute' ? 2.2 : 4.6));
@@ -785,7 +834,7 @@ function navigate(run, e, tx, tz, dt) {
 
 function updateEnemies(run, dt, lamps) {
   const { player: p, world, time } = run;
-  reserveAmbush(run);
+  if (!run.campaign) reserveAmbush(run);
   if (time >= run.nextSwarmTick) {
     flareAssignments(run);
     run.nextSwarmTick = time + .26;
@@ -794,9 +843,10 @@ function updateEnemies(run, dt, lamps) {
   for (const e of run.enemies) {
     if (e.dead) continue;
     const gap = distance(e, p);
-    if (gap > 68) { e.dead = true; continue; }
+    if (gap > 68 && !run.campaign) { e.dead = true; continue; }
     if (time >= e.nextThink) {
-      perception(run, e, gap, lamps);
+      if (run.campaign) residentPerception(run,e,gap,lamps);
+      else perception(run, e, gap, lamps);
       e.nextThink = time + (gap < 24 ? .20 : .48) + run.rng() * .08;
     }
     if (e.target?.chase) pursuing++;
@@ -809,6 +859,10 @@ function updateEnemies(run, dt, lamps) {
     e.startAge += dt;
     e.hitAge += dt;
     e.turnRate = 0;
+    if (run.campaign && e.reactionUntil>time) {
+      voiceCadence(run,e,gap);
+      continue;
+    }
     if (e.ambush) {
       const at = eye(world,e,1.28);
       const revealed = lamps.some(lamp => inBeam(world,lamp,at));
@@ -827,19 +881,45 @@ function updateEnemies(run, dt, lamps) {
         continue;
       }
     }
-    if (attack(run, e, gap, dt)) {
+    if ((!run.campaign || e.target?.chase || e.attackAge!==undefined) && attack(run, e, gap, dt)) {
       if (run.status === 'dead') break;
       continue;
     }
-    if (e.kind === 'shrieker' && e.target?.chase && gap > 3.4 && gap < 13 && time > e.nextBurst && e.stun <= 0) {
+    if (e.kind === 'shrieker' && e.target?.chase && gap > (run.campaign?1.9:3.4) &&
+        gap < (run.campaign?20:13) && time > e.nextBurst && e.stun <= 0) {
       e.burstStart = time + BURST_LOAD;
-      e.burst = e.burstStart + BURST_RUN;
+      e.burst = e.burstStart + (run.campaign ? 8 : BURST_RUN);
       e.brakeUntil = e.burst + BURST_BRAKE;
-      e.nextBurst = time + 4.2 + run.rng() * 1.5;
+      e.nextBurst = run.campaign ? e.brakeUntil : time + 4.2 + run.rng() * 1.5;
       enemyVoice(run, e, 'shriek');
       e.lastVoice = time;
     } else voiceCadence(run, e, gap);
     const t = e.target;
+    if (run.campaign) {
+      if (!t?.chase) e.recover=Math.max(0,e.recover-dt);
+      if (!t?.chase) e.burstStart=e.burst=e.brakeUntil=0;
+      if (!t && e.home && !e.hiding && time>=e.patrolAt) {
+        const point=e.resident.site.patrol[1];
+        if (!e.patrolling && !world.blocks(point.x,point.z,.38)) e.patrolling=true;
+        if (!e.patrolling || distance(e,point)<.75 || time-e.patrolAt>13) {
+          e.patrolling=false;
+          e.patrolAt=time+7+e.voiceVariation*5;
+        } else {
+          navigate(run,e,point.x,point.z,dt);
+          continue;
+        }
+      }
+      e.route=t && shelterRoute(world,e,t);
+      if (e.route && distance(e,e.route)>(e.route===t && t.chase?.72:.26)) {
+        navigate(run,e,e.route.x,e.route.z,dt);
+      } else {
+        e.moveSpeed=e.stride=0;
+        e.footing=e.plantLocks=null;
+        if ((t?.chase || t?.id==='home') && distance(e,t)>.1)
+          e.yaw+=clamp(angleDelta(Math.atan2(t.x-e.x,e.z-t.z),e.yaw),-dt*2.3,dt*2.3);
+      }
+      continue;
+    }
     if (!t) {
       if (time > e.nextRoam) { e.roam += (run.rng() - .43) * 2.6; e.nextRoam = time + 2.2 + run.rng() * 4; }
       const wander = direction(e.roam);
@@ -940,7 +1020,7 @@ export function stepRun(run, input = {}, dt = STEP) {
   if (p.stepDistance > (input.walk ? .70 : .79)) {
     p.stepDistance = 0;
     const road = world.roadDistance(p.x, p.z) < 2.9;
-    const radius = (road ? 9.5 : 15) * (input.walk ? .62 : 1);
+    const radius = run.campaign ? (input.walk ? 3 : 7) * (road ? .85 : 1) : (road ? 9.5 : 15) * (input.walk ? .62 : 1);
     noise(run, 'footstep', eye(world, p, .26), radius, 1.56);
     emit(run, 'footstep', { road, quiet: Boolean(input.walk) });
   }
@@ -962,7 +1042,10 @@ export function stepRun(run, input = {}, dt = STEP) {
     run.lastChunkCheck = run.time;
   }
   const cap = activeHordeLimit(run);
-  if (run.time - run.lastBuildingCheck >= .40) {
+  if (run.campaign) {
+    syncResidents(run,addEnemy,cap);
+    for (const {site} of run.campaign.caches) if (insideShelter(p,site)) run.campaign.visited.add(site.id);
+  } else if (run.time - run.lastBuildingCheck >= .40) {
     visitBuildings(run,run.populate ? cap : 0,addEnemy);
     run.lastBuildingCheck = run.time;
   }
@@ -980,11 +1063,11 @@ export function stepRun(run, input = {}, dt = STEP) {
   }
   if (!p.ammo && !p.reload && p.equippedReserve > 0) startReload(run);
   if (p.offhand?.ammo === 0 && !p.offhand.reload && p.reserve > 0) startReload(run, true);
-  if (run.populate && run.time >= run.nextLoot) {
+  if (!run.campaign && run.populate && run.time >= run.nextLoot) {
     majorDrop(run);
     run.nextLoot = run.time + 48 + run.rng() * 14;
   }
-  if (run.populate && run.time >= run.nextSpawn) {
+  if (!run.campaign && run.populate && run.time >= run.nextSpawn) {
     replenishHorde(run, cap, lamps, addEnemy);
     const age = pressureTime(run);
     run.nextSpawn = run.time + run.rules.arrivals * (age < run.rules.opening ? 2.7 : Math.max(.55, 1.42 - age / 580));
@@ -994,6 +1077,15 @@ export function stepRun(run, input = {}, dt = STEP) {
   run.noises = run.noises.filter(n => run.time < n.born + n.span);
   run.metrics.maxCrowd = Math.max(run.metrics.maxCrowd, run.enemies.length);
   return run.events;
+}
+
+export function callExtraction(run) {
+  if (run.status!=='playing' || run.campaign?.parts.size!==RADIO_PARTS.length) return false;
+  run.status='escaped';
+  run.player.reload=null;
+  run.events.length=0;
+  emit(run,'extraction',{x:run.player.x,y:run.player.y+1.2,z:run.player.z});
+  return true;
 }
 
 export function inspectFlashlights(run, input = {}) {

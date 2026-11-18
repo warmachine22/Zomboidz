@@ -68,7 +68,8 @@ export function enemyMotion(enemy, windup) {
       ['Fall' + (enemy.hitFrom || 'Front'), clamp(enemy.fallAge / (kind === 'brute' ? 1.46 : 1.21), 0, 1),
         enemy.fallFrom ? weight : 1]];
   }
-  const idle = [enemy.ambush?.stage === 'holding' ? 'Cover' : 'Idle', (t * .49 + (enemy.id ?? 0)*.37) % 1, 1];
+  const idle = [enemy.ambush?.stage === 'holding' || (enemy.hiding && !enemy.target?.chase) ? 'Cover' : 'Idle',
+    (t * .49 + (enemy.id ?? 0)*.37) % 1, 1];
   if (enemy.attackAge !== undefined) {
     const phase = enemy.attackAge * attackContact(kind) / (enemy.attackWindup ?? windup);
     const weight = ease(Math.min(phase * 13, (1 - phase) * 6));

@@ -9,6 +9,7 @@ import { beamTexture, createCanopyLighting, moonDirection } from './night-lighti
 import { bake, grassGeometry, kit, shrubGeometry } from './kit.js';
 import { DRESSING, fireflyField, isSnag } from './dressing.js';
 import { createAmbientLife } from './ambient-life.js';
+import { shelterLamp } from './plateau.js';
 
 const textures = new THREE.TextureLoader();
 const models = new GLTFLoader();
@@ -171,12 +172,12 @@ function instance(group, geo, mat, count, shadow = false) {
   return mesh;
 }
 
-function terrain(world, area) {
+function terrain(world, area, spacing = 2) {
   const positions = [], color = [], indices = [], uv = [];
-  const size = CHUNK / 2 + 1, tint = new THREE.Color(), ridge = new THREE.Color(.42,.42,.39);
+  const size = CHUNK / spacing + 1, tint = new THREE.Color(), ridge = new THREE.Color(.42,.42,.39);
   for (let z = 0; z < size; z++) {
     for (let x = 0; x < size; x++) {
-      const px = area.cx * CHUNK + x * 2, pz = area.cz * CHUNK + z * 2;
+      const px = area.cx * CHUNK + x * spacing, pz = area.cz * CHUNK + z * spacing;
       const road = world.roadDistance(px, pz);
       const shade = .83 + .13 * Math.sin(px * .33 + pz * .61) + .04 * Math.cos(pz);
       turf(tint, road, shade, px, pz);
@@ -202,9 +203,76 @@ function terrain(world, area) {
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   const floor = new THREE.Mesh(geometry, surfaces.earth);
-  floor.receiveShadow = true;
+  floor.receiveShadow = spacing===2;
   floor.userData.disposeGeometry = true;
   return floor;
+}
+
+const distantPine = new THREE.ConeGeometry(1,1,5);
+const distantWood = new THREE.MeshLambertMaterial({color:0x253830});
+const markerWire = new THREE.MeshStandardMaterial({color:0xb1945a,metalness:.48,roughness:.55});
+const markerBody = new THREE.MeshStandardMaterial({color:0x383e30,metalness:.2,roughness:.8});
+const radioLED = new THREE.MeshBasicMaterial({color:0xf8ac51,toneMapped:false});
+const signage = new Map();
+function makeSign(site,world) {
+  if (!signage.has(site.id)) {
+    const {ctx,texture}=labelCanvas(256,72);
+    ctx.fillStyle='#30291e'; ctx.fillRect(0,0,256,72);
+    ctx.strokeStyle='#b79764'; ctx.lineWidth=4; ctx.strokeRect(5,5,246,62);
+    ctx.textAlign='center'; ctx.fillStyle='#e4cca0'; ctx.font='bold 25px sans-serif';
+    ctx.fillText(site.name.toUpperCase(),128,44,228);
+    texture.needsUpdate=true;
+    signage.set(site.id,new THREE.MeshStandardMaterial({map:texture,roughness:1}));
+  }
+  const sign=new THREE.Mesh(baseBox,signage.get(site.id));
+  sign.position.set(site.x-.26*site.sign,world.height(site.x,site.z)+2.39,site.z-(site.d/2+.125)*site.sign);
+  sign.rotation.y=site.turn===2?0:Math.PI;
+  sign.scale.set(1.65,.30,.025);
+  return sign;
+}
+
+function radioComponent(index) {
+  const root = new THREE.Group();
+  const part = (material,x,y,z,w,h,d)=>{
+    const mesh=new THREE.Mesh(baseBox,material);
+    mesh.position.set(x,y,z);
+    mesh.scale.set(w,h,d);
+    root.add(mesh);
+    return mesh;
+  };
+  if (index===2) {
+    part(markerBody,0,.08,0,.24,.16,.18);
+    part(markerWire,0,.34,0,.027,.54,.027).rotation.z=-.23;
+    part(markerWire,-.060,.59,0,.095,.022,.022);
+  } else {
+    const width=index===3?.16:.31, depth=index===3?.28:.19;
+    part(markerBody,0,.089,0,width,.16,depth);
+    part(markerWire,0,.174,-.026,width*.74,.025,depth*.62);
+    part(radioLED,width*.23,.188,.028,.023,.013,.032);
+    if (index===0 || index===4) for (let i=0;i<3;i++)
+      part(markerWire,width*.34,.075,(i-1)*.042,.10,.025,.022);
+    if (index===3) {
+      part(markerBody,0,.178,-.112,.18,.08,.09);
+      part(markerBody,0,.178,.112,.18,.08,.09);
+    }
+  }
+  return root;
+}
+
+function distantChunk(world,cx,cz) {
+  const group=new THREE.Group();
+  group.add(terrain(world,{cx,cz},6));
+  const x0=cx*CHUNK, z0=cz*CHUNK;
+  if (x0<0 || z0<0 || x0>=world.map.size || z0>=world.map.size) return group;
+  const rng=random('silhouette:'+cx+','+cz);
+  const cloud=Array.from({length:22},()=>({x:x0+rng()*CHUNK,z:z0+rng()*CHUNK,t:rng()}))
+    .filter(p=>world.roadDistance(p.x,p.z)>4 && world.map.shelters.every(s=>distance(s,p)>13));
+  const trees=instance(group,distantPine,distantWood,cloud.length);
+  for (const [i,p] of cloud.entries()) {
+    const h=5+p.t*8;
+    place(trees,i,p.x,world.height(p.x,p.z)+h*.67,p.z,1.6+p.t*2,h,1.6+p.t*2,p.t*6);
+  }
+  return group;
 }
 
 function turf(target, road, shade, px = 0, pz = 0) {
@@ -252,6 +320,7 @@ function addDecor(group, area) {
 function makeChunk(world, area, art, lanternGlow) {
   const group = new THREE.Group();
   group.add(terrain(world, area));
+  if (world.map) for (const site of area.buildings) group.add(makeSign(site,world));
   const treeCount = area.trees.length;
   const trunks = instance(group, trunkGeometry, surfaces.bark, treeCount, true);
   const branches = instance(group, branchGeometry, surfaces.bark, treeCount * 4);
@@ -535,7 +604,7 @@ function fogSky(scene) {
         #include <colorspace_fragment>
       }`,
   });
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(86, 32, 12), shader);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(149, 32, 12), shader);
   sky.renderOrder = 10;
   scene.add(sky);
   return sky;
@@ -613,6 +682,9 @@ export function createPresentation(scene, art, layouts) {
   const glow = radialTexture(), burst = radialTexture(true);
   const lanternGlow = new THREE.SpriteMaterial({ map:glow, color:0xff952e, opacity:.57,
     depthWrite:false, transparent:true, blending:THREE.AdditiveBlending, toneMapped:false });
+  const distantGlow = new THREE.SpriteMaterial({map:glow,color:0xffa846,opacity:.73,
+    depthWrite:false,transparent:true,blending:THREE.AdditiveBlending,toneMapped:false,fog:false});
+  const lanternMarkers=[];
   const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: burst, color: 0xffcf87,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
   spark.visible = false; scene.add(spark);
@@ -662,15 +734,17 @@ export function createPresentation(scene, art, layouts) {
   const iconTextures = Object.fromEntries(Object.keys(LOOT).map(kind => [kind, lootIcon(kind)]));
   const flares = Array.from({ length: 3 }, () => new THREE.PointLight(0xffa661, 0, 5.9, 1.65));
   scene.add(...flares);
-  const chunks = new Map(), enemyMeshes = new Map(), pickups = new Map(), signals = new Map();
+  const chunks = new Map(), distant = new Map(), enemyMeshes = new Map(), pickups = new Map(), signals = new Map();
   const pool = Object.fromEntries(enemyModels.map(name => [name, []]));
   const effects = [];
   const effectGeometry = new THREE.TetrahedronGeometry(.038);
   const effectMaterials = {
-    body: new THREE.MeshStandardMaterial({ color: 0x693b36 }),
+    body: new THREE.MeshStandardMaterial({ color:0x7c231d, roughness:.54 }),
     other: new THREE.MeshStandardMaterial({ color: 0xb09b7e }),
     casing: new THREE.MeshStandardMaterial({ color: 0x988257, roughness: .4, metalness: .5 }),
   };
+  const bloodMarks=[], bloodPool=[];
+  const smear=new THREE.SphereGeometry(.043,7,5);
   const flashTuning = {
     pistol: { power: 240, size: 1, duration: .090 },
     shotgun: { power: 350, size: 1.35, duration: .100 },
@@ -686,6 +760,10 @@ export function createPresentation(scene, art, layouts) {
     currentRun = run;
     for (const group of chunks.values()) discardChunk(group);
     chunks.clear();
+    for (const group of distant.values()) discardChunk(group);
+    distant.clear();
+    for (const sprite of lanternMarkers.splice(0)) sprite.removeFromParent();
+    for (const mark of bloodMarks.splice(0)) recycleBlood(mark);
     for (const visual of enemyMeshes.values()) releaseEnemy(visual);
     enemyMeshes.clear();
     for (const view of pickups.values()) discardLoot(view);
@@ -696,6 +774,14 @@ export function createPresentation(scene, art, layouts) {
     for (const effect of effects.splice(0)) { effect.mesh.visible = false; impactPool.push(effect.mesh); }
     for (const flash of flashes) flash.shot = null;
     lastWatch = '';
+    scene.fog.density=run.world.map?.size ? .022 : .036;
+    if (run.world.map) for (const site of run.world.map.shelters) {
+      const at=shelterLamp(site), sprite=new THREE.Sprite(distantGlow);
+      sprite.position.set(at.x,run.world.height(site.x,site.z)+1.70,at.z);
+      sprite.visible=false;
+      lanternMarkers.push(sprite);
+      scene.add(sprite);
+    }
   }
 
   function discardChunk(group) {
@@ -782,8 +868,27 @@ export function createPresentation(scene, art, layouts) {
       for (const view of chunks.values()) if (view.userData.anchors?.length) anchorList.push(...view.userData.anchors);
       applyCover(p);
     }
+    if (world.map) {
+      const far=[];
+      for (let z=cz-3; z<=cz+3; z++) for (let x=cx-3; x<=cx+3; x++) {
+        const key=x+','+z, gap=Math.hypot((x+.5)*CHUNK-p.x,(z+.5)*CHUNK-p.z);
+        if (gap<151 && !chunks.has(key)) far.push({x,z,key,gap});
+      }
+      const keep=new Set(far.map(tile=>tile.key));
+      for (const [key,group] of distant) if (!keep.has(key)) { discardChunk(group); distant.delete(key); }
+      const tile=far.sort((a,b)=>a.gap-b.gap).find(tile=>!distant.has(tile.key));
+      farTilesPending=Boolean(tile);
+      if (tile && !pendingBuilds) {
+        const group=distantChunk(world,tile.x,tile.z);
+        distant.set(tile.key,group);
+        localForest.add(group);
+      }
+    }
     return changed;
   }
+
+  let farTilesPending=false;
+  let farFrame=0;
 
   function borrowEnemy(kind, appearance) {
     const model = kind === 'shambler' && art.legacyShambler ? kind : appearance;
@@ -817,6 +922,8 @@ export function createPresentation(scene, art, layouts) {
   }
 
   function releaseEnemy(v) {
+    for (let i=bloodMarks.length-1;i>=0;i--) if (bloodMarks[i].actor===v)
+      recycleBlood(bloodMarks.splice(i,1)[0]);
     v.root.visible = false;
     v.character.rotation.set(0, Math.PI, 0);
     v.character.position.set(0, 0, 0);
@@ -867,7 +974,8 @@ export function createPresentation(scene, art, layouts) {
             }
           }
         }
-        const blend = frozen || initial ? 1 : 1 - Math.exp(-dt / (STEP * (skip > 1 ? 1.45 : .66)));
+        const nearSprint=run.campaign && skip===1 && burstPhase(e)==='Sprint';
+        const blend = frozen || initial ? 1 : 1 - Math.exp(-dt / (STEP * (skip > 1 ? 1.45 : nearSprint ? .42 : .66)));
         for (const [i, bone] of v.bones.entries()) {
           bone.position.lerp(v.targets[i].position, blend);
           bone.quaternion.slerp(v.targets[i].rotation, blend);
@@ -974,7 +1082,7 @@ export function createPresentation(scene, art, layouts) {
     const lights = updateSignals(run, reducedFlashes);
     for (const item of run.loot) {
       const d = distance(item,p);
-      if (item.lost || d >= 34 || isSupply(item.kind)) continue;
+      if (item.lost || item.shelter || d >= 34 || isSupply(item.kind)) continue;
       const power = flarePower(run.time - item.born);
       if (power > .005) lights.push({ item, d, color: LOOT[item.kind].color,
         reach: 2.3 + power * 3.1, intensity: 13.5 * power, height: .32 });
@@ -994,19 +1102,23 @@ export function createPresentation(scene, art, layouts) {
           map: glow, color: LOOT[item.kind].color, depthWrite: false, transparent: true,
           blending: THREE.AdditiveBlending,
         }));
-        group.add(halo, icon); scene.add(group);
+        group.add(halo, icon);
+        if (item.kind==='radioPart') group.add(radioComponent(item.amount));
+        scene.add(group);
         group.position.set(item.x, item.y, item.z);
         view = { group, icon, halo }; pickups.set(item.id, view);
       }
       const supply = isSupply(item.kind);
-      const power = supply ? 0 : flarePower(run.time - item.born);
+      const power = supply || item.shelter ? 0 : flarePower(run.time - item.born);
       const spot = v3(item.x, item.y + .45, item.z);
       const lit = beams.some(beam => coneReaches(run.world, beam.origin, beam.ray, spot, beam.range, beam.angle)) ||
         fixtures.some(source => coneReaches(run.world, source, source.ray, spot, source.radius, source.angle)) ||
         nearest.some(({ item: other, reach, height }) => other.id !== item.id &&
           distance(item, other) < reach && run.world.clear({ ...other, y: other.y + height }, spot));
       const distFade = clamp((34 - d) / 6, 0, 1);
-      const strength = Math.max(lit ? .80 : 0, power * .95, item.kind === 'flareAmmo' && d < 3.3 ? .35 : 0) * distFade;
+      const nearCache=item.shelter && d<6 && (run.campaign.visited.has(item.shelter) || lit);
+      const strength = Math.max(lit ? .80 : 0, power * .95, nearCache ? .57 : 0,
+        (item.kind==='flareAmmo'||run.campaign&&supply) && d<3.3 ? .35 : 0) * distFade;
       view.icon.visible = strength > .02;
       view.icon.material.opacity = strength;
       const scale = (supply ? .24 : .53) * (1 + power * .13);
@@ -1030,8 +1142,30 @@ export function createPresentation(scene, art, layouts) {
     }
   }
 
+  function recycleBlood(mark) {
+    mark.mesh.visible=false;
+    mark.mesh.removeFromParent();
+    bloodPool.push(mark.mesh);
+  }
+
+  function wound(event) {
+    const actor=enemyMeshes.get(event.enemyId);
+    if (!actor || bloodMarks.length>=26) return;
+    const at=v3(event.x,event.y,event.z);
+    actor.root.updateMatrixWorld(true);
+    const bone=actor.bones?.reduce((nearest,next)=>next.getWorldPosition(v3()).distanceToSquared(at)<
+      nearest.getWorldPosition(v3()).distanceToSquared(at)?next:nearest) ?? actor.root;
+    const mesh=bloodPool.pop()??new THREE.Mesh(smear,effectMaterials.body);
+    mesh.position.copy(bone.worldToLocal(at));
+    mesh.scale.set(1,.69,.68);
+    mesh.visible=true;
+    bone.add(mesh);
+    bloodMarks.push({mesh,actor,until:currentRun.time+2.6});
+  }
+
   function debris(event, weapon = '') {
-    const amount = weapon ? 1 : quality > 1 ? 6 : 3;
+    const body=event.surface==='body';
+    const amount = weapon ? 1 : body && quality>1 ? 8 : quality > 1 ? 6 : 3;
     for (let i = 0; i < amount; i++) {
       if (effects.length > 58) return;
       const mesh = impactPool.pop() || new THREE.Mesh(effectGeometry);
@@ -1041,8 +1175,10 @@ export function createPresentation(scene, art, layouts) {
       mesh.visible = true;
       if (!mesh.parent) scene.add(mesh);
       const vx = (Math.random() - .5) * 2.4, vz = (Math.random() - .5) * 2.4;
-      effects.push({ mesh, velocity: v3(weapon ? 1.5 : vx, .5 + Math.random() * 1.9, vz),
-        age: weapon ? .85 : .14 + Math.random() * .22 });
+      const ray=body?event.ray:null;
+      effects.push({ mesh, velocity: v3(weapon ? 1.5 : vx-(ray?.x??0)*1.6,
+        .45+Math.random()*1.8-(ray?.y??0)*1.2,vz-(ray?.z??0)*1.6),
+        age: weapon ? .85 : .16 + Math.random() * .24 });
     }
   }
 
@@ -1052,7 +1188,10 @@ export function createPresentation(scene, art, layouts) {
         flashes[Number(Boolean(event.offhand))].shot = { ...event, elapsed: 0, fresh: true };
         if (quality > 1 && event.weapon !== 'flaregun') debris({ x: event.x, y: event.y, z: event.z }, event.weapon);
       }
-      if (event.type === 'impact') debris(event);
+      if (event.type === 'impact') {
+        debris(event);
+        if (event.enemyId && currentRun?.campaign) wound(event);
+      }
     }
   }
 
@@ -1060,7 +1199,7 @@ export function createPresentation(scene, art, layouts) {
     const p = run.player;
     const reloading = p.reload || p.offhand?.reload;
     const parts = [p.weapon, p.ammo, p.offhand?.ammo, p.equippedReserve, Math.ceil(p.battery * 10), p.armor,
-      p.flashlight, p.beam, p.offhand?.beam, leftHanded, Boolean(reloading)];
+      p.flashlight, p.beam, p.offhand?.beam, leftHanded, Boolean(reloading),run.campaign?.parts.size];
     const key = parts.join(':');
     if (key === lastWatch) return;
     lastWatch = key;
@@ -1069,6 +1208,7 @@ export function createPresentation(scene, art, layouts) {
     g.strokeStyle = '#566c5c'; g.strokeRect(3, 3, 250, 150);
     g.fillStyle = '#94a898'; g.font = '19px monospace';
     g.fillText(reloading ? 'RELOADING' : p.weapon === 'flaregun' ? 'FLARES' : 'ROUNDS', 16, 27);
+    if (run.campaign) { g.fillStyle='#e9b976'; g.fillText('RADIO '+run.campaign.parts.size+'/5',130,27); }
     g.fillStyle = '#eeead8'; g.font = p.offhand ? 'bold 28px monospace' : 'bold 39px monospace';
     g.fillText(p.ammo + (p.offhand ? '+' + p.offhand.ammo : '') + '/' + p.equippedReserve, 15, 72);
     g.font = '16px monospace'; g.fillStyle = '#9bb6a6';
@@ -1226,7 +1366,13 @@ export function createPresentation(scene, art, layouts) {
     }
     sky.position.set(viewpoint?.x ?? p.x, viewpoint?.y ?? p.y + p.eyeHeight, viewpoint?.z ?? p.z);
     trackHeading(p, dt);
-    const terrainChanged = (!chunks.size || pendingBuilds || tick % 12 === 0) && updateChunks(run.world, p);
+    const terrainChanged = (!chunks.size || pendingBuilds || tick % 12 === 0 ||
+      farTilesPending && ++farFrame%3===0) && updateChunks(run.world,p);
+    for (const sprite of lanternMarkers) {
+      const gap=distance(sprite.position,p);
+      sprite.visible=gap>24 && gap<142;
+      sprite.scale.setScalar(clamp(gap*.019,.62,2.3));
+    }
     const fixtures = updateFixtures(p, terrainChanged);
     updateEnemies(run, dt, [aimHit?.e?.id, offhandAimHit?.e?.id], [aim, offhandAim].filter(Boolean), enemyAlpha, frozen);
     updateLoot(run, fixtures, [beam, offhandBeam].filter(Boolean), settings.reducedFlashes);
@@ -1257,6 +1403,8 @@ export function createPresentation(scene, art, layouts) {
         effect.mesh.visible = false; impactPool.push(effect.mesh); effects.splice(i, 1);
       }
     }
+    for (let i=bloodMarks.length-1;i>=0;i--) if (bloodMarks[i].until<run.time)
+      recycleBlood(bloodMarks.splice(i,1)[0]);
   }
 
   return { update, events, reset, stats: streaming, state: presentationState, pickupImage: kind => iconTextures[kind].image.toDataURL(),   setQuality(value) {

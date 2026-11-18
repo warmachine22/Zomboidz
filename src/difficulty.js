@@ -33,6 +33,7 @@ export function hordeTarget(time, difficulty = 'standard', roll = .5) {
 export const pressureTime = run => run.time + (run.arsenal?.wave ?? 0) * 60;
 
 export function activeHordeLimit(run) {
+  if (run.campaign) return Math.min(run.crowdLimit,run.campaign.active);
   return Math.min(run.crowdLimit, hordeTarget(pressureTime(run), run.difficulty, run.crowdRoll));
 }
 

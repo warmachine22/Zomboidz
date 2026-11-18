@@ -1,5 +1,6 @@
 import { buildDistrictSite, makeDistrict, trackDistance } from './districts.js';
 import { DRESSING, dress } from './dressing.js';
+import { PLATEAU, PLATEAU_SIZE, buildPlateauShelter, plateauGround, plateauRegion, plateauRoad } from './plateau.js';
 
 export const CHUNK = 48;
 export const START = { x: 0, z: 20 };
@@ -87,8 +88,17 @@ function polylineOffset(n) {
   return 2.1 * Math.sin(n * 0.024) + 1.25 * Math.sin(n * 0.055);
 }
 
-export function createWorld(seed) {
+export function createWorld(seed, { plateau = false } = {}) {
+  if (plateau) seed = 'deadman-plateau';
   const chunks = new Map();
+  const tileKey = (x,z) => Math.floor(x/CHUNK) + ',' + Math.floor(z/CHUNK);
+  const sitesByTile = new Map(), coverPadding=plateau?6.8:3.5;
+  if (plateau) for (const site of PLATEAU.shelters) {
+    const key = tileKey(site.x,site.z);
+    const sites = sitesByTile.get(key) ?? [];
+    sites.push(site);
+    sitesByTile.set(key,sites);
+  }
   const districts = new Map(), districtSize = CHUNK * 12;
   const phase = random(seed + ':land')() * 7;
   const district = (x, z) => {
@@ -100,6 +110,7 @@ export function createWorld(seed) {
     return districts.get(key);
   };
   const region = (x,z) => {
+    if (plateau) return plateauRegion(x,z);
     const broad = Math.sin(x*.009+phase)*Math.cos(z*.008-phase);
     const ridge = Math.sin(z*.011+x*.007+phase);
     return broad > .31 ? 'pine' : broad < -.30 ? 'clearing' : ridge > .32 ? 'ridge' : 'gully';
@@ -108,12 +119,14 @@ export function createWorld(seed) {
     + .23*Math.sin(z*.061-x*.047-phase) + ({ pine:.23, clearing:-.55, ridge:-.13, gully:.03 }[region(x,z)]), .03, .98);
 
   const roadDistance = (x, z) => {
+    if (plateau) return plateauRoad(x,z);
     const u = x - polylineOffset(z);
     const v = z - 87 - polylineOffset(x);
     return Math.min(Math.abs(u - Math.round(u / 126) * 126),
       Math.abs(v - Math.round(v / 154) * 154), trackDistance(x,z,district(x,z).tracks));
   };
   const ground = (x, z) => {
+    if (plateau) return plateauGround(x,z);
     const offRoad = clamp((roadDistance(x, z) - 1.9) / 9, 0, 1);
     const hills = Math.sin(x * .049 + phase) * Math.cos(z * .042 - phase) * 1.55
       + Math.sin(z * .099 + x * .061) * .36;
@@ -124,6 +137,14 @@ export function createWorld(seed) {
   };
   const sample = (x,z) => {
     const surface = ground(x,z);
+    if (plateau) {
+      for (const site of PLATEAU.shelters) {
+        if (Math.abs(site.x-x)>=12 || Math.abs(site.z-z)>=12) continue;
+        const blend = clamp((12 - distance(site,{x,z}))/3,0,1);
+        if (blend) return surface + (ground(site.x,site.z)-surface)*blend;
+      }
+      return surface;
+    }
     const key = Math.floor(x/CHUNK) + ',' + Math.floor(z/CHUNK);
     const building = district(x,z).buildings.get(key);
     if (!building) return surface;
@@ -142,14 +163,19 @@ export function createWorld(seed) {
     const rng = random(seed + ':chunk:' + key);
     const left = cx * CHUNK, top = cz * CHUNK;
     const biome = region(left+CHUNK/2,top+CHUNK/2);
-    const sector = district(left,top);
+    const sector = plateau ? null : district(left,top);
     const belongsHere = ({ x, z }) => x >= left && x < left + CHUNK && z >= top && z < top + CHUNK;
-    const markers = sector.tracks.slice(0,2).map(([west,z]) => {
+    const markers = (sector?.tracks ?? []).slice(0,2).map(([west,z]) => {
       const bend = polylineOffset(z);
       const x = bend + 126 * Math.ceil((west - 3 - bend) / 126);
       return { x:x + 4.5, z:z + 2.9 };
     }).filter(belongsHere);
-    if (cx === -1 || cx === 0) {
+    if (plateau) {
+      for (const {junction} of PLATEAU.shelters) {
+        const post = { x:junction.x+2.4,z:junction.z+2.6 };
+        if (belongsHere(post)) markers.push(post);
+      }
+    } else if (cx === -1 || cx === 0) {
       for (let z = top + 11; z < Math.min(20, top + CHUNK) && z >= -174; z += 24) {
         const post = { x:polylineOffset(z) - 3.05, z };
         if (belongsHere(post)) markers.push(post);
@@ -157,6 +183,7 @@ export function createWorld(seed) {
     }
     const area = { key, cx, cz, trees: [], plants: [], props: [], colliders: [], loot: [], entrances: [],
       lights: [], buildings: [], markers, biome };
+    if (plateau && (cx < 0 || cz < 0 || left >= PLATEAU_SIZE || top >= PLATEAU_SIZE)) return area;
     const sites = [];
 
     const box = (x, z, w, h, d, base = height(x, z), kind = 'stone', tint) => {
@@ -213,8 +240,30 @@ export function createWorld(seed) {
         cache('rocks', x, z - 3.3, rng() > .5 ? 'pierce' : 'reload', 34);
       }
     };
-    const building = sector.buildings.get(key);
-    if (building) {
+    const building = sector?.buildings.get(key);
+    if (plateau) {
+      for (const building of PLATEAU.shelters) if (building.x >= left-13 && building.x <= left+CHUNK+13 &&
+        building.z >= top-13 && building.z <= top+CHUNK+13) sites.push({...building,r:11.4});
+      for (const building of sitesByTile.get(key) ?? []) buildPlateauShelter(building,area,height,box);
+      for (const prop of PLATEAU.props.filter(belongsHere)) site(prop.kind,prop.x,prop.z,prop.kind==='wreck',false);
+      for (const [i,supply] of PLATEAU.supplies.entries()) if (belongsHere(supply)) {
+        sites.push({...supply,r:1.3});
+        cache('roadside-ammo-'+i,supply.x,supply.z,i%5===4?'flareAmmo':'ammo');
+      }
+      for (const start of PLATEAU.starts.filter(belongsHere)) sites.push({...start,r:4});
+      for (const resident of PLATEAU.residents.filter(belongsHere)) sites.push({...resident,r:.86});
+      for (const edge of [1,PLATEAU_SIZE-1]) for (let offset=2; offset<PLATEAU_SIZE; offset+=4) {
+        for (const horizontal of [true,false]) {
+          const x=horizontal?offset:edge, z=horizontal?edge:offset;
+          if (!belongsHere({x,z})) continue;
+          const base=height(x,z);
+          box(x,z,.18,1.22,.18,base,'districtPost',0x706656);
+          for (const rail of [.43,.84])
+            box(x,z,horizontal?4:.14,.09,horizontal?.14:4,base+rail,'districtWall',0x635c4e);
+        }
+      }
+      area.loot = area.loot.filter(item=>item.kind==='ammo'||item.kind==='flareAmmo');
+    } else if (building) {
       sites.push({ x:building.x, z:building.z, r:10.8 });
       buildDistrictSite(building,area,height,box,random,(...args)=>site('wreck',...args));
     } else if (cx === 0 && cz === 0) site('wreck', 3.8, 5.4, true);
@@ -223,7 +272,7 @@ export function createWorld(seed) {
     else if (rng() < .32) site(rng() < .46 ? 'wreck' : 'rocks',
       left + 10 + rng() * 28, top + 10 + rng() * 28, hash(seed+':lit:'+key) % 5 === 0);
     const fieldSite = random(seed + ':field-site:' + key);
-    if (!building && Math.abs(cx)+Math.abs(cz)>1 && fieldSite() < .22) {
+    if (!plateau && !building && Math.abs(cx)+Math.abs(cz)>1 && fieldSite() < .22) {
       for (let i=0; i<5; i++) {
         const x=left+10+fieldSite()*28, z=top+10+fieldSite()*28;
         if (roadDistance(x,z)<6 || sites.some(s=>distance(s,{x,z}) < s.r+8)) continue;
@@ -305,7 +354,8 @@ export function createWorld(seed) {
   }
 
   function blocks(x, z, radius = .26) {
-    return around(x, z, radius + 3.5).some(area => area.colliders.some(o => {
+    if (plateau && Math.min(x,z,PLATEAU_SIZE-x,PLATEAU_SIZE-z)<1+radius) return true;
+    return around(x, z, radius + coverPadding).some(area => area.colliders.some(o => {
       if (o.kind === 'shedRoof' || o.kind === 'districtRoof' || o.kind === 'districtLintel') return false;
       if (o.r) return (x - o.x) ** 2 + (z - o.z) ** 2 < (o.r + radius) ** 2;
       const dx = Math.max(0, Math.abs(x - o.x) - o.rx), dz = Math.max(0, Math.abs(z - o.z) - o.rz);
@@ -326,10 +376,9 @@ export function createWorld(seed) {
   function raycast(origin, ray, range, ground = true) {
     const endX = origin.x + ray.x * range, endZ = origin.z + ray.z * range;
     let t = range + 1, object = null;
-    // Pad by the largest cover footprint (3.5 m; dressing vehicles and log segments stay within <= 2.6 m)
-    // because authored props can straddle a chunk edge.
-    for (let j = Math.floor((Math.min(origin.z, endZ) - 3.5) / CHUNK); j <= Math.floor((Math.max(origin.z, endZ) + 3.5) / CHUNK); j++) {
-      for (let i = Math.floor((Math.min(origin.x, endX) - 3.5) / CHUNK); i <= Math.floor((Math.max(origin.x, endX) + 3.5) / CHUNK); i++) {
+    // Long shelter walls can straddle tile edges.
+    for (let j = Math.floor((Math.min(origin.z, endZ) - coverPadding) / CHUNK); j <= Math.floor((Math.max(origin.z, endZ) + coverPadding) / CHUNK); j++) {
+      for (let i = Math.floor((Math.min(origin.x, endX) - coverPadding) / CHUNK); i <= Math.floor((Math.max(origin.x, endX) + coverPadding) / CHUNK); i++) {
         for (const o of chunk(i, j).colliders) {
           const hit = o.r ? rayTrunk(origin, ray, o, Math.min(t, range))
             : rayBox(origin, ray, o, Math.min(t, range));
@@ -364,5 +413,6 @@ export function createWorld(seed) {
 
   const districtSites = (x,z) => [...district(x,z).buildings.values()]
     .flatMap(site => chunk(Math.floor(site.x/CHUNK),Math.floor(site.z/CHUNK)).buildings);
-  return { seed, phase, height, sample, density, region, roadDistance, chunk, around, blocks, move, raycast, clear, districtSites };
+  return { seed, phase, height, sample, density, region, roadDistance, chunk, around, blocks, move, raycast, clear, districtSites,
+    map: plateau ? PLATEAU : null };
 }

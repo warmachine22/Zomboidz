@@ -101,6 +101,11 @@ input[type=range] { width: min(130px, 35%); }
 .records th, .records td { border-bottom: 1px solid var(--line); padding: 7px 5px; }
 .records td:last-child, .records th:last-child { text-align: right; }
 .overlay { z-index: 6; position: fixed; inset: 0; display: grid; place-items: center; overflow: auto; padding: 18px; background: #0b1110a8; }
+.map-card { width: min(100%, 760px); }
+#field-chart { display: block; width: min(100%, 68vh * 1.44); height: auto; margin: 0 auto; }
+#tuning-fields fieldset { min-width: 0; margin: 0; border: 1px solid #58675c; }
+#tuning-fields label { gap: 12px; }
+#tuning-fields input { width: 74px; color: #e6e5d5; background: #222b25; border: 1px solid #58675c; padding: 6px; }
 .results-stats { display: flex; gap: clamp(13px, 4vw, 37px); flex-wrap: wrap; margin: 20px 0; }
 .results-stats small, .hud-top small, .hud-bottom small, #reload-meter small { display: block; color: #b6c4ae; letter-spacing: .13em; font: 11px var(--mono); }
 .results-stats strong { font: 650 34px var(--display); }

@@ -1,6 +1,7 @@
 import { BUILD, GUNS } from './simulation.js';
 import { gunAngle } from './held-tools.js';
 import { ARSENAL_WAVES, DIFFICULTIES, difficultyKey, MODES } from './difficulty.js';
+import { normalizeTuning } from './campaign.js';
 
 const scoresKey = 'zomboidz.scores.v1';
 const settingsKey = 'zomboidz.settings.v1';
@@ -39,6 +40,8 @@ export function loadSettings() {
   if (!Object.hasOwn(MODES, value?.mode)) settings.mode = value?.legendary === true ? 'legendary' : defaults.mode;
   if (!ARSENAL_WAVES.includes(settings.arsenalWave)) settings.arsenalWave = defaults.arsenalWave;
   if (!Object.hasOwn(GUNS, settings.arsenalWeapon)) settings.arsenalWeapon = defaults.arsenalWeapon;
+  settings.zombieTuning=Object.fromEntries(Object.keys(DIFFICULTIES)
+    .map(level=>[level,normalizeTuning(level,value?.zombieTuning?.[level])]));
   return settings;
 }
 
@@ -64,23 +67,28 @@ function allScores() {
   return [...scores.values()].map(row => ({...row, difficulty:difficultyKey(row.difficulty)}));
 }
 
-export function listScores(difficulty = 'standard') {
-  return allScores().filter(row => row.difficulty === difficultyKey(difficulty)).sort(compare).slice(0, 10);
+export function listScores(difficulty = 'standard', ruleset = 'classic') {
+  return allScores().filter(row => row.difficulty === difficultyKey(difficulty) && (row.ruleset??'classic')===ruleset)
+    .sort(compare).slice(0,10);
 }
 
 function compare(a, b) {
+  if (a.escaped || b.escaped)
+    return Number(Boolean(b.escaped))-Number(Boolean(a.escaped)) || a.time-b.time || b.kills-a.kills || a.id.localeCompare(b.id);
   return b.time - a.time || b.kills - a.kills || b.headshots - a.headshots || a.id.localeCompare(b.id);
 }
 
 export function recordRun(run, id, label) {
-  if (run.arsenal || run.legendary) return { saved:false, place:0 };
+  if (run.arsenal || run.legendary || run.campaign?.ranked===false) return { saved:false, place:0 };
   const entry = {
     id, initials: initials(label), time: Math.floor(run.time * 100) / 100,
     kills: run.player.kills, headshots: run.player.headshots, seed: run.seed, version: BUILD, difficulty:difficultyKey(run.difficulty),
+    ruleset:run.campaign?'plateau':'classic', escaped:run.status==='escaped',
   };
   const scores = [...allScores().filter(row => row.id !== id), entry].sort(compare);
-  const records = Object.keys(DIFFICULTIES).flatMap(level => scores.filter(row => row.difficulty === level).slice(0,10));
+  const group = (level,ruleset) => scores.filter(row=>row.difficulty===level && (row.ruleset??'classic')===ruleset).slice(0,10);
+  const records = Object.keys(DIFFICULTIES).flatMap(level=>[...group(level,'classic'),...group(level,'plateau')]);
   fallbackScores = records;
   const saved = write(scoresKey, records);
-  return { saved, place: records.filter(row => row.difficulty === entry.difficulty).findIndex(row => row.id === id) + 1 };
+  return { saved, place: group(entry.difficulty,entry.ruleset).findIndex(row=>row.id===id)+1 };
 }

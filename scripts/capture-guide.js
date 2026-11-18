@@ -4,7 +4,7 @@ import { createPresentation, loadArt } from '../src/presentation.js';
 import { addEnemy, createRun, ENEMIES } from '../src/simulation.js';
 
 const subjects = { shambler:'Shambler', shrieker:'Shrieker', brute:'Brute',
-  workshop:'Workshop shed', 'lean-to':'Lean-to shed', radio:'Extraction radio' };
+  workshop:'Ranger Quarters', 'lean-to':'Survey Hut', radio:'Assembled extraction radio' };
 const art = await loadArt();
 const scene = new THREE.Scene();
 const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
@@ -45,15 +45,13 @@ function enemyPortrait(run, kind) {
 
 function buildingPortrait(run, subject) {
   const { world } = run;
-  const sites = world.districtSites(0,-1);
-  const site = sites.find(s=>s.layout === (subject === 'lean-to' ? 2 : 0));
+  const site = world.map.shelters.find(s=>s.name===(subject==='lean-to'?'Survey Hut':'Ranger Quarters'));
   const sign = Math.sign(site.door.z-site.z);
   if (subject === 'radio') {
-    const radio = site.radio;
+    const radio = {...site.part,y:world.height(site.part.x,site.part.z),turn:site.turn};
     run.search.radio = radio;
     const at = new THREE.Vector3(radio.x,radio.y+.03,radio.z);
-    const stand = radio.standing;
-    setView(run,new THREE.Vector3(stand.x,radio.y+.38,stand.z+sign*.78),at);
+    setView(run,new THREE.Vector3(radio.x+.38,radio.y+1.12,radio.z+.95),at.add(new THREE.Vector3(0,.5,0)));
     camera.fov = 40;
     fill.intensity = 1.04;
     radioLight.position.copy(camera.position).add(new THREE.Vector3(0,.7,0));
@@ -63,7 +61,7 @@ function buildingPortrait(run, subject) {
   }
   const target = new THREE.Vector3(site.x,world.height(site.x,site.z)+1.05,site.z);
   const positions = [4.0,-4.0,2.8,-2.8,0].map(offset=>{
-    const x = site.door.x+offset, z = site.door.z+sign*7.5;
+    const x = site.door.x+offset, z = site.door.z+sign*11.5;
     return new THREE.Vector3(x,world.height(x,z)+1.7,z);
   });
   const eye = positions.find(point=>world.clear(point,{ ...site.door,y:target.y })) ?? positions.at(-1);
@@ -80,10 +78,10 @@ const requested = new URLSearchParams(location.search).get('subject');
 if (Object.hasOwn(subjects,requested)) menu.value = requested;
 
 function draw() {
-  const run = createRun('Blackwater',{ populate:false });
+  const enemy = Object.hasOwn(ENEMIES,menu.value);
+  const run = createRun('Blackwater',{populate:false,crafted:!enemy});
   run.loot.length = 0;
   radioLight.intensity = 0;
-  const enemy = Object.hasOwn(ENEMIES,menu.value);
   if (enemy) enemyPortrait(run,menu.value);
   else buildingPortrait(run,menu.value);
   camera.updateProjectionMatrix();
